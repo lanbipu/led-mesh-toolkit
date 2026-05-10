@@ -97,3 +97,57 @@ fn write_obj_rejects_non_finite_vertex() {
     let result = write_obj(&mo, &path);
     assert!(result.is_err());
 }
+
+#[test]
+fn write_obj_overwrite_with_invalid_input_preserves_old_file() {
+    // First, write a valid OBJ
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("preserved.obj");
+
+    let valid = MeshOutput {
+        target: TargetSoftware::Neutral,
+        vertices: vec![
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
+        ],
+        triangles: vec![[0, 1, 2]],
+        uv_coords: vec![
+            Vector2::new(0.0, 0.0),
+            Vector2::new(1.0, 0.0),
+            Vector2::new(0.0, 1.0),
+        ],
+    };
+    write_obj(&valid, &path).unwrap();
+    let original = std::fs::read_to_string(&path).unwrap();
+    assert!(original.contains("v 0 0 0"));
+
+    // Try to overwrite with a malformed mesh — validation should reject
+    // before even creating the temp file.
+    let bad = MeshOutput {
+        target: TargetSoftware::Neutral,
+        vertices: vec![Vector3::zeros(); 3],
+        uv_coords: vec![Vector2::zeros(); 2], // mismatch
+        triangles: vec![[0, 1, 2]],
+    };
+    let result = write_obj(&bad, &path);
+    assert!(result.is_err());
+
+    // Existing OBJ must be unchanged.
+    let after = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(original, after, "failed export must not modify a previously valid file");
+}
+
+#[test]
+fn write_obj_rejects_path_without_file_name() {
+    let mo = MeshOutput {
+        target: TargetSoftware::Neutral,
+        vertices: vec![Vector3::zeros()],
+        uv_coords: vec![Vector2::zeros()],
+        triangles: vec![],
+    };
+    // Pass a path with no file name (e.g. just "/")
+    let path = std::path::Path::new("/");
+    let result = write_obj(&mo, path);
+    assert!(result.is_err());
+}

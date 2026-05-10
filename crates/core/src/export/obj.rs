@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
@@ -13,10 +13,12 @@ fn target_label(t: TargetSoftware) -> &'static str {
     }
 }
 
-/// Serialize a `MeshOutput` to a Wavefront OBJ file.
+/// Serialize a `MeshOutput` to a Wavefront OBJ file atomically.
 ///
-/// Validates `mesh` before opening the file — invalid mesh data
-/// returns `CoreError::InvalidInput` without touching the destination.
+/// Validates `mesh` before opening the file. Writes to a same-directory
+/// temp file first, fsyncs, then `rename()`s into place. If any I/O step
+/// fails, the temp file is removed and the destination is left unchanged
+/// (so a previously valid OBJ survives a failed re-export).
 ///
 /// Format:
 /// - 1-based indices
@@ -24,35 +26,71 @@ fn target_label(t: TargetSoftware) -> &'static str {
 /// - No normals (renderers compute them, OBJ allows omitting)
 /// - Single mesh group
 pub fn write_obj(mesh: &MeshOutput, path: &Path) -> Result<(), CoreError> {
-    // Validate before opening — don't corrupt an existing valid file
-    // when the caller hands us malformed data.
     mesh.validate()?;
 
-    let file = File::create(path)?;
-    let mut w = BufWriter::new(file);
+    // Pick a temp path next to `path` so rename stays on the same filesystem.
+    let temp_path = match path.file_name() {
+        Some(name) => {
+            let mut tmp_name = name.to_os_string();
+            tmp_name.push(format!(".tmp.{}", std::process::id()));
+            path.with_file_name(tmp_name)
+        }
+        None => {
+            return Err(CoreError::InvalidInput(format!(
+                "write_obj: path {:?} has no file name component",
+                path
+            )));
+        }
+    };
 
-    writeln!(w, "# LED Mesh Toolkit OBJ export")?;
-    writeln!(w, "# Target: {}", target_label(mesh.target))?;
-    writeln!(w, "# Vertices: {}", mesh.vertices.len())?;
-    writeln!(w, "# Triangles: {}", mesh.triangles.len())?;
-    writeln!(w)?;
+    // Inner closure does the write so we can clean up the temp on any error.
+    let write_result: Result<(), CoreError> = (|| {
+        let file = File::create(&temp_path)?;
+        let mut w = BufWriter::new(file);
 
-    for v in &mesh.vertices {
-        writeln!(w, "v {} {} {}", trim_zero(v.x), trim_zero(v.y), trim_zero(v.z))?;
+        writeln!(w, "# LED Mesh Toolkit OBJ export")?;
+        writeln!(w, "# Target: {}", target_label(mesh.target))?;
+        writeln!(w, "# Vertices: {}", mesh.vertices.len())?;
+        writeln!(w, "# Triangles: {}", mesh.triangles.len())?;
+        writeln!(w)?;
+
+        for v in &mesh.vertices {
+            writeln!(w, "v {} {} {}", trim_zero(v.x), trim_zero(v.y), trim_zero(v.z))?;
+        }
+        for uv in &mesh.uv_coords {
+            writeln!(w, "vt {} {}", trim_zero(uv.x), trim_zero(uv.y))?;
+        }
+
+        writeln!(w, "g screen_mesh")?;
+        for t in &mesh.triangles {
+            let a = t[0] + 1;
+            let b = t[1] + 1;
+            let c = t[2] + 1;
+            writeln!(w, "f {a}/{a} {b}/{b} {c}/{c}")?;
+        }
+
+        // Flush BufWriter, fsync the file, then drop to release the handle.
+        w.flush()?;
+        let file = w.into_inner().map_err(|e| {
+            CoreError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+        })?;
+        file.sync_all()?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_result {
+        // Best-effort cleanup of the temp file. Ignore the cleanup result
+        // (we want to surface the original error, not a secondary one).
+        let _ = fs::remove_file(&temp_path);
+        return Err(e);
     }
-    for uv in &mesh.uv_coords {
-        writeln!(w, "vt {} {}", trim_zero(uv.x), trim_zero(uv.y))?;
+
+    // Atomic rename into place. On failure, remove the temp.
+    if let Err(e) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(CoreError::Io(e));
     }
 
-    writeln!(w, "g screen_mesh")?;
-    for t in &mesh.triangles {
-        let a = t[0] + 1;
-        let b = t[1] + 1;
-        let c = t[2] + 1;
-        writeln!(w, "f {a}/{a} {b}/{b} {c}/{c}")?;
-    }
-
-    w.flush()?;
     Ok(())
 }
 
