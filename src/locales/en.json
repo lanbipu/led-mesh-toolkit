@@ -2,6 +2,10 @@
   "app": {
     "title": "LED Mesh Toolkit"
   },
+  "shell": {
+    "activityLog": "Activity Log",
+    "noActivity": "No activity yet."
+  },
   "nav": {
     "home": "Home",
     "design": "Design",
