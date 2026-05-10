@@ -5,5 +5,6 @@
 //! (total-station) and M2 (visual photogrammetry) adapters.
 
 pub mod error;
+pub mod uncertainty;
 
 pub use error::CoreError;
