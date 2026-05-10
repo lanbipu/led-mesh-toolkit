@@ -13,6 +13,7 @@ pub mod measured_points;
 pub mod surface;
 pub mod uv;
 pub mod weld;
+pub mod triangulate;
 pub mod reconstruct;
 
 pub use error::CoreError;
