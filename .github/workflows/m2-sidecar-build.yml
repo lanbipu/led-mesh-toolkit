@@ -1,0 +1,61 @@
+name: m2-sidecar-build
+
+on:
+  push:
+    branches: [m2, main]
+    paths:
+      - 'python-sidecar/**'
+      - '.github/workflows/m2-sidecar-build.yml'
+  pull_request:
+    paths:
+      - 'python-sidecar/**'
+      - '.github/workflows/m2-sidecar-build.yml'
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: |
+          cd python-sidecar
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+      - name: Pytest
+        run: cd python-sidecar && pytest -ra
+
+  build-windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: Build
+        shell: pwsh
+        run: pwsh -File python-sidecar/build_exe.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lmt-vba-sidecar-windows-x86_64
+          path: target/sidecar-vendor/windows-x86_64/lmt-vba-sidecar.exe
+
+  build-macos:
+    needs: test
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: Build
+        run: ./python-sidecar/build_exe.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lmt-vba-sidecar-darwin-arm64
+          path: target/sidecar-vendor/darwin-arm64/lmt-vba-sidecar
