@@ -16,5 +16,27 @@
     "instruct": "Instruct (M1)",
     "charuco": "ChArUco (M2)",
     "photoplan": "Photo Plan (M2)"
+  },
+  "home": {
+    "recent": "Recent Projects",
+    "empty": "No recent projects. Click below to seed one from an example.",
+    "create_curved_flat": "Create Curved-Flat (8x4)",
+    "create_curved_arc": "Create Curved-Arc (16x6)",
+    "open_existing": "Open Existing Folder…",
+    "remove": "Remove from list"
+  },
+  "design": {
+    "toolbar": {
+      "mask": "Mask",
+      "refs": "Refs",
+      "baseline": "Baseline"
+    },
+    "legend": {
+      "present": "Present",
+      "absent": "Absent",
+      "origin": "Origin",
+      "x_axis": "X-axis",
+      "xy_plane": "XY-plane"
+    }
   }
 }

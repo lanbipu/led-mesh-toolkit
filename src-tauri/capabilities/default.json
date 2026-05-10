@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default capability for the app",
   "windows": ["main"],
-  "permissions": ["core:default", "core:event:default", "core:path:default"]
+  "permissions": ["core:default", "core:event:default", "core:path:default", "dialog:allow-open"]
 }

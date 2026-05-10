@@ -16,5 +16,27 @@
     "instruct": "指令生成 (M1)",
     "charuco": "ChArUco (M2)",
     "photoplan": "拍摄规划 (M2)"
+  },
+  "home": {
+    "recent": "最近项目",
+    "empty": "无最近项目。点下方按钮从示例创建一个。",
+    "create_curved_flat": "创建 Curved-Flat (8x4)",
+    "create_curved_arc": "创建 Curved-Arc (16x6)",
+    "open_existing": "打开已有文件夹…",
+    "remove": "移出列表"
+  },
+  "design": {
+    "toolbar": {
+      "mask": "遮罩",
+      "refs": "参考点",
+      "baseline": "基线"
+    },
+    "legend": {
+      "present": "存在",
+      "absent": "缺失",
+      "origin": "原点",
+      "x_axis": "X 轴",
+      "xy_plane": "XY 平面"
+    }
   }
 }
