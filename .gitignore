@@ -22,3 +22,8 @@ __pycache__/
 # 临时输出
 /tmp-output/
 *.log
+.claude/knowledge.json
+.claude/knowledge/_INDEX.md
+.claude/knowledge/help-disguise-one
+.claude/knowledge/trimble-sx-docs
+.claude/knowledge/ue57-docs

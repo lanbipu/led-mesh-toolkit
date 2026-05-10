@@ -1,0 +1,2666 @@
+<!DOCTYPE html>
+<html lang="zh" dir="ltr" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LED Mesh Toolkit · 设计文档</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <style>
+    /* ========================================================
+       LED Mesh Toolkit — Spec viewer
+       UECM design language (oklch tokens + shadcn style)
+       ======================================================== */
+
+    :root {
+      --background: oklch(0.985 0.002 240);
+      --foreground: oklch(0.22 0.01 240);
+      --card: oklch(1 0 0);
+      --card-foreground: oklch(0.22 0.01 240);
+      --popover: oklch(1 0 0);
+      --popover-foreground: oklch(0.22 0.01 240);
+      --primary: oklch(0.58 0.13 210);
+      --primary-foreground: oklch(0.99 0 0);
+      --secondary: oklch(0.95 0.005 240);
+      --secondary-foreground: oklch(0.22 0.01 240);
+      --muted: oklch(0.955 0.005 240);
+      --muted-foreground: oklch(0.5 0.01 240);
+      --accent: oklch(0.93 0.008 220);
+      --accent-foreground: oklch(0.22 0.01 240);
+      --destructive: oklch(0.55 0.22 25);
+      --destructive-foreground: oklch(0.99 0 0);
+      --border: oklch(0.9 0.005 240);
+      --input: oklch(0.9 0.005 240);
+      --ring: oklch(0.58 0.13 210);
+      --status-healthy: oklch(0.55 0.15 152);
+      --status-warning: oklch(0.65 0.16 75);
+      --status-critical: oklch(0.55 0.22 25);
+      --status-info: oklch(0.58 0.13 210);
+      --status-offline: oklch(0.65 0.005 240);
+      --sidebar: oklch(0.97 0.005 240);
+      --sidebar-foreground: oklch(0.25 0.01 240);
+      --sidebar-primary: oklch(0.58 0.13 210);
+      --sidebar-primary-foreground: oklch(0.99 0 0);
+      --sidebar-accent: oklch(0.93 0.008 220);
+      --sidebar-accent-foreground: oklch(0.22 0.01 240);
+      --sidebar-border: oklch(0.9 0.005 240);
+      --radius: 0.5rem;
+      --font-sans: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      --font-display: 'Manrope', 'Inter', 'Helvetica Neue', Helvetica, sans-serif;
+      --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    .dark {
+      --background: oklch(0.16 0.005 240);
+      --foreground: oklch(0.96 0 0);
+      --card: oklch(0.195 0.005 240);
+      --card-foreground: oklch(0.96 0 0);
+      --popover: oklch(0.205 0.005 240);
+      --popover-foreground: oklch(0.96 0 0);
+      --primary: oklch(0.78 0.13 200);
+      --primary-foreground: oklch(0.16 0.005 240);
+      --secondary: oklch(0.245 0.005 240);
+      --secondary-foreground: oklch(0.96 0 0);
+      --muted: oklch(0.235 0.005 240);
+      --muted-foreground: oklch(0.68 0.01 240);
+      --accent: oklch(0.27 0.005 240);
+      --accent-foreground: oklch(0.96 0 0);
+      --destructive: oklch(0.62 0.22 25);
+      --destructive-foreground: oklch(0.98 0 0);
+      --border: oklch(0.27 0.005 240);
+      --input: oklch(0.27 0.005 240);
+      --ring: oklch(0.78 0.13 200);
+      --status-healthy: oklch(0.72 0.16 152);
+      --status-warning: oklch(0.78 0.16 75);
+      --status-critical: oklch(0.65 0.22 25);
+      --status-info: oklch(0.78 0.13 200);
+      --status-offline: oklch(0.5 0.005 240);
+      --sidebar: oklch(0.175 0.005 240);
+      --sidebar-foreground: oklch(0.92 0 0);
+      --sidebar-primary: oklch(0.78 0.13 200);
+      --sidebar-primary-foreground: oklch(0.16 0.005 240);
+      --sidebar-accent: oklch(0.245 0.005 240);
+      --sidebar-accent-foreground: oklch(0.96 0 0);
+      --sidebar-border: oklch(0.25 0.005 240);
+    }
+
+    .bg-hatched {
+      background-image: repeating-linear-gradient(
+        45deg,
+        color-mix(in oklch, var(--muted-foreground) 25%, transparent) 0 2px,
+        transparent 2px 6px
+      );
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      font-size: 15px;
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0 !important;
+      padding: 0 !important;
+      max-width: none !important;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: var(--font-sans);
+      font-feature-settings: 'cv11', 'ss01', 'ss03';
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* ============== TopBar (UECM style) ============== */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      height: 56px;
+      background: var(--background);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 20px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    .topbar .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: -0.01em;
+      color: var(--foreground);
+    }
+
+    .topbar .brand-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: calc(var(--radius) - 2px);
+      background: var(--primary);
+      color: var(--primary-foreground);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: 11px;
+    }
+
+    .topbar .breadcrumb {
+      color: var(--muted-foreground);
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .topbar .breadcrumb svg { width: 14px; height: 14px; opacity: 0.5; }
+
+    .topbar .spacer { flex: 1; }
+
+    .topbar .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--muted-foreground);
+      background: var(--card);
+    }
+
+    .topbar .badge.status-info { color: var(--status-info); border-color: color-mix(in oklch, var(--status-info) 40%, transparent); }
+    .topbar .badge.status-warning { color: var(--status-warning); border-color: color-mix(in oklch, var(--status-warning) 40%, transparent); }
+
+    .topbar .badge .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 8px currentColor;
+    }
+
+    .topbar button.theme-toggle {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted-foreground);
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+
+    .topbar button.theme-toggle:hover {
+      color: var(--foreground);
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .topbar button.theme-toggle svg { width: 16px; height: 16px; }
+
+    /* Read progress under topbar */
+    .read-progress {
+      position: fixed;
+      top: 56px;
+      left: 0;
+      width: var(--progress, 0%);
+      height: 2px;
+      background: var(--primary);
+      z-index: 60;
+      transition: width 0.05s linear;
+    }
+
+    /* ============== Layout ============== */
+    .shell {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      max-width: 1320px;
+      margin: 0 auto;
+      min-height: calc(100vh - 56px);
+    }
+
+    /* ============== Sidebar (TOC) ============== */
+    nav#TOC {
+      position: sticky;
+      top: 56px;
+      align-self: start;
+      height: calc(100vh - 56px);
+      overflow-y: auto;
+      padding: 24px 16px 24px 20px;
+      background: var(--sidebar);
+      border-right: 1px solid var(--sidebar-border);
+      font-size: 13px;
+    }
+
+    nav#TOC::-webkit-scrollbar { width: 6px; }
+    nav#TOC::-webkit-scrollbar-track { background: transparent; }
+    nav#TOC::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+    nav#TOC::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
+
+    nav#TOC::before {
+      content: 'Contents';
+      display: block;
+      font-family: var(--font-display);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted-foreground);
+      padding: 0 12px 12px 12px;
+      margin-bottom: 8px;
+      border-bottom: 1px solid var(--sidebar-border);
+    }
+
+    nav#TOC ul {
+      list-style: none;
+      padding-left: 0;
+      margin: 0;
+    }
+
+    nav#TOC > ul > li {
+      counter-increment: toc-section;
+      margin: 2px 0;
+    }
+
+    nav#TOC > ul > li > a {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 7px 12px;
+      color: var(--sidebar-foreground);
+      text-decoration: none;
+      border-radius: calc(var(--radius) - 2px);
+      font-weight: 500;
+      transition: background 0.12s ease, color 0.12s ease;
+    }
+
+    nav#TOC > ul > li > a::before {
+      content: counter(toc-section, decimal-leading-zero);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--muted-foreground);
+      flex-shrink: 0;
+    }
+
+    nav#TOC > ul > li > a:hover {
+      background: var(--sidebar-accent);
+      color: var(--sidebar-accent-foreground);
+    }
+
+    nav#TOC > ul > li > a.active {
+      background: color-mix(in oklch, var(--sidebar-primary) 12%, transparent);
+      color: var(--sidebar-primary);
+    }
+
+    nav#TOC > ul > li > a.active::before {
+      color: var(--sidebar-primary);
+    }
+
+    nav#TOC ul ul {
+      margin: 2px 0 6px 22px;
+      border-left: 1px solid var(--sidebar-border);
+      padding-left: 0;
+    }
+
+    nav#TOC ul ul li {
+      margin: 1px 0;
+    }
+
+    nav#TOC ul ul a {
+      display: block;
+      padding: 5px 12px;
+      margin-left: -1px;
+      border-left: 2px solid transparent;
+      color: var(--muted-foreground);
+      text-decoration: none;
+      font-size: 12.5px;
+      font-weight: 400;
+      transition: all 0.12s ease;
+    }
+
+    nav#TOC ul ul a:hover {
+      color: var(--sidebar-foreground);
+      border-left-color: var(--border);
+    }
+
+    nav#TOC ul ul a.active {
+      color: var(--sidebar-primary);
+      border-left-color: var(--sidebar-primary);
+      background: color-mix(in oklch, var(--sidebar-primary) 8%, transparent);
+    }
+
+    /* ============== Main content ============== */
+    main {
+      padding: 40px 56px 120px 56px;
+      max-width: 920px;
+      width: 100%;
+    }
+
+    /* Title block */
+    h1.title {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: clamp(28px, 4vw, 40px);
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      color: var(--foreground);
+      margin: 0 0 8px 0;
+      padding: 0;
+      border: none;
+    }
+
+    .doc-subtitle {
+      color: var(--muted-foreground);
+      font-size: 14px;
+      margin: 0 0 32px 0;
+      letter-spacing: 0.02em;
+    }
+
+    /* Hero metadata card */
+    .hero-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin: 0 0 48px 0;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 24px;
+    }
+
+    .hero-card dt {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted-foreground);
+      margin-bottom: 6px;
+    }
+
+    .hero-card dd {
+      margin: 0;
+      font-size: 13.5px;
+      font-weight: 500;
+      color: var(--foreground);
+    }
+
+    .hero-card dd .accent { color: var(--primary); }
+
+    /* H1 (sections, after .title): used for outermost MD h1.
+       In our spec, h1 is only the title. Rest start at h2. */
+
+    /* H2 = main sections */
+    main h2 {
+      font-family: var(--font-display);
+      font-size: clamp(22px, 2.6vw, 28px);
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: -0.015em;
+      margin: 80px 0 16px 0;
+      color: var(--foreground);
+      padding: 0;
+      border: none;
+      counter-increment: section;
+      counter-reset: subsection;
+      position: relative;
+      padding-top: 40px;
+      border-top: 1px solid var(--border);
+    }
+
+    main h2::before {
+      content: counter(section, decimal-leading-zero);
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.15em;
+      color: var(--primary);
+      background: color-mix(in oklch, var(--primary) 10%, transparent);
+      border: 1px solid color-mix(in oklch, var(--primary) 25%, transparent);
+      padding: 3px 8px;
+      border-radius: calc(var(--radius) - 4px);
+      margin-right: 12px;
+      vertical-align: middle;
+      transform: translateY(-2px);
+    }
+
+    main { counter-reset: section; }
+
+    /* H3 */
+    main h3 {
+      font-family: var(--font-display);
+      font-size: 17.5px;
+      font-weight: 600;
+      line-height: 1.3;
+      letter-spacing: -0.01em;
+      margin: 40px 0 12px 0;
+      color: var(--foreground);
+      counter-increment: subsection;
+      counter-reset: subsubsection;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+
+    main h3::before {
+      content: counter(section, decimal-leading-zero) '.' counter(subsection);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--muted-foreground);
+      flex-shrink: 0;
+    }
+
+    /* H4 */
+    main h4 {
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0;
+      color: var(--foreground);
+      margin: 32px 0 10px 0;
+      counter-increment: subsubsection;
+    }
+
+    main h4::before {
+      content: '◆';
+      color: var(--primary);
+      margin-right: 8px;
+      font-size: 10px;
+      vertical-align: middle;
+    }
+
+    /* H5 */
+    main h5 {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted-foreground);
+      margin: 20px 0 8px 0;
+    }
+
+    /* Paragraph */
+    main p {
+      font-size: 14.5px;
+      line-height: 1.7;
+      margin: 14px 0;
+      color: var(--foreground);
+      max-width: 70ch;
+    }
+
+    main p strong {
+      font-weight: 600;
+      color: var(--foreground);
+    }
+
+    main p em {
+      font-style: italic;
+      color: var(--muted-foreground);
+    }
+
+    /* Links */
+    main a {
+      color: var(--primary);
+      text-decoration: none;
+      border-bottom: 1px solid color-mix(in oklch, var(--primary) 35%, transparent);
+      transition: all 0.15s ease;
+    }
+
+    main a:hover {
+      border-bottom-color: var(--primary);
+      background: color-mix(in oklch, var(--primary) 8%, transparent);
+    }
+
+    /* Lists */
+    main ul, main ol {
+      padding-left: 24px;
+      margin: 14px 0;
+    }
+
+    main ul li, main ol li {
+      margin: 5px 0;
+      font-size: 14.5px;
+      line-height: 1.65;
+      color: var(--foreground);
+    }
+
+    main ul li::marker {
+      color: var(--muted-foreground);
+    }
+
+    main ol li::marker {
+      color: var(--primary);
+      font-family: var(--font-mono);
+      font-weight: 500;
+      font-size: 13px;
+    }
+
+    main li > p { margin: 4px 0; }
+    main li > ul, main li > ol { margin: 6px 0; }
+
+    /* Inline code */
+    main code {
+      font-family: var(--font-mono);
+      font-size: 0.86em;
+      font-weight: 500;
+      background: var(--muted);
+      color: var(--foreground);
+      padding: 1.5px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      letter-spacing: -0.01em;
+    }
+
+    /* Code blocks */
+    main pre {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 20px 0;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      line-height: 1.55;
+      position: relative;
+    }
+
+    main pre::before {
+      content: 'CODE';
+      position: absolute;
+      top: 8px;
+      right: 12px;
+      font-family: var(--font-mono);
+      font-size: 9.5px;
+      font-weight: 500;
+      letter-spacing: 0.15em;
+      color: var(--muted-foreground);
+      opacity: 0.5;
+    }
+
+    main pre.diagram::before {
+      content: 'DIAGRAM';
+    }
+
+    main pre code {
+      background: transparent;
+      border: none;
+      padding: 0;
+      color: var(--foreground);
+      font-size: inherit;
+      letter-spacing: 0;
+      display: block;
+    }
+
+    main pre.diagram code {
+      color: var(--muted-foreground);
+    }
+
+    /* Tables */
+    main table {
+      width: 100%;
+      max-width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      margin: 20px 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      font-size: 13.5px;
+      color: var(--foreground);
+    }
+
+    main thead {
+      background: var(--muted);
+    }
+
+    main th {
+      padding: 11px 16px;
+      text-align: left;
+      font-family: var(--font-display);
+      font-weight: 600;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      color: var(--muted-foreground);
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+      vertical-align: bottom;
+    }
+
+    main td {
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.55;
+    }
+
+    main tbody tr:last-child td { border-bottom: none; }
+    main tbody tr:hover { background: color-mix(in oklch, var(--accent) 50%, transparent); }
+
+    main td code {
+      font-size: 12px;
+    }
+
+    main td strong {
+      color: var(--foreground);
+      font-weight: 600;
+    }
+
+    main td:first-child {
+      color: var(--foreground);
+      font-weight: 500;
+    }
+
+    /* Blockquote */
+    main blockquote {
+      margin: 20px 0;
+      padding: 14px 18px 14px 20px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--muted-foreground);
+      border-radius: var(--radius);
+      color: var(--foreground);
+      font-size: 13.5px;
+      line-height: 1.65;
+    }
+
+    main blockquote > p:first-child { margin-top: 0; }
+    main blockquote > p:last-child { margin-bottom: 0; }
+
+    /* Critical alert */
+    main blockquote.critical {
+      background: color-mix(in oklch, var(--status-critical) 8%, var(--card));
+      border-left: 3px solid var(--status-critical);
+      position: relative;
+      padding-top: 30px;
+    }
+
+    main blockquote.critical::before {
+      content: 'Critical';
+      position: absolute;
+      top: 10px;
+      left: 20px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--status-critical);
+      padding: 2px 8px;
+      border: 1px solid color-mix(in oklch, var(--status-critical) 50%, transparent);
+      border-radius: 4px;
+      background: color-mix(in oklch, var(--status-critical) 12%, transparent);
+    }
+
+    main blockquote.critical strong {
+      color: var(--status-critical);
+    }
+
+    /* Meta blockquote (spec header) */
+    main blockquote.meta {
+      background: var(--muted);
+      border-left: 3px solid var(--primary);
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      letter-spacing: 0.01em;
+    }
+
+    main blockquote.meta strong {
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    /* HR */
+    main hr {
+      border: none;
+      height: 1px;
+      background: var(--border);
+      margin: 64px 0;
+    }
+
+    /* Status pills */
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 10px;
+      border-radius: 9999px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      border: 1px solid currentColor;
+    }
+    .status-pill.draft { color: var(--status-warning); }
+    .status-pill .dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    /* Footer */
+    .doc-footer {
+      grid-column: 1 / -1;
+      padding: 32px 56px;
+      border-top: 1px solid var(--border);
+      margin-top: 48px;
+      font-size: 12px;
+      color: var(--muted-foreground);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--card);
+    }
+
+    .doc-footer code {
+      font-family: var(--font-mono);
+      background: transparent;
+      border: none;
+      padding: 0;
+      color: var(--muted-foreground);
+    }
+
+    /* Animations */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    h1.title { animation: fadeUp 0.5s ease both; }
+    .doc-subtitle { animation: fadeUp 0.5s 0.05s ease both; }
+    .hero-card { animation: fadeUp 0.5s 0.1s ease both; }
+
+    main h2,
+    main h3 {
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.4s ease, transform 0.4s ease;
+    }
+    main h2.visible,
+    main h3.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Selection */
+    ::selection {
+      background: color-mix(in oklch, var(--primary) 30%, transparent);
+      color: var(--foreground);
+    }
+
+    /* Responsive */
+    @media (max-width: 1024px) {
+      .shell { grid-template-columns: 1fr; }
+      nav#TOC {
+        position: static;
+        height: auto;
+        max-height: 280px;
+        border-right: none;
+        border-bottom: 1px solid var(--sidebar-border);
+      }
+      main { padding: 32px 24px 80px 24px; }
+      .hero-card { grid-template-columns: repeat(2, 1fr); gap: 16px; }
+    }
+
+    @media (max-width: 600px) {
+      .topbar { padding: 0 12px; gap: 8px; }
+      .topbar .breadcrumb { display: none; }
+      main { padding: 24px 16px 60px 16px; }
+      .hero-card { grid-template-columns: 1fr; padding: 16px; }
+      main h2 { font-size: 22px; }
+      main pre { padding: 12px 14px; font-size: 11.5px; }
+      main table { font-size: 12px; }
+      main th, main td { padding: 8px 10px; }
+    }
+
+    @media print {
+      .topbar, .read-progress, .doc-footer { display: none; }
+      .shell { grid-template-columns: 1fr; }
+      nav#TOC { display: none; }
+      main { padding: 0; max-width: none; }
+      body { background: white; color: black; }
+      main h2 { break-after: avoid; }
+      main pre, main table, main blockquote { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">LMT</span>
+      <span>LED Mesh Toolkit</span>
+    </div>
+    <div class="breadcrumb">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+      <span>Specs</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+      <span>2026-05-10 Design</span>
+    </div>
+    <span class="spacer"></span>
+    <span class="badge status-info"><span class="dot"></span>v1.0</span>
+    <span class="badge status-warning"><span class="dot"></span>Draft</span>
+    <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+      <svg id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+      <svg id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+    </button>
+  </header>
+
+  <div class="read-progress"></div>
+
+  <div class="shell">
+        <nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#led-mesh-toolkit--设计文档"
+id="toc-led-mesh-toolkit--设计文档">LED Mesh Toolkit — 设计文档</a>
+<ul>
+<li><a href="#1-项目定位与范围" id="toc-1-项目定位与范围">1.
+项目定位与范围</a>
+<ul>
+<li><a href="#11-工具职责" id="toc-11-工具职责">1.1 工具职责</a></li>
+<li><a href="#12-目标用户" id="toc-12-目标用户">1.2 目标用户</a></li>
+<li><a href="#13-适用屏体" id="toc-13-适用屏体">1.3 适用屏体</a></li>
+<li><a href="#14-明确不做的事" id="toc-14-明确不做的事">1.4
+明确不做的事</a></li>
+</ul></li>
+<li><a href="#2-整体架构" id="toc-2-整体架构">2. 整体架构</a>
+<ul>
+<li><a href="#21-三层模型" id="toc-21-三层模型">2.1 三层模型</a></li>
+<li><a href="#22-代码组织cargo-workspace--多-crate"
+id="toc-22-代码组织cargo-workspace--多-crate">2.2 代码组织（Cargo
+workspace + 多 crate）</a></li>
+<li><a href="#23-技术栈" id="toc-23-技术栈">2.3 技术栈</a></li>
+<li><a href="#24-平台支持" id="toc-24-平台支持">2.4 平台支持</a></li>
+</ul></li>
+<li><a href="#3-ir中间表达" id="toc-3-ir中间表达">3. IR（中间表达）</a>
+<ul>
+<li><a href="#31-设计原则" id="toc-31-设计原则">3.1 设计原则</a></li>
+<li><a href="#32-核心数据结构" id="toc-32-核心数据结构">3.2
+核心数据结构</a></li>
+<li><a href="#33-接口-trait" id="toc-33-接口-trait">3.3 接口
+trait</a></li>
+<li><a href="#34-不确定度的工程意义" id="toc-34-不确定度的工程意义">3.4
+不确定度的工程意义</a></li>
+</ul></li>
+<li><a href="#4-m1---全站仪路径" id="toc-4-m1---全站仪路径">4. M1 -
+全站仪路径</a>
+<ul>
+<li><a href="#41-工作流总览" id="toc-41-工作流总览">4.1
+工作流总览</a></li>
+<li><a href="#42-输入数据格式" id="toc-42-输入数据格式">4.2
+输入数据格式</a></li>
+<li><a href="#43-命名规则" id="toc-43-命名规则">4.3 命名规则</a></li>
+<li><a href="#44-3-参考点法坐标系定义"
+id="toc-44-3-参考点法坐标系定义">4.4 3 参考点法（坐标系定义）</a></li>
+<li><a href="#45-几何归名算法" id="toc-45-几何归名算法">4.5
+几何归名算法</a></li>
+<li><a href="#46-形状先验--异形处理" id="toc-46-形状先验--异形处理">4.6
+形状先验 + 异形处理</a></li>
+<li><a href="#47-底部遮挡处理" id="toc-47-底部遮挡处理">4.7
+底部遮挡处理</a></li>
+<li><a href="#48-重建算法插件化" id="toc-48-重建算法插件化">4.8
+重建算法（插件化）</a></li>
+<li><a href="#49-测点下限--精度报告" id="toc-49-测点下限--精度报告">4.9
+测点下限 + 精度报告</a></li>
+<li><a href="#410-现场指示卡" id="toc-410-现场指示卡">4.10
+现场指示卡</a></li>
+</ul></li>
+<li><a href="#5-m2---视觉反算路径" id="toc-5-m2---视觉反算路径">5. M2 -
+视觉反算路径</a>
+<ul>
+<li><a href="#51-整体管线基于-doc-2-的-d-方案"
+id="toc-51-整体管线基于-doc-2-的-d-方案">5.1 整体管线（基于 Doc 2 的 D
+方案）</a></li>
+<li><a href="#52-pattern-设计" id="toc-52-pattern-设计">5.2 Pattern
+设计</a></li>
+<li><a href="#53-拍摄-sop" id="toc-53-拍摄-sop">5.3 拍摄 SOP</a></li>
+<li><a href="#54-算法栈python-sidecar"
+id="toc-54-算法栈python-sidecar">5.4 算法栈：Python sidecar</a></li>
+<li><a href="#55-poc-设计m2-启动前置"
+id="toc-55-poc-设计m2-启动前置">5.5 PoC 设计（M2 启动前置）</a></li>
+<li><a href="#56-与-m1-的输出一致性" id="toc-56-与-m1-的输出一致性">5.6
+与 M1 的输出一致性</a></li>
+<li><a href="#57-视觉反算的绝对坐标系定义问题待-poc-阶段决定"
+id="toc-57-视觉反算的绝对坐标系定义问题待-poc-阶段决定">5.7
+视觉反算的"绝对坐标系定义"问题（待 PoC 阶段决定）</a></li>
+</ul></li>
+<li><a href="#6-共用模块在-core-crate-中"
+id="toc-6-共用模块在-core-crate-中">6. 共用模块（在 <code>core/</code>
+crate 中）</a>
+<ul>
+<li><a href="#61-重建引擎" id="toc-61-重建引擎">6.1 重建引擎</a></li>
+<li><a href="#62-uv-展开" id="toc-62-uv-展开">6.2 UV 展开</a></li>
+<li><a href="#63-obj-导出三个-target"
+id="toc-63-obj-导出三个-target">6.3 OBJ 导出（三个 target）</a></li>
+<li><a href="#64-顶点焊接--三角化" id="toc-64-顶点焊接--三角化">6.4
+顶点焊接 + 三角化</a></li>
+</ul></li>
+<li><a href="#7-gui-视图组织" id="toc-7-gui-视图组织">7. GUI
+视图组织</a>
+<ul>
+<li><a href="#71-顶层导航vue-router" id="toc-71-顶层导航vue-router">7.1
+顶层导航（Vue Router）</a></li>
+<li><a href="#72-关键视图职责" id="toc-72-关键视图职责">7.2
+关键视图职责</a></li>
+<li><a href="#73-进度推送" id="toc-73-进度推送">7.3 进度推送</a></li>
+</ul></li>
+<li><a href="#8-开发节奏与发布" id="toc-8-开发节奏与发布">8.
+开发节奏与发布</a>
+<ul>
+<li><a href="#81-里程碑" id="toc-81-里程碑">8.1 里程碑</a></li>
+<li><a href="#82-并行-session-开发策略"
+id="toc-82-并行-session-开发策略">8.2 并行 session 开发策略</a></li>
+<li><a href="#83-发布流程" id="toc-83-发布流程">8.3 发布流程</a></li>
+<li><a href="#84-poc-节点m2-进生产前"
+id="toc-84-poc-节点m2-进生产前">8.4 PoC 节点（M2 进生产前）</a></li>
+</ul></li>
+<li><a href="#9-风险与不确定项" id="toc-9-风险与不确定项">9.
+风险与不确定项</a>
+<ul>
+<li><a href="#91-m1-风险" id="toc-91-m1-风险">9.1 M1 风险</a></li>
+<li><a href="#92-m2-风险" id="toc-92-m2-风险">9.2 M2 风险</a></li>
+<li><a href="#93-跨-m1--m2-风险" id="toc-93-跨-m1--m2-风险">9.3 跨 M1 /
+M2 风险</a></li>
+<li><a href="#94-已知不确定项生产前必须验证"
+id="toc-94-已知不确定项生产前必须验证">9.4
+已知不确定项（生产前必须验证）</a></li>
+</ul></li>
+<li><a href="#10-验收标准" id="toc-10-验收标准">10. 验收标准</a>
+<ul>
+<li><a href="#101-m1-验收" id="toc-101-m1-验收">10.1 M1 验收</a></li>
+<li><a href="#102-m2-验收" id="toc-102-m2-验收">10.2 M2 验收</a></li>
+<li><a href="#103-m3-验收可选" id="toc-103-m3-验收可选">10.3 M3
+验收（可选）</a></li>
+</ul></li>
+<li><a href="#附录-a术语表" id="toc-附录-a术语表">附录
+A：术语表</a></li>
+<li><a href="#附录-b参考资料" id="toc-附录-b参考资料">附录
+B：参考资料</a></li>
+</ul></li>
+</ul>
+    </nav>
+    
+    <main>
+      <h1 class="title">LED Mesh Toolkit · 设计文档</h1>
+      <p class="doc-subtitle">VP / xR LED 屏几何建模工具集 · 设计规格</p>
+
+      <dl class="hero-card">
+        <div>
+          <dt>状态</dt>
+          <dd><span class="accent">Draft</span> · v1.0</dd>
+        </div>
+        <div>
+          <dt>归档</dt>
+          <dd>2026-05-10</dd>
+        </div>
+        <div>
+          <dt>开发模式</dt>
+          <dd>M0 → M1 ‖ M2</dd>
+        </div>
+        <div>
+          <dt>技术栈</dt>
+          <dd>Tauri 2 · Vue 3 · Rust</dd>
+        </div>
+      </dl>
+
+<section id="led-mesh-toolkit--设计文档" class="level1">
+<h1>LED Mesh Toolkit — 设计文档</h1>
+<blockquote>
+<p><strong>状态</strong>：Draft v1.0 <strong>日期</strong>：2026-05-10
+<strong>负责人</strong>：<a
+href="mailto:lanbipu@gmail.com">lanbipu@gmail.com</a>
+<strong>参考文档</strong>：</p>
+<ul>
+<li><code>01_全站仪LED建模工具_技术方案.md</code>（方向参考）</li>
+<li><code>02_视觉反算LED屏模型技术方案.md</code>（方向参考）</li>
+</ul>
+</blockquote>
+<hr />
+<section id="1-项目定位与范围" class="level2">
+<h2>1. 项目定位与范围</h2>
+<section id="11-工具职责" class="level3">
+<h3>1.1 工具职责</h3>
+<p>LED Mesh Toolkit 是为 VP / xR 项目提供 LED
+屏几何建模的桌面工具集。两条独立的数据获取路径：</p>
+<ol type="1">
+<li><strong>M1 - 全站仪路径</strong>：从 Trimble / Leica 等全站仪实测 3D
+点 → 自动归名 → 重建 mesh</li>
+<li><strong>M2 - 视觉反算路径</strong>：通过 LED 屏显示 ChArUco pattern
++ 多机位摄影 → Bundle Adjustment 反算 3D 点 → 重建 mesh</li>
+</ol>
+<p>两条路径产出<strong>格式一致的 OBJ +
+UV</strong>，可互换互验，可直接导入 Disguise Designer 或 UE
+nDisplay。</p>
+</section>
+<section id="12-目标用户" class="level3">
+<h3>1.2 目标用户</h3>
+<ul>
+<li>现场技术总监（懂 VP/xR 工作流，不一定懂 photogrammetry）</li>
+<li>现场测量员（用全站仪，可能不熟 LED 工艺）</li>
+<li>远程勘察 / 出差工程师（M2 主要用户）</li>
+</ul>
+</section>
+<section id="13-适用屏体" class="level3">
+<h3>1.3 适用屏体</h3>
+<table>
+<thead>
+<tr>
+<th>屏体类型</th>
+<th>支持</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>平面屏</td>
+<td>✅</td>
+<td>完全支持</td>
+</tr>
+<tr>
+<td>弧形屏（恒定半径）</td>
+<td>✅</td>
+<td>主用例</td>
+</tr>
+<tr>
+<td>椭圆 / 变曲率弧形</td>
+<td>⚠️</td>
+<td>通过密集采样支持，精度受限</td>
+</tr>
+<tr>
+<td>折角屏（多段平面）</td>
+<td>✅</td>
+<td>通过 GUI 标记折角列</td>
+</tr>
+<tr>
+<td>异形屏（L 形、缺角）</td>
+<td>✅</td>
+<td>GUI 删格子模式</td>
+</tr>
+<tr>
+<td>复杂自由曲面</td>
+<td>❌</td>
+<td>不在工具范围</td>
+</tr>
+<tr>
+<td>球形 / 穹顶屏</td>
+<td>❌</td>
+<td>不在工具范围</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="14-明确不做的事" class="level3">
+<h3>1.4 明确不做的事</h3>
+<ul>
+<li>色彩校准 / 亮度匹配（OpenVPCal 的领域）</li>
+<li>实时跟踪标定（Disguise Spatial Calibration 的领域）</li>
+<li>点云后处理（FARO 等专业测量后处理软件的领域）</li>
+<li>自由曲面建模</li>
+<li>LED 屏内容显示控制（Disguise / 服务器的领域）</li>
+</ul>
+<hr />
+</section>
+</section>
+<section id="2-整体架构" class="level2">
+<h2>2. 整体架构</h2>
+<section id="21-三层模型" class="level3">
+<h3>2.1 三层模型</h3>
+<pre><code>[Input Adapters]              [IR - 中间表达]            [Output Targets]
+  CSV (全站仪)  ──┐                                    ┌─→ disguise OBJ
+  ChArUco BA ────┼──→  MeasuredPoints  →  Reconstruct  ┼─→ unreal OBJ
+                 ┘     ReconstructedSurface            └─→ neutral OBJ
+                       MeshOutput</code></pre>
+<p>每个 input adapter 内部算法独立，输出统一为
+<code>MeasuredPoints</code>。重建 / UV /
+导出共用一套实现，所有数据源都受益。</p>
+</section>
+<section id="22-代码组织cargo-workspace--多-crate" class="level3">
+<h3>2.2 代码组织（Cargo workspace + 多 crate）</h3>
+<pre><code>led-mesh-toolkit/
+├── Cargo.toml                       # workspace 根
+├── package.json                     # 前端
+├── crates/
+│   ├── core/                        # ⭐ 共用：IR + 重建 + UV + 导出
+│   │   ├── ir.rs                    # MeasuredPoints / ReconstructedSurface / MeshOutput
+│   │   ├── reconstruct/             # 直连 / 边界插值 / 径向基 / 标称
+│   │   ├── uv.rs
+│   │   └── export/                  # disguise / unreal / neutral
+│   ├── adapter-total-station/       # 🔵 M1 全站仪 adapter
+│   │   ├── csv_parser.rs
+│   │   ├── geometric_naming.rs
+│   │   └── reference_frame.rs
+│   └── adapter-visual-ba/           # 🟣 M2 视觉反算 adapter
+│       ├── pattern_generator.rs
+│       ├── feature_detector.rs      # 调 Python sidecar
+│       └── bundle_adjustment.rs     # 调 Python sidecar
+├── src-tauri/                       # Tauri 后端入口
+├── src/                             # Vue 3 前端
+└── python-sidecar/                  # M2 Python 子进程
+    ├── main.py
+    ├── charuco.py
+    └── bundle_adjust.py</code></pre>
+</section>
+<section id="23-技术栈" class="level3">
+<h3>2.3 技术栈</h3>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>技术选型</th>
+<th>与 UECM 关系</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>App 框架</td>
+<td>Tauri 2.x</td>
+<td>同</td>
+</tr>
+<tr>
+<td>前端</td>
+<td>Vue 3 + TypeScript + Vite</td>
+<td>同</td>
+</tr>
+<tr>
+<td>UI</td>
+<td>Tailwind CSS + reka-ui + class-variance-authority</td>
+<td>同</td>
+</tr>
+<tr>
+<td>状态</td>
+<td>Pinia</td>
+<td>同</td>
+</tr>
+<tr>
+<td>路由</td>
+<td>Vue Router</td>
+<td>同</td>
+</tr>
+<tr>
+<td>i18n</td>
+<td>vue-i18n</td>
+<td>同</td>
+</tr>
+<tr>
+<td>后端核心</td>
+<td>Rust（rusqlite, serde, tokio）</td>
+<td>同</td>
+</tr>
+<tr>
+<td>数学 / 几何</td>
+<td>nalgebra, glam, kiddo, argmin</td>
+<td>新增</td>
+</tr>
+<tr>
+<td>3D 渲染</td>
+<td>Three.js + 薄 Vue 包装</td>
+<td>新增</td>
+</tr>
+<tr>
+<td>2D 网格编辑</td>
+<td>Konva.js / vue-konva</td>
+<td>新增</td>
+</tr>
+<tr>
+<td>M2 视觉算法</td>
+<td>Python sidecar（OpenCV-contrib + scipy）</td>
+<td>借用 PowerShell sidecar 模式</td>
+</tr>
+<tr>
+<td>测试</td>
+<td>Vitest + Cargo test + Pytest</td>
+<td>Vitest / Cargo 同</td>
+</tr>
+<tr>
+<td>打包</td>
+<td>单 .exe / .dmg / .AppImage</td>
+<td>同</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="24-平台支持" class="level3">
+<h3>2.4 平台支持</h3>
+<ul>
+<li><strong>目标</strong>：Windows 10/11（VP/xR 现场主流）</li>
+<li><strong>开发</strong>：macOS / Linux 可用</li>
+<li><strong>测试</strong>：Vitest + Cargo test 跨平台；Python sidecar
+在三平台均可</li>
+</ul>
+<hr />
+</section>
+</section>
+<section id="3-ir中间表达" class="level2">
+<h2>3. IR（中间表达）</h2>
+<section id="31-设计原则" class="level3">
+<h3>3.1 设计原则</h3>
+<p>IR 切在"两套算法的输出汇合点"。前半段（数据获取）每个 adapter
+独立实现；后半段（重建 / UV / 导出）共用。</p>
+</section>
+<section id="32-核心数据结构" class="level3">
+<h3>3.2 核心数据结构</h3>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">struct</span> MeasuredPoint <span class="op">{</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> name<span class="op">:</span> <span class="dt">String</span><span class="op">,</span>              <span class="co">// &quot;MAIN_V001_R001&quot;</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> position<span class="op">:</span> Vec3<span class="op">,</span>            <span class="co">// 模型坐标系下的位置（米）</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> uncertainty<span class="op">:</span> Uncertainty<span class="op">,</span>  <span class="co">// 不确定度</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> source<span class="op">:</span> PointSource<span class="op">,</span>       <span class="co">// 数据来源</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">enum</span> Uncertainty <span class="op">{</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>    Isotropic(<span class="dt">f32</span>)<span class="op">,</span>                <span class="co">// 全站仪：单个 σ 值（mm）</span></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>    Covariance3x3(Mat3)<span class="op">,</span>           <span class="co">// 视觉反算：3×3 协方差矩阵</span></span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">enum</span> PointSource <span class="op">{</span></span>
+<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a>    TotalStation<span class="op">,</span>                  <span class="co">// M1</span></span>
+<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a>    VisualBA <span class="op">{</span> camera_count<span class="op">:</span> <span class="dt">u32</span> <span class="op">},</span> <span class="co">// M2</span></span>
+<span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb3-17"><a href="#cb3-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-18"><a href="#cb3-18" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">struct</span> MeasuredPoints <span class="op">{</span></span>
+<span id="cb3-19"><a href="#cb3-19" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> points<span class="op">:</span> <span class="dt">Vec</span><span class="op">&lt;</span>MeasuredPoint<span class="op">&gt;,</span></span>
+<span id="cb3-20"><a href="#cb3-20" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> coordinate_frame<span class="op">:</span> CoordinateFrame<span class="op">,</span>  <span class="co">// origin + X 轴 + XY 平面定义</span></span>
+<span id="cb3-21"><a href="#cb3-21" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> screen_id<span class="op">:</span> <span class="dt">String</span><span class="op">,</span></span>
+<span id="cb3-22"><a href="#cb3-22" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> shape_prior<span class="op">:</span> ShapePrior<span class="op">,</span>            <span class="co">// curved/flat/folded + 关键参数</span></span>
+<span id="cb3-23"><a href="#cb3-23" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> cabinet_array<span class="op">:</span> CabinetArray<span class="op">,</span>        <span class="co">// 行×列 + 单箱体尺寸 + mask</span></span>
+<span id="cb3-24"><a href="#cb3-24" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb3-25"><a href="#cb3-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-26"><a href="#cb3-26" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">struct</span> ReconstructedSurface <span class="op">{</span></span>
+<span id="cb3-27"><a href="#cb3-27" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> vertices<span class="op">:</span> <span class="dt">Vec</span><span class="op">&lt;</span>Vec3<span class="op">&gt;,</span>                <span class="co">// 模型坐标系下的顶点</span></span>
+<span id="cb3-28"><a href="#cb3-28" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> topology<span class="op">:</span> GridTopology<span class="op">,</span>             <span class="co">// 网格拓扑</span></span>
+<span id="cb3-29"><a href="#cb3-29" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> uv_coords<span class="op">:</span> <span class="dt">Vec</span><span class="op">&lt;</span>Vec2<span class="op">&gt;,</span></span>
+<span id="cb3-30"><a href="#cb3-30" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> quality_metrics<span class="op">:</span> QualityMetrics<span class="op">,</span>    <span class="co">// 重建后的质量指标</span></span>
+<span id="cb3-31"><a href="#cb3-31" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb3-32"><a href="#cb3-32" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-33"><a href="#cb3-33" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">struct</span> MeshOutput <span class="op">{</span></span>
+<span id="cb3-34"><a href="#cb3-34" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> vertices<span class="op">:</span> <span class="dt">Vec</span><span class="op">&lt;</span>Vec3<span class="op">&gt;,</span>                <span class="co">// 已按 target 软件适配</span></span>
+<span id="cb3-35"><a href="#cb3-35" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> triangles<span class="op">:</span> <span class="dt">Vec</span><span class="op">&lt;</span>[<span class="dt">u32</span><span class="op">;</span> <span class="dv">3</span>]<span class="op">&gt;,</span></span>
+<span id="cb3-36"><a href="#cb3-36" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> uv_coords<span class="op">:</span> <span class="dt">Vec</span><span class="op">&lt;</span>Vec2<span class="op">&gt;,</span></span>
+<span id="cb3-37"><a href="#cb3-37" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> target<span class="op">:</span> TargetSoftware<span class="op">,</span>             <span class="co">// disguise / unreal / neutral</span></span>
+<span id="cb3-38"><a href="#cb3-38" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+</section>
+<section id="33-接口-trait" class="level3">
+<h3>3.3 接口 trait</h3>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="kw">trait</span> InputAdapter <span class="op">{</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">fn</span> parse(<span class="op">&amp;</span><span class="kw">self</span><span class="op">,</span> source<span class="op">:</span> <span class="op">&amp;</span><span class="dt">Path</span><span class="op">,</span> config<span class="op">:</span> <span class="op">&amp;</span>ProjectConfig) </span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>        <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>MeasuredPoints<span class="op">&gt;;</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="kw">trait</span> Reconstructor <span class="op">{</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">fn</span> reconstruct(<span class="op">&amp;</span><span class="kw">self</span><span class="op">,</span> points<span class="op">:</span> <span class="op">&amp;</span>MeasuredPoints) </span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>        <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>ReconstructedSurface<span class="op">&gt;;</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="kw">trait</span> OutputTarget <span class="op">{</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>    <span class="kw">fn</span> export(<span class="op">&amp;</span><span class="kw">self</span><span class="op">,</span> surface<span class="op">:</span> <span class="op">&amp;</span>ReconstructedSurface<span class="op">,</span> path<span class="op">:</span> <span class="op">&amp;</span><span class="dt">Path</span>) </span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>        <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>()<span class="op">&gt;;</span></span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+</section>
+<section id="34-不确定度的工程意义" class="level3">
+<h3>3.4 不确定度的工程意义</h3>
+<ul>
+<li>重建器读 <code>uncertainty</code>
+决定加权策略（小不确定度高权重）</li>
+<li>一份重建器代码处理 M1 和 M2 两类数据</li>
+<li>全站仪默认 <code>Isotropic(±1-3mm)</code>；视觉反算从 BA
+协方差矩阵填 <code>Covariance3x3</code></li>
+<li><strong>M1 阶段就必须实现这个接口</strong>，避免 M2 加进来时改
+IR</li>
+</ul>
+<hr />
+</section>
+</section>
+<section id="4-m1---全站仪路径" class="level2">
+<h2>4. M1 - 全站仪路径</h2>
+<section id="41-工作流总览" class="level3">
+<h3>4.1 工作流总览</h3>
+<pre><code>[设计阶段 - GUI]
+  输入箱体阵列 + 形状先验 → 2D 布局编辑器 → 3 参考点选定
+  → 导出指示卡（PDF + HTML）+ 项目 YAML
+
+[现场测量]
+  操作员先测 3 参考点 → 再测其他点
+  → Trimble Access 导出 CSV
+
+[回工具 - GUI 或 CLI]
+  导入 CSV + 加载 YAML → 几何归名 → 重建 → 3D 预览 → 导出 OBJ</code></pre>
+</section>
+<section id="42-输入数据格式" class="level3">
+<h3>4.2 输入数据格式</h3>
+<section id="csv全站仪原始数据" class="level4">
+<h4>CSV（全站仪原始数据）</h4>
+<pre class="csv"><code>name,x,y,z,note
+1,1234.567,5678.901,12345.678,
+2,31234.567,5678.901,12340.012,
+3,1234.567,5678.901,2345.678,
+4,1734.500,5680.000,12345.500,
+...</code></pre>
+<ul>
+<li>单位：毫米</li>
+<li>坐标系：仪器原始（任意）；工具内部变换到模型坐标系</li>
+<li><code>name</code> 字段可以是数字点号（仪器自动给）——
+工具按几何归名</li>
+<li><code>note</code> 可选</li>
+</ul>
+</section>
+<section id="项目-yaml" class="level4">
+<h4>项目 YAML</h4>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="fu">project</span><span class="kw">:</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">name</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;Studio_A_Volume&quot;</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">unit</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;mm&quot;</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="at">  </span></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="fu">screens</span><span class="kw">:</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">MAIN</span><span class="kw">:</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">cabinet_count</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="dv">120</span><span class="kw">,</span><span class="at"> </span><span class="dv">20</span><span class="kw">]</span><span class="co">            # 列 × 行</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">cabinet_size_mm</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="dv">500</span><span class="kw">,</span><span class="at"> </span><span class="dv">500</span><span class="kw">]</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">pixels_per_cabinet</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="dv">256</span><span class="kw">,</span><span class="at"> </span><span class="dv">256</span><span class="kw">]</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">shape_prior</span><span class="kw">:</span></span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">type</span><span class="kw">:</span><span class="at"> curved</span><span class="co">                      # curved | flat | folded</span></span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">radius_mm</span><span class="kw">:</span><span class="at"> </span><span class="dv">30000</span><span class="co">                  # 弧形必填</span></span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">fold_seams_at_columns</span><span class="kw">:</span><span class="at"> </span><span class="kw">[]</span><span class="co">         # 折角必填</span></span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">shape_mode</span><span class="kw">:</span><span class="at"> rectangle</span><span class="co">               # rectangle | irregular</span></span>
+<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">irregular_mask</span><span class="kw">:</span><span class="at"> </span><span class="kw">[]</span><span class="co">                  # irregular 模式：被剔除的箱体 [(col, row), ...]</span></span>
+<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">bottom_completion</span><span class="kw">:</span></span>
+<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">lowest_measurable_row</span><span class="kw">:</span><span class="at"> </span><span class="dv">5</span><span class="co">          # 实际可测最低行</span></span>
+<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">fallback_method</span><span class="kw">:</span><span class="at"> vertical</span></span>
+<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">assumed_height_mm</span><span class="kw">:</span><span class="at"> </span><span class="dv">2000</span></span>
+<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">FLOOR</span><span class="kw">:</span></span>
+<span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">cabinet_count</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="dv">12</span><span class="kw">,</span><span class="at"> </span><span class="dv">8</span><span class="kw">]</span></span>
+<span id="cb7-22"><a href="#cb7-22" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">cabinet_size_mm</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="dv">500</span><span class="kw">,</span><span class="at"> </span><span class="dv">500</span><span class="kw">]</span></span>
+<span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">shape_prior</span><span class="kw">:</span></span>
+<span id="cb7-24"><a href="#cb7-24" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">type</span><span class="kw">:</span><span class="at"> flat</span></span>
+<span id="cb7-25"><a href="#cb7-25" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">shape_mode</span><span class="kw">:</span><span class="at"> rectangle</span></span>
+<span id="cb7-26"><a href="#cb7-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-27"><a href="#cb7-27" aria-hidden="true" tabindex="-1"></a><span class="fu">coordinate_system</span><span class="kw">:</span></span>
+<span id="cb7-28"><a href="#cb7-28" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">origin_point</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;MAIN_V001_R005&quot;</span><span class="co">        # 与 lowest_measurable_row 一致</span></span>
+<span id="cb7-29"><a href="#cb7-29" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">x_axis_point</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;MAIN_V120_R005&quot;</span><span class="co">        # 必须是物理可测的位置</span></span>
+<span id="cb7-30"><a href="#cb7-30" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">xy_plane_point</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;MAIN_V001_R020&quot;</span></span>
+<span id="cb7-31"><a href="#cb7-31" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-32"><a href="#cb7-32" aria-hidden="true" tabindex="-1"></a><span class="fu">output</span><span class="kw">:</span></span>
+<span id="cb7-33"><a href="#cb7-33" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">target</span><span class="kw">:</span><span class="at"> disguise</span><span class="co">                       # disguise | unreal | neutral</span></span>
+<span id="cb7-34"><a href="#cb7-34" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">obj_filename</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;{screen_id}_mesh.obj&quot;</span></span>
+<span id="cb7-35"><a href="#cb7-35" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">weld_vertices_tolerance_mm</span><span class="kw">:</span><span class="at"> </span><span class="fl">1.0</span></span>
+<span id="cb7-36"><a href="#cb7-36" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">triangulate</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span></code></pre></div>
+</section>
+</section>
+<section id="43-命名规则" class="level3">
+<h3>4.3 命名规则</h3>
+<ul>
+<li>格式：<code>&lt;SCREEN&gt;_V&lt;col&gt;_R&lt;row&gt;</code>，col
+范围 1-120，row 范围 1-20</li>
+<li>col / row 都是 1-based，左下为 (V001, R001)</li>
+<li>工具按"3 参考点法"建立坐标系后，按几何位置最近邻匹配自动归名</li>
+<li>现场测量员<strong>不需要</strong>手工敲名字到仪器</li>
+</ul>
+</section>
+<section id="44-3-参考点法坐标系定义" class="level3">
+<h3>4.4 3 参考点法（坐标系定义）</h3>
+<table>
+<thead>
+<tr>
+<th>角色</th>
+<th>测点</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Origin</td>
+<td>第 1 个测点</td>
+<td>模型 (0, 0, 0)</td>
+</tr>
+<tr>
+<td>X-axis</td>
+<td>第 2 个测点</td>
+<td>+X 方向</td>
+</tr>
+<tr>
+<td>XY-plane</td>
+<td>第 3 个测点</td>
+<td>约束 XY 平面</td>
+</tr>
+</tbody>
+</table>
+<p>工具内部计算（Gram-Schmidt 正交化）：</p>
+<pre><code>X = normalize(P_x − P_origin)
+Z = normalize((P_xy − P_origin) × X)   ← 叉乘得 up
+Y = Z × X                              ← 正交化</code></pre>
+<p>不依赖全站仪水平校准，3 个参考点完全确定坐标系朝向。</p>
+<blockquote>
+<p><strong>⚠️ 关键约束</strong>：3
+个参考点必须是<strong>物理上可测的位置</strong>——不能选被舞台、地板设备、栏杆遮挡的位置。当底部存在遮挡时（<code>lowest_measurable_row = N</code>），参考点选择应从
+R<N> 行起：</p>
+<ul>
+<li>Origin =
+<code>V001_R&lt;N&gt;</code>（左下角，实际可测最低位置）</li>
+<li>X-axis = <code>V120_R&lt;N&gt;</code>（右下角，同一行）</li>
+<li>XY-plane = <code>V001_R&lt;top&gt;</code>（左上角，顶行）</li>
+</ul>
+<p>参考点选错（落在遮挡区）会导致整个坐标变换失败。GUI 应在 2D
+编辑器中阻止用户把 3 参考点放到测量基线下方。</p>
+</blockquote>
+</section>
+<section id="45-几何归名算法" class="level3">
+<h3>4.5 几何归名算法</h3>
+<p>伪代码：</p>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> kdtree <span class="op">=</span> <span class="pp">KdTree::</span>from_iter(expected_grid_positions)<span class="op">;</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> measured_point <span class="kw">in</span> csv_points <span class="op">{</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> (dist<span class="op">,</span> expected_id) <span class="op">=</span> kdtree<span class="op">.</span>nearest(measured_point)<span class="op">;</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> dist <span class="op">&lt;</span> threshold_mm <span class="op">{</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>        assign(measured_point<span class="op">,</span> expected_id)<span class="op">;</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span> <span class="cf">else</span> <span class="op">{</span></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>        flag_as_outlier(measured_point)<span class="op">;</span></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<ul>
+<li>阈值默认 50mm（半个箱体宽度的 1/5）</li>
+<li>歧义点（两个测点都距离同一个 expected 位置 &lt; 阈值）→ GUI
+高亮让用户确认</li>
+<li>离群点 → GUI 标红</li>
+<li>漏测预期点 → GUI 标灰 + 报告里列出</li>
+</ul>
+</section>
+<section id="46-形状先验--异形处理" class="level3">
+<h3>4.6 形状先验 + 异形处理</h3>
+<section id="形状先验组合a-yaml-声明--b-测点修正" class="level4">
+<h4>形状先验组合：(a) YAML 声明 + (b) 测点修正</h4>
+<ul>
+<li>YAML 声明 <code>type: curved/flat/folded</code> +
+关键参数（半径或控制点）</li>
+<li>实测点用于验证 / 修正先验</li>
+<li>重建器以先验为初值，实测点为残差修正</li>
+</ul>
+</section>
+<section id="异形处理决策树" class="level4">
+<h4>异形处理决策树</h4>
+<pre><code>shape_mode: rectangle (默认)
+  ├─ 用户测全 → 直接按矩形阵列建模
+  └─ 用户没测全 → fallback 补全（仅缺角点）+ warning
+
+shape_mode: irregular
+  └─ 用户在 2D 网格编辑器删格子明确表达 mask
+     - mask 内：建模
+     - mask 外：留空 / 不参与 mesh
+     - 缺测的 mask 内位置：fallback 补全 + warning</code></pre>
+</section>
+</section>
+<section id="47-底部遮挡处理" class="level3">
+<h3>4.7 底部遮挡处理</h3>
+<p>LED 屏底部经常被舞台、设备、栏杆遮挡，前 3-5 行可能完全不可测。</p>
+<p><strong>GUI 加"测量基线"功能</strong>：用户在 2D
+网格上标记"实际可测最低行"。基线下面的行用 fallback 推算。</p>
+<section id="yaml-配置" class="level4">
+<h4>YAML 配置</h4>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bottom_completion</span><span class="kw">:</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">lowest_measurable_row</span><span class="kw">:</span><span class="at"> </span><span class="dv">5</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">fallback_method</span><span class="kw">:</span><span class="at"> vertical</span></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">assumed_height_mm</span><span class="kw">:</span><span class="at"> </span><span class="dv">2000</span></span></code></pre></div>
+</section>
+<section id="算法" class="level4">
+<h4>算法</h4>
+<ul>
+<li>假设 R001-R004 在 R005 的正下方（垂直延伸）</li>
+<li>高度差 = (5-1) × 500mm = 2000mm</li>
+<li>报告中显式标记"R001-R004 是 fallback 补全的"</li>
+</ul>
+</section>
+<section id="精度声明" class="level4">
+<h4>精度声明</h4>
+<pre><code>WARNINGS:
+- R001-R004 因底部遮挡未实测，垂直延伸补全（high 2.0m）
+- 补全精度估计 ±5-15mm（依赖箱体堆叠垂直度）
+- 该精度对 VP 项目可接受；xR 项目建议清理遮挡后补测底边</code></pre>
+</section>
+</section>
+<section id="48-重建算法插件化" class="level3">
+<h3>4.8 重建算法（插件化）</h3>
+<p>按测点稀疏度自动选：</p>
+<table>
+<thead>
+<tr>
+<th>重建器</th>
+<th>触发条件</th>
+<th>算法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>direct_link</code></td>
+<td>完整网格采样（每箱体角都测）</td>
+<td>直接连点，无插值</td>
+</tr>
+<tr>
+<td><code>boundary_interp</code></td>
+<td>边界完整 + 中段抽样</td>
+<td>边界拟合 + 双线性插值 + 中段验证</td>
+</tr>
+<tr>
+<td><code>radial_basis</code></td>
+<td>自适应稀疏</td>
+<td>径向基插值 / 薄板样条</td>
+</tr>
+<tr>
+<td><code>nominal</code></td>
+<td>仅 4 角 + 形状先验</td>
+<td>按形状先验 + 箱体阵列做标称建模</td>
+</tr>
+</tbody>
+</table>
+<p>重建器选择策略：从最严格到最宽松依次尝试，第一个满足触发条件的胜出。</p>
+</section>
+<section id="49-测点下限--精度报告" class="level3">
+<h3>4.9 测点下限 + 精度报告</h3>
+<section id="必要" class="level4">
+<h4>必要</h4>
+<ul>
+<li>3 参考点（origin / X 轴 / XY 平面）</li>
+<li>4 角（实际可测最低行 + 顶行）</li>
+<li>形状先验</li>
+</ul>
+</section>
+<section id="推荐" class="level4">
+<h4>推荐</h4>
+<ul>
+<li>4 角 + 顶/底边各 ~5 点 + 中段 1 点 = ~16 点（VP 标准够用）</li>
+</ul>
+</section>
+<section id="报告内容json--gui-双输出" class="level4">
+<h4>报告内容（JSON + GUI 双输出）</h4>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;input&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;expected_points&quot;</span><span class="fu">:</span> <span class="dv">277</span><span class="fu">,</span></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;measured_points&quot;</span><span class="fu">:</span> <span class="dv">273</span><span class="fu">,</span></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;missing&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;V015_R020&quot;</span><span class="ot">,</span> <span class="st">&quot;V034_R020&quot;</span><span class="ot">,</span> <span class="st">&quot;V067_R020&quot;</span><span class="ot">,</span> <span class="st">&quot;V089_R020&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;outliers&quot;</span><span class="fu">:</span> <span class="ot">[]</span><span class="fu">,</span></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ambiguous&quot;</span><span class="fu">:</span> <span class="ot">[]</span></span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;reconstruction&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;method&quot;</span><span class="fu">:</span> <span class="st">&quot;boundary_interp_with_middle_validation&quot;</span><span class="fu">,</span></span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;middle_max_dev_mm&quot;</span><span class="fu">:</span> <span class="fl">4.2</span><span class="fu">,</span></span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;middle_mean_dev_mm&quot;</span><span class="fu">:</span> <span class="fl">1.3</span><span class="fu">,</span></span>
+<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;shape_fit_rms_mm&quot;</span><span class="fu">:</span> <span class="fl">2.1</span></span>
+<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span id="cb13-15"><a href="#cb13-15" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;output&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb13-16"><a href="#cb13-16" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;vertex_count&quot;</span><span class="fu">:</span> <span class="dv">2541</span><span class="fu">,</span></span>
+<span id="cb13-17"><a href="#cb13-17" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;face_count&quot;</span><span class="fu">:</span> <span class="dv">4800</span><span class="fu">,</span></span>
+<span id="cb13-18"><a href="#cb13-18" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;obj_path&quot;</span><span class="fu">:</span> <span class="st">&quot;MAIN_disguise.obj&quot;</span><span class="fu">,</span></span>
+<span id="cb13-19"><a href="#cb13-19" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;vertices_under_disguise_limit&quot;</span><span class="fu">:</span> <span class="kw">true</span></span>
+<span id="cb13-20"><a href="#cb13-20" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span id="cb13-21"><a href="#cb13-21" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;estimated_precision&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb13-22"><a href="#cb13-22" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;rms_mm&quot;</span><span class="fu">:</span> <span class="fl">4.5</span><span class="fu">,</span></span>
+<span id="cb13-23"><a href="#cb13-23" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;p95_mm&quot;</span><span class="fu">:</span> <span class="fl">8.2</span><span class="fu">,</span></span>
+<span id="cb13-24"><a href="#cb13-24" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;basis&quot;</span><span class="fu">:</span> <span class="st">&quot;测点密度 + 形状残差&quot;</span></span>
+<span id="cb13-25"><a href="#cb13-25" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span id="cb13-26"><a href="#cb13-26" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;warnings&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb13-27"><a href="#cb13-27" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;顶边 4 个点漏测，使用插值补全 - 建议补测&quot;</span><span class="ot">,</span></span>
+<span id="cb13-28"><a href="#cb13-28" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;V064_R010 中段偏差 7.3mm - 该处可能存在变形&quot;</span></span>
+<span id="cb13-29"><a href="#cb13-29" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
+<span id="cb13-30"><a href="#cb13-30" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>GUI 同时在 3D mesh 上<strong>高亮 warning 区域</strong>（红色 / 橙色
+cell）。</p>
+</section>
+</section>
+<section id="410-现场指示卡" class="level3">
+<h3>4.10 现场指示卡</h3>
+<section id="内容结构pdf--html-双版本" class="level4">
+<h4>内容结构（PDF + HTML 双版本）</h4>
+<pre><code>═══════════════════════════════════════════════
+LED 屏建模 - 测量指示卡
+项目：Studio_A_Volume    日期：2026-05-10
+箱体阵列：120 × 20，单箱体 500×500mm
+预期总点数：277（3 参考点 + 274 测量点）
+═══════════════════════════════════════════════
+
+【第一步：3 个参考点（按顺序，仪器点号 1-3）】
+
+序号  角色          物理位置（在 origin 坐标系下）
+1     ① Origin      主屏 R005 行左侧箱体右上顶点 (0, 0, 0)
+2     ② X-axis      主屏 R005 行右侧箱体左上顶点 (60.0, 0, 0)
+3     ③ XY-plane    主屏 R020 行左侧箱体右下顶点 (0, 0, 7.5)
+
+【第二步：网格示意图（带高亮）】
+[2D 展开图：● 必测 / ○ 抽样 / ░░ 异形剔除 / ╳ 遮挡补全]
+
+【第三步：详细列表（按建议测量顺序）】
+
+#    分组       工具命名      绝对坐标 (X, Y, Z) 米
+4    顶边-001   V001_R020     (0.0, 0.0, 10.0)
+5    顶边-002   V002_R020     (0.5, 0.0, 10.0)
+...
+═══════════════════════════════════════════════</code></pre>
+</section>
+<section id="现场两种操作模式" class="level4">
+<h4>现场两种操作模式</h4>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>现场操作</th>
+<th>工具角色</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A 基础（仪器原坐标）</strong></td>
+<td>测量员瞄准"大致位置"测点</td>
+<td>工具事后用 ①②③ 建立坐标变换 → 几何归名</td>
+</tr>
+<tr>
+<td><strong>B 进阶（Trimble Access 配准）</strong></td>
+<td>测 ①②③ 后做坐标配准 → 仪器后续显示 origin 坐标系 →
+直接按绝对坐标瞄准</td>
+<td>工具仍然事后做归名 + 校验</td>
+</tr>
+</tbody>
+</table>
+<p>工具不强制走哪种模式——给出绝对坐标即可，现场流程由操作员选。</p>
+<hr />
+</section>
+</section>
+</section>
+<section id="5-m2---视觉反算路径" class="level2">
+<h2>5. M2 - 视觉反算路径</h2>
+<section id="51-整体管线基于-doc-2-的-d-方案" class="level3">
+<h3>5.1 整体管线（基于 Doc 2 的 D 方案）</h3>
+<pre><code>Step 1: ChArUco Pattern 生成
+Step 2: Disguise 显示 + 多机位拍摄
+Step 3: ArUco 检测 + 棋盘格亚像素细化
+Step 4: Bundle Adjustment（OpenCV + scipy.least_squares）
+Step 5: ArUco ID 解码 → 网格命名（V&lt;col&gt;_R&lt;row&gt;）
+Step 6: 输出 → MeasuredPoints (IR) → 复用 M1 重建管线</code></pre>
+</section>
+<section id="52-pattern-设计" class="level3">
+<h3>5.2 Pattern 设计</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pattern 拓扑</td>
+<td>每箱体独立 ChArUco（隔离故障）</td>
+</tr>
+<tr>
+<td>ArUco 字典</td>
+<td>DICT_6X6_1000</td>
+</tr>
+<tr>
+<td>棋盘格规格</td>
+<td>8 × 8 内角点（9 × 9 格）</td>
+</tr>
+<tr>
+<td>物理尺寸</td>
+<td>与箱体一致（500 × 500mm）</td>
+</tr>
+<tr>
+<td>Marker 像素尺寸</td>
+<td>≥ 50 × 50px（4K 视野下）</td>
+</tr>
+<tr>
+<td>ArUco ID 编码</td>
+<td><code>id = (row × n_cols + col) × markers_per_cabinet</code></td>
+</tr>
+</tbody>
+</table>
+<section id="led-pixel-pitch-适用范围" class="level4">
+<h4>LED Pixel Pitch 适用范围</h4>
+<table>
+<thead>
+<tr>
+<th>pitch</th>
+<th>每格物理尺寸</th>
+<th>像素数</th>
+<th>评估</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1.5mm（高密度 xR）</td>
+<td>55mm</td>
+<td>~37</td>
+<td>✅ 优秀</td>
+</tr>
+<tr>
+<td>2.5mm（标准 xR）</td>
+<td>55mm</td>
+<td>~22</td>
+<td>✅ 良好</td>
+</tr>
+<tr>
+<td>3.9mm（VP 主流）</td>
+<td>55mm</td>
+<td>~14</td>
+<td>⚠️ 临界</td>
+</tr>
+<tr>
+<td>5.0mm（中端 VP）</td>
+<td>55mm</td>
+<td>~11</td>
+<td>⚠️ 临界</td>
+</tr>
+<tr>
+<td>6.5mm+（低端）</td>
+<td>55mm</td>
+<td>~8</td>
+<td>❌ 离散化严重</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>降级方案</strong>：pitch &gt; 5mm 时退化到方案 C（纯
+ArUco，无棋盘格）—— 牺牲亚像素精度换鲁棒性。</p>
+</blockquote>
+</section>
+</section>
+<section id="53-拍摄-sop" class="level3">
+<h3>5.3 拍摄 SOP</h3>
+<section id="设备" class="level4">
+<h4>设备</h4>
+<table>
+<thead>
+<tr>
+<th>用途</th>
+<th>推荐</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PoC + 早期项目</td>
+<td>项目组现有 4K-8K 微单 / 单反（如 A7Rxx, R5）</td>
+</tr>
+<tr>
+<td>生产级标配</td>
+<td>Sony A7R5（6K, 9504×6336）或 Canon R5（8K）+ 24-70mm 定焦 50mm</td>
+</tr>
+<tr>
+<td>应急备份</td>
+<td>iPhone 14 Pro+（4K Pro RAW）</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="关键约束" class="level4">
+<h4>关键约束</h4>
+<ul>
+<li>镜头预先用 OpenCV checkerboard 标定</li>
+<li><strong>现场锁焦 + 锁光圈 + 锁变焦</strong>（变更 → BA 多解）</li>
+<li>RAW 或低压缩 JPEG（避免压缩伪影影响角点）</li>
+</ul>
+</section>
+<section id="拍摄规划6010-弧墙示例" class="level4">
+<h4>拍摄规划（60×10 弧墙示例）</h4>
+<pre><code>              [机位俯视图]
+
+    ┌─────────────────────────┐
+    │  弧墙（60m）              │
+    │       ╱──────╲            │
+    │     ╱           ╲         │
+    │   ╱               ╲       │
+    │ [P1]   [P5]    [P9]       │  ← 远景排（距屏 ~15m）
+    │                            │
+    │     [P2]  [P6]  [P10]     │  ← 中景排（距屏 ~8m）
+    │                            │
+    │  [P3]  [P7]    [P11]      │  ← 近景排（距屏 ~3m）
+    │                            │
+    │     [P4]  [P8]  [P12]     │  ← 高位（地面 +3m）
+    └─────────────────────────┘
+
+每机位 3-5 张，水平方向覆盖左中右 3 个角度。</code></pre>
+</section>
+<section id="拍摄要点" class="level4">
+<h4>拍摄要点</h4>
+<ul>
+<li><strong>每个 ChArUco 至少被 4 张图像观测</strong>（稳健最小值）</li>
+<li><strong>重叠率 ≥ 60%</strong></li>
+<li>远近结合：远距保整体 + 近距保精度</li>
+<li>1/250s 以上快门（避免运动模糊）</li>
+<li>LED 输出 50-80% 亮度（避免过曝同时保留对比度）</li>
+</ul>
+<p>预期照片数量：<strong>30-60 张</strong></p>
+</section>
+</section>
+<section id="54-算法栈python-sidecar" class="level3">
+<h3>5.4 算法栈：Python sidecar</h3>
+<section id="选型理由" class="level4">
+<h4>选型理由</h4>
+<p>OpenCV-contrib aruco + scipy.least_squares 是金标准管线（~1500-2500
+行 Python）。Rust 没有同等成熟度的 aruco 绑定。</p>
+</section>
+<section id="架构" class="level4">
+<h4>架构</h4>
+<pre><code>Tauri (Rust 后端)
+   ↓ tokio::process::Command 启动子进程
+   ↓ stdin / stdout JSON 双向 IPC
+Python sidecar (cv2 + scipy + numpy)
+   ↓ 接收图像路径列表 + 项目配置
+   ↓ ChArUco 检测 + BA 求解
+   ↓ 输出 MeasuredPoints JSON
+Tauri (Rust 后端)
+   ↓ 反序列化 → 走 IR 后续管线</code></pre>
+<p>借用 UECM 的 PowerShell sidecar 模式，把 PowerShell 替换为
+Python。</p>
+</section>
+<section id="python-依赖pyprojecttoml-范例" class="level4">
+<h4>Python 依赖（pyproject.toml 范例）</h4>
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode toml"><code class="sourceCode toml"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="kw">[project]</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="dt">name</span> <span class="op">=</span> <span class="st">&quot;led-mesh-vba-sidecar&quot;</span></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="dt">requires-python</span> <span class="op">=</span> <span class="st">&quot;&gt;=3.10&quot;</span></span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a><span class="dt">dependencies</span> <span class="op">=</span> <span class="op">[</span></span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;numpy&gt;=1.24&quot;</span><span class="op">,</span></span>
+<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;scipy&gt;=1.10&quot;</span><span class="op">,</span></span>
+<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;opencv-contrib-python&gt;=4.8&quot;</span><span class="op">,</span></span>
+<span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;pydantic&gt;=2.0&quot;</span><span class="op">,</span></span>
+<span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a><span class="op">]</span></span></code></pre></div>
+<p>打包：PyInstaller 单 exe 嵌入到 Tauri 资源里（参考 UECM 的 PsExec64
+vendoring）。</p>
+</section>
+</section>
+<section id="55-poc-设计m2-启动前置" class="level3">
+<h3>5.5 PoC 设计（M2 启动前置）</h3>
+<section id="必测项doc-2-第-73-节" class="level4">
+<h4>必测项（Doc 2 第 7.3 节）</h4>
+<ol type="1">
+<li>✗ 真实 LED 屏（非屏幕模拟）实测精度</li>
+<li>✗ ChArUco 在 LED 显示的视觉退化对角点精度的影响</li>
+<li>✗ 影棚环境光对算法稳定性的影响</li>
+<li>✗ 与全站仪测量结果的精度对比（作为 ground truth）</li>
+</ol>
+</section>
+<section id="最小-poc-设计" class="level4">
+<h4>最小 PoC 设计</h4>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>配置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LED 测试墙</td>
+<td>4 × 4 箱体（1m × 1m）足够</td>
+</tr>
+<tr>
+<td>Ground truth</td>
+<td>全站仪测同一组角点</td>
+</tr>
+<tr>
+<td>拍摄</td>
+<td>10-15 张图（远 / 中 / 近混合）</td>
+</tr>
+<tr>
+<td>通过门槛</td>
+<td>RMS &lt; 5mm（VP 标准）</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="stretch-goalspoc-通过后扩展" class="level4">
+<h4>Stretch goals（PoC 通过后扩展）</h4>
+<ul>
+<li>不同 LED pitch 对比（1.5mm vs 2.5mm vs 5mm）</li>
+<li>不同光照对比</li>
+<li>不同镜头 / 相机分辨率对比</li>
+</ul>
+</section>
+</section>
+<section id="56-与-m1-的输出一致性" class="level3">
+<h3>5.6 与 M1 的输出一致性</h3>
+<p>视觉反算输出的 <code>MeasuredPoints</code> 与 M1 完全相同：</p>
+<ul>
+<li>同样的命名（<code>MAIN_V001_R001</code>）—— ArUco ID
+解码后直接得</li>
+<li>同样的坐标系（origin 坐标系）—— BA 输出后做坐标变换</li>
+<li>不确定度 <code>Covariance3x3</code>（BA 残差矩阵）</li>
+</ul>
+<p><strong>重建 / UV / 导出走 IR 共用管线</strong>，与 M1 一致。</p>
+</section>
+<section id="57-视觉反算的绝对坐标系定义问题待-poc-阶段决定"
+class="level3">
+<h3>5.7 视觉反算的"绝对坐标系定义"问题（待 PoC 阶段决定）</h3>
+<p>BA 输出的 3D
+点是<strong>相对的</strong>——以某一相机为锚点的相对姿态。要变换到 origin
+坐标系（与 M1 一致），有 3 个候选方案：</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>实现</th>
+<th>取舍</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A. 已知箱体结构 anchoring</strong></td>
+<td>工具内部按 cabinet_array + shape_prior 算出每个 ChArUco ID
+的"标称物理位置"（origin 坐标系下），然后 Procrustes 对齐到 BA 输出</td>
+<td>不需要现场额外测量；但屏幕实际形状与先验偏差大时漂移</td>
+</tr>
+<tr>
+<td><strong>B. GCP（Ground Control Point）锚定</strong></td>
+<td>屏幕外加 3-4 个全站仪测过的物理
+marker（与屏幕同视野），视觉反算同时检测它们 → 强制把 BA
+结果变换到全站仪坐标系</td>
+<td>精度最稳；但要在现场布置 GCP，多一道工序</td>
+</tr>
+<tr>
+<td><strong>C. 全站仪 + 视觉反算混合</strong></td>
+<td>用全站仪测 3 参考点（跟 M1 一样）+ 视觉反算其他点；3 参考点作 BA
+软约束</td>
+<td>与 M1 流程统一；但 M2 的"独立可用"卖点削弱</td>
+</tr>
+</tbody>
+</table>
+<p><strong>M2 PoC 阶段决定具体方案</strong>——不强制现在选。Spec 在 IR
+接口层不区分这三种方案（都输出"已在 origin 坐标系下的
+MeasuredPoints"）。</p>
+<hr />
+</section>
+</section>
+<section id="6-共用模块在-core-crate-中" class="level2">
+<h2>6. 共用模块（在 <code>core/</code> crate 中）</h2>
+<section id="61-重建引擎" class="level3">
+<h3>6.1 重建引擎</h3>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="kw">trait</span> Reconstructor <span class="op">{</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">fn</span> applicable(<span class="op">&amp;</span><span class="kw">self</span><span class="op">,</span> points<span class="op">:</span> <span class="op">&amp;</span>MeasuredPoints) <span class="op">-&gt;</span> <span class="dt">bool</span><span class="op">;</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>    <span class="kw">fn</span> reconstruct(<span class="op">&amp;</span><span class="kw">self</span><span class="op">,</span> points<span class="op">:</span> <span class="op">&amp;</span>MeasuredPoints) </span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a>        <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>ReconstructedSurface<span class="op">&gt;;</span></span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a><span class="kw">impl</span> Reconstructor <span class="cf">for</span> DirectLinkReconstructor <span class="op">{</span> <span class="co">/* ... */</span> <span class="op">}</span></span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a><span class="kw">impl</span> Reconstructor <span class="cf">for</span> BoundaryInterpReconstructor <span class="op">{</span> <span class="co">/* ... */</span> <span class="op">}</span></span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a><span class="kw">impl</span> Reconstructor <span class="cf">for</span> RadialBasisReconstructor <span class="op">{</span> <span class="co">/* ... */</span> <span class="op">}</span></span>
+<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a><span class="kw">impl</span> Reconstructor <span class="cf">for</span> NominalReconstructor <span class="op">{</span> <span class="co">/* ... */</span> <span class="op">}</span></span></code></pre></div>
+<p>选择逻辑：按从严到宽顺序，第一个 <code>applicable</code> 返回 true
+的胜出。</p>
+</section>
+<section id="62-uv-展开" class="level3">
+<h3>6.2 UV 展开</h3>
+<p>每箱体严格对一格 UV，跟 disguise Screen Resolution 1:1 匹配。</p>
+<div class="sourceCode" id="cb20"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="kw">fn</span> compute_uv(col<span class="op">:</span> <span class="dt">u32</span><span class="op">,</span> row<span class="op">:</span> <span class="dt">u32</span><span class="op">,</span> total_cols<span class="op">:</span> <span class="dt">u32</span><span class="op">,</span> total_rows<span class="op">:</span> <span class="dt">u32</span>) <span class="op">-&gt;</span> Vec2 <span class="op">{</span></span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>    Vec2 <span class="op">{</span></span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>        x<span class="op">:</span> col <span class="kw">as</span> <span class="dt">f32</span> <span class="op">/</span> total_cols <span class="kw">as</span> <span class="dt">f32</span><span class="op">,</span></span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>        y<span class="op">:</span> <span class="dv">1.0</span> <span class="op">-</span> (row <span class="kw">as</span> <span class="dt">f32</span> <span class="op">/</span> total_rows <span class="kw">as</span> <span class="dt">f32</span>)<span class="op">,</span>  <span class="co">// disguise V 朝上</span></span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>异形剔除区在 UV 上仍有对应区域，但 mesh 上无顶点 → disguise
+显示为黑屏。</p>
+</section>
+<section id="63-obj-导出三个-target" class="level3">
+<h3>6.3 OBJ 导出（三个 target）</h3>
+<div class="sourceCode" id="cb21"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="kw">trait</span> OutputTarget <span class="op">{</span></span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">fn</span> export(<span class="op">&amp;</span><span class="kw">self</span><span class="op">,</span> surface<span class="op">:</span> <span class="op">&amp;</span>ReconstructedSurface<span class="op">,</span> path<span class="op">:</span> <span class="op">&amp;</span><span class="dt">Path</span>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>()<span class="op">&gt;;</span></span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Target</th>
+<th>坐标系适配</th>
+<th>单位</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>disguise</strong></td>
+<td>右手系 + Y up（swap Y↔︎Z）</td>
+<td>m</td>
+</tr>
+<tr>
+<td><strong>unreal</strong></td>
+<td>左手系 + Z up（手系翻转）</td>
+<td>cm</td>
+</tr>
+<tr>
+<td><strong>neutral</strong></td>
+<td>原始模型坐标系（右手 + Z up）</td>
+<td>m</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="64-顶点焊接--三角化" class="level3">
+<h3>6.4 顶点焊接 + 三角化</h3>
+<ul>
+<li>顶点焊接：KD-Tree（kiddo crate），默认 1mm 容差</li>
+<li>三角化：每四边形拆两个三角形，对角线选短边以减形变</li>
+<li>验证：<code>vertex_count &lt;= 200_000</code>（disguise 上限）</li>
+</ul>
+<hr />
+</section>
+</section>
+<section id="7-gui-视图组织" class="level2">
+<h2>7. GUI 视图组织</h2>
+<section id="71-顶层导航vue-router" class="level3">
+<h3>7.1 顶层导航（Vue Router）</h3>
+<pre><code>/projects                项目列表
+/projects/:id/design     2D 布局编辑器（M1+M2 共用：箱体阵列 / 形状 / 参考点）
+/projects/:id/instruct   指示卡导出（M1）
+/projects/:id/import     数据导入（M1 CSV / M2 图像）
+/projects/:id/preview    重建结果 3D 预览（M1+M2 共用）
+/projects/:id/export     导出 OBJ（M1+M2 共用）
+/projects/:id/charuco    ChArUco Pattern 生成器（M2）
+/projects/:id/photoplan  拍摄规划 + 进度（M2）</code></pre>
+</section>
+<section id="72-关键视图职责" class="level3">
+<h3>7.2 关键视图职责</h3>
+<section id="projectsiddesign2d-布局编辑器" class="level4">
+<h4><code>/projects/:id/design</code>（2D 布局编辑器）</h4>
+<ul>
+<li>Konva.js 画 2D 网格（120 × 20 cell）</li>
+<li>点击删除箱体（异形 mask）</li>
+<li>拖动测量基线（标记可测最低行）</li>
+<li>选 3 参考点（点击 cell 切换 origin / X 轴 / XY 平面角色）</li>
+<li>实时同步到 YAML</li>
+</ul>
+</section>
+<section id="projectsidpreview3d-预览" class="level4">
+<h4><code>/projects/:id/preview</code>（3D 预览）</h4>
+<ul>
+<li>Three.js + 薄 Vue 包装</li>
+<li>WebGL 渲染 mesh，最大 200k 顶点</li>
+<li>OrbitControls（旋转 / 缩放）</li>
+<li>Warning 区域 cell 高亮（红 / 橙）</li>
+<li>模式切换：标称形状 vs 测量后形状（diff 模式可看修正量）</li>
+</ul>
+</section>
+<section id="projectsidimport数据导入" class="level4">
+<h4><code>/projects/:id/import</code>（数据导入）</h4>
+<ul>
+<li>M1：拖放 CSV 文件 → 几何归名 → GUI 显示归名结果（歧义 /
+离群高亮）</li>
+<li>M2：选择图像文件夹 → Python sidecar 启动 → 进度条 → BA 完成</li>
+</ul>
+</section>
+</section>
+<section id="73-进度推送" class="level3">
+<h3>7.3 进度推送</h3>
+<p>UECM 的 <code>batch-progress</code> 模式直接复用：</p>
+<div class="sourceCode" id="cb23"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tauri::</span>command<span class="at">]</span></span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> rebuild_mesh(app<span class="op">:</span> <span class="pp">tauri::</span>AppHandle<span class="op">,</span> <span class="co">/* ... */</span>) </span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>    <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>MeshResult<span class="op">,</span> <span class="dt">String</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb23-4"><a href="#cb23-4" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> (tx<span class="op">,</span> <span class="kw">mut</span> rx) <span class="op">=</span> <span class="pp">mpsc::</span>channel(<span class="dv">32</span>)<span class="op">;</span></span>
+<span id="cb23-5"><a href="#cb23-5" aria-hidden="true" tabindex="-1"></a>    <span class="pp">tokio::</span>spawn(<span class="kw">async</span> <span class="kw">move</span> <span class="op">{</span></span>
+<span id="cb23-6"><a href="#cb23-6" aria-hidden="true" tabindex="-1"></a>        <span class="cf">while</span> <span class="kw">let</span> <span class="cn">Some</span>(progress) <span class="op">=</span> rx<span class="op">.</span>recv()<span class="op">.</span><span class="kw">await</span> <span class="op">{</span></span>
+<span id="cb23-7"><a href="#cb23-7" aria-hidden="true" tabindex="-1"></a>            app<span class="op">.</span>emit(<span class="st">&quot;mesh-rebuild-progress&quot;</span><span class="op">,</span> progress)<span class="op">.</span>ok()<span class="op">;</span></span>
+<span id="cb23-8"><a href="#cb23-8" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span></span>
+<span id="cb23-9"><a href="#cb23-9" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span>)<span class="op">;</span></span>
+<span id="cb23-10"><a href="#cb23-10" aria-hidden="true" tabindex="-1"></a>    <span class="co">// 算法跑起来，往 tx 推进度</span></span>
+<span id="cb23-11"><a href="#cb23-11" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<hr />
+</section>
+</section>
+<section id="8-开发节奏与发布" class="level2">
+<h2>8. 开发节奏与发布</h2>
+<section id="81-里程碑" class="level3">
+<h3>8.1 里程碑</h3>
+<table>
+<thead>
+<tr>
+<th>里程碑</th>
+<th>内容</th>
+<th>模式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>M0 - 共用框架</strong></td>
+<td><code>core/</code> IR + 重建 / UV / 导出引擎 + GUI shell（路由 /
+布局 / Pinia 骨架）</td>
+<td>单 session 串行（必须先做）</td>
+</tr>
+<tr>
+<td><strong>M1 - 全站仪</strong></td>
+<td><code>adapter-total-station/</code> + M1 专属 GUI 视图（2D 编辑器 /
+指示卡 / CSV 导入）</td>
+<td>与 M2 <strong>并行</strong>，独立 session</td>
+</tr>
+<tr>
+<td><strong>M2 - 视觉反算</strong></td>
+<td><code>adapter-visual-ba/</code> + Python sidecar + M2 专属 GUI
+视图（ChArUco / 拍摄规划 / 图像导入）</td>
+<td>与 M1 <strong>并行</strong>，独立 session</td>
+</tr>
+<tr>
+<td><strong>M3</strong> (可选)</td>
+<td>H 方案：ChArUco BA + LED 几何先验 refinement</td>
+<td>M2 完成后视效果决定</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>关键约束</strong>：M0 必须先于 M1 /
+M2。共用框架不冻结，两个并行 session 会一直修改同一组接口造成冲突。M0
+阶段仅一个 session 工作，把 <code>core/</code> 接口、IR 结构、GUI shell
+全部定型。</p>
+</blockquote>
+</section>
+<section id="82-并行-session-开发策略" class="level3">
+<h3>8.2 并行 session 开发策略</h3>
+<ul>
+<li><strong>M0 阶段</strong>：单 session 完成基础框架，结束后
+<code>core/</code> 接口冻结</li>
+<li><strong>M1 / M2 阶段</strong>：两个独立 Claude Code session
+同时启动并行开发：
+<ul>
+<li><strong>M1 session</strong> 只动
+<code>crates/adapter-total-station/</code> + 全站仪相关 GUI
+视图（<code>/design</code> <code>/instruct</code> <code>/import</code>
+的 CSV 部分）</li>
+<li><strong>M2 session</strong> 只动
+<code>crates/adapter-visual-ba/</code> + <code>python-sidecar/</code> +
+视觉反算相关 GUI 视图（<code>/charuco</code> <code>/photoplan</code>
+<code>/import</code> 的图像部分）</li>
+<li>两个分支的 git diff 几乎不重叠 → 合并冲突最小</li>
+</ul></li>
+<li>M0 之后 <code>core/</code> 不轻易动；M1 或 M2 实施过程中如发现 IR
+接口不够（例如 M2 BA 的协方差字段需要扩展），是个独立 PR，需要双方
+sync</li>
+</ul>
+</section>
+<section id="83-发布流程" class="level3">
+<h3>8.3 发布流程</h3>
+<p>发布顺序由实际进度决定，不强制 M1 早于 M2 或反之：</p>
+<table>
+<thead>
+<tr>
+<th>版本</th>
+<th>触发条件</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v0.1.0</td>
+<td>M0 完成</td>
+<td>基础框架可用，无 adapter（demo 数据可走通管线）</td>
+</tr>
+<tr>
+<td>v0.2.0</td>
+<td>M1 或 M2 任一完成</td>
+<td>单条路径可用</td>
+</tr>
+<tr>
+<td>v0.3.0</td>
+<td>M1 + M2 都完成</td>
+<td>两条路径都可用</td>
+</tr>
+<tr>
+<td>v0.4.0 (可选)</td>
+<td>M3 完成</td>
+<td>+ 几何先验增强</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="84-poc-节点m2-进生产前" class="level3">
+<h3>8.4 PoC 节点（M2 进生产前）</h3>
+<pre><code>[小型 LED 测试墙 + 全站仪 ground truth]
+   ↓ ChArUco BA 实测
+[RMS &lt; 5mm？]
+   ├─ Yes → M2 启动
+   └─ No  → 调整 Pattern / SOP / 算法 → 再测</code></pre>
+<hr />
+</section>
+</section>
+<section id="9-风险与不确定项" class="level2">
+<h2>9. 风险与不确定项</h2>
+<section id="91-m1-风险" class="level3">
+<h3>9.1 M1 风险</h3>
+<table>
+<thead>
+<tr>
+<th>风险</th>
+<th>严重度</th>
+<th>缓解</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>底部遮挡 fallback 实际精度未验证</td>
+<td>中</td>
+<td>先在 1-2 个真实项目测，调整阈值；xR 项目强制要求清理遮挡</td>
+</tr>
+<tr>
+<td>几何归名歧义点处理 SOP</td>
+<td>中</td>
+<td>GUI 高亮歧义 + 用户手动确认 + 单元测试覆盖典型歧义场景</td>
+</tr>
+<tr>
+<td>异形 mask 用户编辑出错</td>
+<td>低</td>
+<td>2D 编辑器加 undo/redo + YAML 校验</td>
+</tr>
+<tr>
+<td>Trimble Access 现场坐标配准（B 模式）的实际操作流程</td>
+<td>中</td>
+<td>第一个项目派现场指导，事后整理 SOP</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="92-m2-风险" class="level3">
+<h3>9.2 M2 风险</h3>
+<table>
+<thead>
+<tr>
+<th>风险</th>
+<th>严重度</th>
+<th>缓解</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PoC 不通过（4 项必测之一失败）</td>
+<td>高</td>
+<td>PoC 失败 → 调 Pattern / SOP / 算法 → 再测；无效则降级到 M2
+仅做远程勘察粗模</td>
+</tr>
+<tr>
+<td>Python sidecar IPC 设计</td>
+<td>中</td>
+<td>借鉴 UECM 的 PowerShell sidecar 设计；JSON 双向通信 + 进度推送</td>
+</tr>
+<tr>
+<td>BA 收敛性调优</td>
+<td>中</td>
+<td>用 OpenCV 标准管线作 baseline；不收敛时 fallback 到逐图 PnP</td>
+</tr>
+<tr>
+<td>Python 运行时打包到 Tauri</td>
+<td>中</td>
+<td>PyInstaller 单 exe + Tauri 资源 vendor（参考 UECM 的 PsExec64）</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="93-跨-m1--m2-风险" class="level3">
+<h3>9.3 跨 M1 / M2 风险</h3>
+<table>
+<thead>
+<tr>
+<th>风险</th>
+<th>严重度</th>
+<th>缓解</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IR 不确定度接口设计在 M1 阶段冻结后 M2 发现不够</td>
+<td>中</td>
+<td>M1 阶段先写出 M2 用例的单元测试（mock
+MeasuredPoints），保证接口够用</td>
+</tr>
+<tr>
+<td>Cargo workspace 在 Tauri 项目里 build 配置</td>
+<td>低</td>
+<td>UECM 已用单 crate 模式；workspace 只是把 crate 拆开，Tauri 配置仍然
+reference 单一 backend</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="94-已知不确定项生产前必须验证" class="level3">
+<h3>9.4 已知不确定项（生产前必须验证）</h3>
+<ul>
+<li>ChArUco 在真实 LED 屏上的视觉退化（PoC 项目）</li>
+<li>Trimble Access 坐标配准（B
+模式）的现场操作（第一个生产项目验证）</li>
+<li>异形 mask 的 fallback
+补全在真实异形屏上的精度（积累项目数据后调阈值）</li>
+<li>M2 视觉反算的绝对坐标系定义方式（A/B/C 三选一，PoC 阶段决定）</li>
+<li>M3 几何先验加 refinement 的实际效果（M3 阶段才测）</li>
+</ul>
+<hr />
+</section>
+</section>
+<section id="10-验收标准" class="level2">
+<h2>10. 验收标准</h2>
+<section id="101-m1-验收" class="level3">
+<h3>10.1 M1 验收</h3>
+<table>
+<thead>
+<tr>
+<th>测试项</th>
+<th>通过标准</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>标准弧形屏（120 列 × 20 行）建模</td>
+<td>顶点数 ≤ 3000，UV 在 [0, 1]，watertight</td>
+</tr>
+<tr>
+<td>平面屏建模</td>
+<td>所有顶点共面残差 &lt; 0.5mm</td>
+</tr>
+<tr>
+<td>折角屏建模</td>
+<td>折角列处法向量不连续</td>
+</tr>
+<tr>
+<td>异形屏（L 形）建模</td>
+<td>删除 mask 区无顶点，其他正常</td>
+</tr>
+<tr>
+<td>底部遮挡 fallback 补全</td>
+<td>输出 mesh 完整，warning 明确提示</td>
+</tr>
+<tr>
+<td>主屏 + 地屏拆分</td>
+<td>输出两个独立 OBJ，坐标系一致</td>
+</tr>
+<tr>
+<td>顶点焊接</td>
+<td>共边顶点 &lt; 1mm 距合并，watertight</td>
+</tr>
+<tr>
+<td>在 Disguise Designer 中加载</td>
+<td>无错误、无黑屏、Radar 测试图正确</td>
+</tr>
+<tr>
+<td>在 UE nDisplay 中加载</td>
+<td>无错误、坐标系正确</td>
+</tr>
+<tr>
+<td>60m × 10m 弧墙处理时间</td>
+<td>&lt; 5 分钟</td>
+</tr>
+<tr>
+<td>跨平台</td>
+<td>Windows / macOS / Linux 行为一致</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="102-m2-验收" class="level3">
+<h3>10.2 M2 验收</h3>
+<table>
+<thead>
+<tr>
+<th>测试项</th>
+<th>通过标准</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PoC 阶段</strong></td>
+<td>RMS &lt; 5mm（VP 标准）</td>
+</tr>
+<tr>
+<td><strong>生产级阶段（10m 距离）</strong></td>
+<td>±3-6mm</td>
+</tr>
+<tr>
+<td><strong>生产级阶段（20m 距离）</strong></td>
+<td>±5-10mm</td>
+</tr>
+<tr>
+<td>与全站仪 mesh 对比</td>
+<td>平均偏差 &lt; 全站仪精度 + 视觉反算精度的 RSS</td>
+</tr>
+<tr>
+<td>运行时</td>
+<td>30-60 张图像 BA 求解 &lt; 5 分钟</td>
+</tr>
+<tr>
+<td>Python sidecar 集成</td>
+<td>异常退出能被 Tauri 捕获并展示</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="103-m3-验收可选" class="level3">
+<h3>10.3 M3 验收（可选）</h3>
+<table>
+<thead>
+<tr>
+<th>测试项</th>
+<th>通过标准</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>拍摄机位减少</td>
+<td>30+ 减到 10-20 张，精度维持 ±3-6mm</td>
+</tr>
+<tr>
+<td>几何先验失效时</td>
+<td>静默偏差 &lt; ChArUco D 方案精度 + 安全余量</td>
+</tr>
+<tr>
+<td>与 D 方案对比</td>
+<td>不更差（任何典型场景下）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+</section>
+</section>
+<section id="附录-a术语表" class="level2">
+<h2>附录 A：术语表</h2>
+<table>
+<thead>
+<tr>
+<th>术语</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BA</td>
+<td>Bundle Adjustment，光束法平差，photogrammetry 经典优化</td>
+</tr>
+<tr>
+<td>ChArUco</td>
+<td>OpenCV 提供的 ArUco + 棋盘格组合 fiducial pattern</td>
+</tr>
+<tr>
+<td>IR</td>
+<td>Intermediate Representation，工具内部的标准数据格式</td>
+</tr>
+<tr>
+<td>OBJ</td>
+<td>Wavefront 3D 模型格式，disguise / UE 都支持</td>
+</tr>
+<tr>
+<td>PoC</td>
+<td>Proof of Concept，可行性验证</td>
+</tr>
+<tr>
+<td>SOP</td>
+<td>Standard Operating Procedure，标准作业流程</td>
+</tr>
+<tr>
+<td>VP</td>
+<td>Virtual Production，虚拟制片</td>
+</tr>
+<tr>
+<td>xR</td>
+<td>Extended Reality，扩展现实（VP 的影视级形态）</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="附录-b参考资料" class="level2">
+<h2>附录 B：参考资料</h2>
+<ul>
+<li><code>01_全站仪LED建模工具_技术方案.md</code>（项目方向参考）</li>
+<li><code>02_视觉反算LED屏模型技术方案.md</code>（项目方向参考）</li>
+<li>Disguise Designer 关于 OBJ mesh 与 UV 的要求（项目知识库
+<code>help-disguise-one</code>）</li>
+<li>OpenCV ArUco / ChArUco 文档（<code>opencv-contrib-python</code>
+4.8+）</li>
+<li>UECM 项目架构（同类 Tauri + Vue 3
+应用，<code>/Users/bip.lan/AIWorkspace/vp/ue-cache-manager</code>）</li>
+</ul>
+</section>
+</section>
+    </main>
+  </div>
+
+  <div class="doc-footer">
+    <code>docs/superpowers/specs/2026-05-10-led-mesh-toolkit-design.md</code>
+    <span>End of document</span>
+  </div>
+
+  <script>
+    // Theme toggle
+    function toggleTheme() {
+      const html = document.documentElement;
+      const isDark = html.classList.contains('dark');
+      const sun = document.getElementById('icon-sun');
+      const moon = document.getElementById('icon-moon');
+
+      if (isDark) {
+        html.classList.remove('dark');
+        sun.style.display = 'none';
+        moon.style.display = 'block';
+        localStorage.setItem('lmt-theme', 'light');
+      } else {
+        html.classList.add('dark');
+        sun.style.display = 'block';
+        moon.style.display = 'none';
+        localStorage.setItem('lmt-theme', 'dark');
+      }
+    }
+
+    // Restore theme
+    (function() {
+      const saved = localStorage.getItem('lmt-theme');
+      const html = document.documentElement;
+      const sun = document.getElementById('icon-sun');
+      const moon = document.getElementById('icon-moon');
+      if (saved === 'light') {
+        html.classList.remove('dark');
+        sun.style.display = 'none';
+        moon.style.display = 'block';
+      } else {
+        html.classList.add('dark');
+        sun.style.display = 'block';
+        moon.style.display = 'none';
+      }
+    })();
+
+    // Read progress
+    (function() {
+      const progress = document.querySelector('.read-progress');
+      function update() {
+        const h = document.documentElement;
+        const scrolled = h.scrollTop / (h.scrollHeight - h.clientHeight);
+        progress.style.setProperty('--progress', (scrolled * 100) + '%');
+      }
+      window.addEventListener('scroll', update, { passive: true });
+      update();
+    })();
+
+    // TOC active highlight
+    (function() {
+      const headings = document.querySelectorAll('main h2, main h3');
+      const tocLinks = document.querySelectorAll('nav#TOC a');
+      const linkMap = new Map();
+      tocLinks.forEach(a => {
+        const href = a.getAttribute('href');
+        if (href && href.startsWith('#')) linkMap.set(href.slice(1), a);
+      });
+
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          const id = entry.target.id;
+          const link = linkMap.get(id);
+          if (!link) return;
+          if (entry.isIntersecting) {
+            tocLinks.forEach(a => a.classList.remove('active'));
+            link.classList.add('active');
+          }
+        });
+      }, { rootMargin: '-15% 0% -75% 0%' });
+
+      headings.forEach(h => { if (h.id) observer.observe(h); });
+    })();
+
+    // Section reveal
+    (function() {
+      const targets = document.querySelectorAll('main h2, main h3');
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { rootMargin: '-30px 0px -10% 0px' });
+      targets.forEach(el => observer.observe(el));
+    })();
+
+    // Critical / meta blockquote detection
+    (function() {
+      document.querySelectorAll('main blockquote').forEach(bq => {
+        const text = bq.textContent;
+        if (text.includes('⚠️') || text.includes('关键约束') || text.includes('Critical')) {
+          bq.classList.add('critical');
+        } else if (
+          text.includes('文档类型') ||
+          text.includes('参考文档') ||
+          (text.includes('版本') && text.includes('状态'))
+        ) {
+          bq.classList.add('meta');
+        }
+      });
+    })();
+
+    // ASCII diagrams detection
+    (function() {
+      document.querySelectorAll('main pre code').forEach(code => {
+        const text = code.textContent;
+        if (text.includes('┌') || text.includes('│') || text.includes('└') || text.includes('━')) {
+          code.parentElement.classList.add('diagram');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
