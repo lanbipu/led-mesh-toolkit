@@ -8,7 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { tauriApi } from "../tauri";
 
 describe("tauriApi", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); });
 
   it("listRecentProjects calls invoke with no args", async () => {
     (invoke as any).mockResolvedValueOnce([]);
