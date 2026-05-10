@@ -3,7 +3,7 @@ import { setActivePinia, createPinia } from "pinia";
 import { useEditorStore } from "../editor";
 
 describe("useEditorStore", () => {
-  beforeEach(() => setActivePinia(createPinia()));
+  beforeEach(() => { setActivePinia(createPinia()); });
 
   it("toggleCell pushes snapshot, undo restores", () => {
     const s = useEditorStore();
