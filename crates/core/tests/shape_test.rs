@@ -99,3 +99,14 @@ fn deserialize_rejects_cabinet_array_non_positive_size() {
     let result: Result<CabinetArray, _> = serde_yaml::from_str(yaml);
     assert!(result.is_err(), "should reject NaN size");
 }
+
+#[test]
+fn deserialize_rejects_cabinet_array_zero_dimensions() {
+    let yaml = "cols: 0\nrows: 10\ncabinet_size_mm: [500.0, 500.0]\n";
+    let result: Result<CabinetArray, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err(), "should reject cols == 0");
+
+    let yaml = "cols: 10\nrows: 0\ncabinet_size_mm: [500.0, 500.0]\n";
+    let result: Result<CabinetArray, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err(), "should reject rows == 0");
+}

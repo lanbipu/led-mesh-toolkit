@@ -40,6 +40,16 @@ impl<'de> Deserialize<'de> for CabinetArray {
                 crate::surface::MAX_GRID_DIM
             )));
         }
+        if raw.cols == 0 {
+            return Err(serde::de::Error::custom(
+                "CabinetArray.cols must be > 0",
+            ));
+        }
+        if raw.rows == 0 {
+            return Err(serde::de::Error::custom(
+                "CabinetArray.rows must be > 0",
+            ));
+        }
         for (i, v) in raw.cabinet_size_mm.iter().enumerate() {
             if !v.is_finite() || *v <= 0.0 {
                 return Err(serde::de::Error::custom(format!(
