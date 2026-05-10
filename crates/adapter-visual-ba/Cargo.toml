@@ -19,3 +19,7 @@ futures.workspace = true
 [dev-dependencies]
 tempfile = "3"
 pretty_assertions.workspace = true
+
+[[bin]]
+name = "lmt-poc-compare"
+path = "src/bin/poc_compare.rs"
