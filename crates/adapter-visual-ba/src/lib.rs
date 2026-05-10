@@ -8,6 +8,7 @@
 pub mod error;
 pub mod ipc;
 pub mod locate;
+pub mod sidecar;
 
 pub use error::{VbaError, VbaResult};
 pub use ipc::{Event, FrameStrategy, ReconstructInput, ResultData};
