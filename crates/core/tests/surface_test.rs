@@ -165,3 +165,36 @@ fn mesh_output_validate_rejects_uv_length_mismatch() {
     };
     assert!(mo.validate().is_err());
 }
+
+#[test]
+fn surface_validate_rejects_non_finite_uv() {
+    let topo = GridTopology { cols: 1, rows: 1 };
+    let surf = ReconstructedSurface {
+        screen_id: "MAIN".into(),
+        topology: topo,
+        vertices: vec![Vector3::zeros(); 4],
+        uv_coords: vec![
+            Vector2::zeros(),
+            Vector2::zeros(),
+            Vector2::new(f64::NAN, 0.0), // non-finite
+            Vector2::zeros(),
+        ],
+        quality_metrics: QualityMetrics::default(),
+    };
+    assert!(surf.validate().is_err());
+}
+
+#[test]
+fn mesh_output_validate_rejects_non_finite_uv() {
+    let mo = MeshOutput {
+        target: TargetSoftware::Neutral,
+        vertices: vec![Vector3::zeros(); 3],
+        uv_coords: vec![
+            Vector2::zeros(),
+            Vector2::new(0.0, f64::INFINITY),
+            Vector2::zeros(),
+        ],
+        triangles: vec![[0, 1, 2]],
+    };
+    assert!(mo.validate().is_err());
+}

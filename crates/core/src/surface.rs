@@ -176,6 +176,13 @@ impl ReconstructedSurface {
                 )));
             }
         }
+        for (i, uv) in self.uv_coords.iter().enumerate() {
+            if !uv.x.is_finite() || !uv.y.is_finite() {
+                return Err(CoreError::InvalidInput(format!(
+                    "ReconstructedSurface.uv_coords[{i}] contains non-finite value"
+                )));
+            }
+        }
         Ok(())
     }
 }
@@ -207,6 +214,13 @@ impl MeshOutput {
             if !v.x.is_finite() || !v.y.is_finite() || !v.z.is_finite() {
                 return Err(CoreError::InvalidInput(format!(
                     "MeshOutput.vertices[{i}] contains non-finite value"
+                )));
+            }
+        }
+        for (i, uv) in self.uv_coords.iter().enumerate() {
+            if !uv.x.is_finite() || !uv.y.is_finite() {
+                return Err(CoreError::InvalidInput(format!(
+                    "MeshOutput.uv_coords[{i}] contains non-finite value"
                 )));
             }
         }
