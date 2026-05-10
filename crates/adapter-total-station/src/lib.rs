@@ -6,5 +6,7 @@
 //! field instruction card (PDF + HTML).
 
 pub mod error;
+pub mod raw_point;
 
 pub use error::AdapterError;
+pub use raw_point::RawPoint;
