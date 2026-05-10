@@ -117,3 +117,51 @@ fn vertex_count_panics_on_arithmetic_overflow() {
     };
     let _ = topo.vertex_count();
 }
+
+#[test]
+fn surface_validate_passes_on_consistent_data() {
+    let topo = GridTopology { cols: 1, rows: 1 };
+    let surf = ReconstructedSurface {
+        screen_id: "MAIN".into(),
+        topology: topo,
+        vertices: vec![Vector3::zeros(); 4],
+        uv_coords: vec![Vector2::zeros(); 4],
+        quality_metrics: QualityMetrics::default(),
+    };
+    assert!(surf.validate().is_ok());
+}
+
+#[test]
+fn surface_validate_rejects_vertex_count_mismatch() {
+    let topo = GridTopology { cols: 2, rows: 2 }; // expects 9
+    let surf = ReconstructedSurface {
+        screen_id: "MAIN".into(),
+        topology: topo,
+        vertices: vec![Vector3::zeros(); 4], // wrong
+        uv_coords: vec![Vector2::zeros(); 4],
+        quality_metrics: QualityMetrics::default(),
+    };
+    assert!(surf.validate().is_err());
+}
+
+#[test]
+fn mesh_output_validate_rejects_triangle_index_out_of_bounds() {
+    let mo = MeshOutput {
+        target: TargetSoftware::Neutral,
+        vertices: vec![Vector3::zeros(); 3],
+        uv_coords: vec![Vector2::zeros(); 3],
+        triangles: vec![[0, 1, 5]], // 5 out of bounds
+    };
+    assert!(mo.validate().is_err());
+}
+
+#[test]
+fn mesh_output_validate_rejects_uv_length_mismatch() {
+    let mo = MeshOutput {
+        target: TargetSoftware::Neutral,
+        vertices: vec![Vector3::zeros(); 3],
+        uv_coords: vec![Vector2::zeros(); 2], // mismatch
+        triangles: vec![[0, 1, 2]],
+    };
+    assert!(mo.validate().is_err());
+}

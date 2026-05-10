@@ -146,3 +146,70 @@ mod vec_vector2_serde {
         Ok(arr.into_iter().map(|a| Vector2::new(a[0], a[1])).collect())
     }
 }
+
+use crate::error::CoreError;
+
+impl ReconstructedSurface {
+    /// Verify struct invariants: vertices count matches topology, UVs
+    /// count matches vertices, all coordinates finite. Used by export
+    /// boundaries to reject malformed deserialized data.
+    pub fn validate(&self) -> Result<(), CoreError> {
+        let expected = self.topology.vertex_count();
+        if self.vertices.len() != expected {
+            return Err(CoreError::InvalidInput(format!(
+                "ReconstructedSurface.vertices.len() {} != topology.vertex_count() {}",
+                self.vertices.len(),
+                expected
+            )));
+        }
+        if self.uv_coords.len() != self.vertices.len() {
+            return Err(CoreError::InvalidInput(format!(
+                "ReconstructedSurface.uv_coords.len() {} != vertices.len() {}",
+                self.uv_coords.len(),
+                self.vertices.len()
+            )));
+        }
+        for (i, v) in self.vertices.iter().enumerate() {
+            if !v.x.is_finite() || !v.y.is_finite() || !v.z.is_finite() {
+                return Err(CoreError::InvalidInput(format!(
+                    "ReconstructedSurface.vertices[{i}] contains non-finite value"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl MeshOutput {
+    /// Verify struct invariants: UVs count matches vertices, all triangles
+    /// reference valid vertex indices, all coordinates finite. Used by
+    /// writers (OBJ etc.) before serialization.
+    pub fn validate(&self) -> Result<(), CoreError> {
+        let n = self.vertices.len();
+        if self.uv_coords.len() != n {
+            return Err(CoreError::InvalidInput(format!(
+                "MeshOutput.uv_coords.len() {} != vertices.len() {}",
+                self.uv_coords.len(),
+                n
+            )));
+        }
+        let n_u32 = n as u32;
+        for (i, t) in self.triangles.iter().enumerate() {
+            for &idx in t {
+                if idx >= n_u32 {
+                    return Err(CoreError::InvalidInput(format!(
+                        "MeshOutput.triangles[{i}] index {idx} out of bounds (vertex count {n})"
+                    )));
+                }
+            }
+        }
+        for (i, v) in self.vertices.iter().enumerate() {
+            if !v.x.is_finite() || !v.y.is_finite() || !v.z.is_finite() {
+                return Err(CoreError::InvalidInput(format!(
+                    "MeshOutput.vertices[{i}] contains non-finite value"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
