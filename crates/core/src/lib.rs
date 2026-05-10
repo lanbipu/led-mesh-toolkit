@@ -9,5 +9,6 @@ pub mod uncertainty;
 pub mod point;
 pub mod coordinate;
 pub mod shape;
+pub mod measured_points;
 
 pub use error::CoreError;
