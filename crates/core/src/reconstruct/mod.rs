@@ -5,6 +5,7 @@ use crate::surface::ReconstructedSurface;
 pub mod nominal;
 pub mod direct;
 pub mod boundary_interp;
+pub mod radial_basis;
 
 /// Strategy for reconstructing a continuous surface from sparse measured points.
 pub trait Reconstructor {
