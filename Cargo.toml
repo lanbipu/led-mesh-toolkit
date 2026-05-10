@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/adapter-total-station",
     "crates/adapter-visual-ba",
+    "src-tauri",
 ]
 
 [workspace.package]
@@ -23,6 +24,12 @@ serde_yaml = "0.9"
 thiserror = "1"
 insta = { version = "1", features = ["yaml", "json"] }
 pretty_assertions = "1"
+tokio = { version = "1.36", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+tempfile = "3.10"
 
 [profile.release]
 opt-level = 3
