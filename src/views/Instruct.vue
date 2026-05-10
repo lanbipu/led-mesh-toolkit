@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { useI18n } from "vue-i18n";
-const { t } = useI18n();
+defineProps<{ id?: string }>();
 </script>
 
 <template>
   <div class="p-8">
-    <h1 class="text-2xl font-bold">{{ t("nav.instruct") }}</h1>
-    <p class="mt-4 text-muted-foreground">M0.2 stub. Implementation pending.</p>
+    <h1 class="text-2xl font-bold">Instruct (M1) — pending</h1>
+    <p class="mt-2 text-sm text-muted-foreground">
+      This view will be implemented by the M1 (total-station) session. M0.2 only provides the route.
+    </p>
   </div>
 </template>
