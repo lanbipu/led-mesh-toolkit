@@ -1,0 +1,51 @@
+screen_id: MAIN
+coordinate_frame:
+  origin_world: [0.0, 0.0, 0.0]
+  basis:
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
+cabinet_array:
+  cols: 16
+  rows: 6
+  cabinet_size_mm: [500.0, 500.0]
+  absent_cells: []
+shape_prior: !curved
+  radius_mm: 12000.0
+points:
+  - name: MAIN_V001_R001
+    position: [-3.689262, 0.581185, 0.0]
+    uncertainty: !isotropic 2.0
+    source: total_station
+  - name: MAIN_V016_R001
+    position: [3.689262, 0.581185, 0.0]
+    uncertainty: !isotropic 2.0
+    source: total_station
+  - name: MAIN_V001_R006
+    position: [-3.689262, 0.581185, 2.5]
+    uncertainty: !isotropic 2.0
+    source: total_station
+  - name: MAIN_V016_R006
+    position: [3.689262, 0.581185, 2.5]
+    uncertainty: !isotropic 2.0
+    source: total_station
+  - name: MAIN_V008_R001
+    position: [-0.249982, 0.002604, 0.0]
+    uncertainty: !isotropic 2.0
+    source: total_station
+  - name: MAIN_V008_R006
+    position: [-0.249982, 0.002604, 2.5]
+    uncertainty: !isotropic 2.0
+    source: total_station
+  - name: MAIN_V001_R003
+    position: [-3.689262, 0.581185, 1.0]
+    uncertainty: !isotropic 2.0
+    source: total_station
+  - name: MAIN_V016_R003
+    position: [3.689262, 0.581185, 1.0]
+    uncertainty: !isotropic 2.0
+    source: total_station
+  - name: MAIN_V008_R003
+    position: [-0.249982, 0.002604, 1.0]
+    uncertainty: !isotropic 2.0
+    source: total_station
