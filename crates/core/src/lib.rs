@@ -12,6 +12,7 @@ pub mod shape;
 pub mod measured_points;
 pub mod surface;
 pub mod uv;
+pub mod weld;
 pub mod reconstruct;
 
 pub use error::CoreError;
