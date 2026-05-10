@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 /// Rectangular grid of cabinets, with optional irregular mask.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CabinetArray {
     pub cols: u32,
     pub rows: u32,
@@ -12,6 +12,48 @@ pub struct CabinetArray {
     /// Keyed by (col, row), 0-based.
     #[serde(default)]
     pub absent_cells: HashSet<(u32, u32)>,
+}
+
+#[derive(Deserialize)]
+struct CabinetArrayRaw {
+    cols: u32,
+    rows: u32,
+    cabinet_size_mm: [f64; 2],
+    #[serde(default)]
+    absent_cells: HashSet<(u32, u32)>,
+}
+
+impl<'de> Deserialize<'de> for CabinetArray {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = CabinetArrayRaw::deserialize(d)?;
+        if raw.cols > crate::surface::MAX_GRID_DIM {
+            return Err(serde::de::Error::custom(format!(
+                "CabinetArray.cols {} exceeds MAX_GRID_DIM ({})",
+                raw.cols,
+                crate::surface::MAX_GRID_DIM
+            )));
+        }
+        if raw.rows > crate::surface::MAX_GRID_DIM {
+            return Err(serde::de::Error::custom(format!(
+                "CabinetArray.rows {} exceeds MAX_GRID_DIM ({})",
+                raw.rows,
+                crate::surface::MAX_GRID_DIM
+            )));
+        }
+        for (i, v) in raw.cabinet_size_mm.iter().enumerate() {
+            if !v.is_finite() || *v <= 0.0 {
+                return Err(serde::de::Error::custom(format!(
+                    "CabinetArray.cabinet_size_mm[{i}] must be finite and positive: got {v}"
+                )));
+            }
+        }
+        Ok(Self {
+            cols: raw.cols,
+            rows: raw.rows,
+            cabinet_size_mm: raw.cabinet_size_mm,
+            absent_cells: raw.absent_cells,
+        })
+    }
 }
 
 impl CabinetArray {

@@ -77,3 +77,25 @@ fn folded_prior_carries_seam_columns() {
         _ => panic!("expected Folded variant"),
     }
 }
+
+#[test]
+fn deserialize_rejects_cabinet_array_exceeding_max_grid_dim() {
+    let yaml = "cols: 20000\nrows: 100\ncabinet_size_mm: [500.0, 500.0]\n";
+    let result: Result<CabinetArray, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err());
+}
+
+#[test]
+fn deserialize_rejects_cabinet_array_non_positive_size() {
+    let yaml = "cols: 10\nrows: 10\ncabinet_size_mm: [0.0, 500.0]\n";
+    let result: Result<CabinetArray, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err(), "should reject zero size");
+
+    let yaml = "cols: 10\nrows: 10\ncabinet_size_mm: [-100.0, 500.0]\n";
+    let result: Result<CabinetArray, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err(), "should reject negative size");
+
+    let yaml = "cols: 10\nrows: 10\ncabinet_size_mm: [.nan, 500.0]\n";
+    let result: Result<CabinetArray, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err(), "should reject NaN size");
+}
