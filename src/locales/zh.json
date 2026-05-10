@@ -1,0 +1,16 @@
+{
+  "app": {
+    "title": "LED Mesh 工具集"
+  },
+  "nav": {
+    "home": "首页",
+    "design": "设计",
+    "preview": "预览",
+    "export": "导出",
+    "runs": "运行历史",
+    "import": "导入",
+    "instruct": "指令生成 (M1)",
+    "charuco": "ChArUco (M2)",
+    "photoplan": "拍摄规划 (M2)"
+  }
+}

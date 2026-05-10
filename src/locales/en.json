@@ -1,0 +1,16 @@
+{
+  "app": {
+    "title": "LED Mesh Toolkit"
+  },
+  "nav": {
+    "home": "Home",
+    "design": "Design",
+    "preview": "Preview",
+    "export": "Export",
+    "runs": "Runs",
+    "import": "Import",
+    "instruct": "Instruct (M1)",
+    "charuco": "ChArUco (M2)",
+    "photoplan": "Photo Plan (M2)"
+  }
+}
