@@ -1,3 +1,5 @@
+use crate::data::{recent_projects, Db};
+use crate::dto::{ProjectConfig, RecentProject};
 use crate::error::{LmtError, LmtResult};
 use std::path::{Path, PathBuf};
 
@@ -33,6 +35,66 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> LmtResult<()> {
     }
     Ok(())
 }
+
+// ── project.yaml load / save ──────────────────────────────────────────────────
+
+/// Pure helper: read project.yaml from `abs_path/project.yaml`.
+/// Returns `NotFound` if the file does not exist.
+pub fn load_project_yaml_from_path(abs_path: &Path) -> LmtResult<ProjectConfig> {
+    let yaml_path = abs_path.join("project.yaml");
+    if !yaml_path.is_file() {
+        return Err(LmtError::NotFound(yaml_path.display().to_string()));
+    }
+    let yaml = std::fs::read_to_string(&yaml_path)?;
+    Ok(serde_yaml::from_str(&yaml)?)
+}
+
+/// Pure helper: write `config` to `abs_path/project.yaml` atomically (temp + rename).
+pub fn save_project_yaml_to_path(abs_path: &Path, config: &ProjectConfig) -> LmtResult<()> {
+    std::fs::create_dir_all(abs_path)?;
+    let yaml = serde_yaml::to_string(config)?;
+    let final_path = abs_path.join("project.yaml");
+    let tmp_path = abs_path.join("project.yaml.tmp");
+    std::fs::write(&tmp_path, yaml)?;
+    std::fs::rename(&tmp_path, &final_path)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn load_project_yaml(abs_path: String) -> LmtResult<ProjectConfig> {
+    load_project_yaml_from_path(Path::new(&abs_path))
+}
+
+#[tauri::command]
+pub fn save_project_yaml(abs_path: String, config: ProjectConfig) -> LmtResult<()> {
+    save_project_yaml_to_path(Path::new(&abs_path), &config)
+}
+
+// ── recent_projects commands ──────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn list_recent_projects(state: tauri::State<'_, Db>) -> LmtResult<Vec<RecentProject>> {
+    let conn = state.lock().unwrap();
+    recent_projects::list(&conn)
+}
+
+#[tauri::command]
+pub fn add_recent_project(
+    state: tauri::State<'_, Db>,
+    abs_path: String,
+    display_name: String,
+) -> LmtResult<RecentProject> {
+    let conn = state.lock().unwrap();
+    recent_projects::upsert(&conn, &abs_path, &display_name)
+}
+
+#[tauri::command]
+pub fn remove_recent_project(state: tauri::State<'_, Db>, id: i64) -> LmtResult<()> {
+    let conn = state.lock().unwrap();
+    recent_projects::delete(&conn, id)
+}
+
+// ── seed_example_project ──────────────────────────────────────────────────────
 
 #[tauri::command]
 pub fn seed_example_project(
