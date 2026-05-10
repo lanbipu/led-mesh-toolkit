@@ -5,6 +5,6 @@
 //! for reconstruction + export, plus a JSON validation report and a
 //! field instruction card (PDF + HTML).
 
-// pub mod error;
-//
-// pub use error::AdapterError;
+pub mod error;
+
+pub use error::AdapterError;
