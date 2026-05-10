@@ -1,0 +1,24 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Node
+/node_modules
+/dist
+.pnpm-store
+
+# Python (M2 sidecar 预留)
+__pycache__/
+*.py[cod]
+.venv
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# 临时输出
+/tmp-output/
+*.log

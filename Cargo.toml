@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/adapter-total-station",
+    "crates/adapter-visual-ba",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["LMT Team"]
+license = "MIT"
+
+[workspace.dependencies]
+nalgebra = "0.33"
+kiddo = "4"
+argmin = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "1"
+insta = { version = "1", features = ["yaml", "json"] }
+pretty_assertions = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
