@@ -26,6 +26,9 @@ pub enum VbaError {
 
     #[error("operation cancelled by caller")]
     Cancelled,
+
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
 }
 
 pub type VbaResult<T> = std::result::Result<T, VbaError>;

@@ -5,6 +5,7 @@
 //! this crate handles subprocess management, NDJSON parsing, and IR
 //! conversion.
 
+pub mod api;
 pub mod error;
 pub mod ipc;
 pub mod locate;
