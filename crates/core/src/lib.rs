@@ -8,5 +8,6 @@ pub mod error;
 pub mod uncertainty;
 pub mod point;
 pub mod coordinate;
+pub mod shape;
 
 pub use error::CoreError;
