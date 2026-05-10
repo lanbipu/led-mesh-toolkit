@@ -1,0 +1,11 @@
+[package]
+name = "lmt-adapter-visual-ba"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Visual photogrammetry (ChArUco + BA) adapter for LMT (M2)"
+
+[dependencies]
+lmt-core = { path = "../core" }

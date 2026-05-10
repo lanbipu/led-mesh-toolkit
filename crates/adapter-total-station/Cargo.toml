@@ -1,0 +1,11 @@
+[package]
+name = "lmt-adapter-total-station"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Total-station CSV adapter for LMT (M1)"
+
+[dependencies]
+lmt-core = { path = "../core" }
