@@ -1,21 +1,67 @@
 use nalgebra::{Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 
+/// Maximum allowed cabinet count per axis (prevents pathological allocations
+/// + overflow). 10_000 × 10_000 cabinets = 100M vertices upper bound, far
+///   beyond any realistic LED screen.
+pub const MAX_GRID_DIM: u32 = 10_000;
+
 /// Grid topology for a single screen.
 /// Vertex count = (cols + 1) * (rows + 1).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct GridTopology {
     pub cols: u32,
     pub rows: u32,
 }
 
+#[derive(Deserialize)]
+struct GridTopologyRaw {
+    cols: u32,
+    rows: u32,
+}
+
+impl<'de> Deserialize<'de> for GridTopology {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = GridTopologyRaw::deserialize(d)?;
+        if raw.cols > MAX_GRID_DIM {
+            return Err(serde::de::Error::custom(format!(
+                "GridTopology.cols {} exceeds MAX_GRID_DIM ({})",
+                raw.cols, MAX_GRID_DIM
+            )));
+        }
+        if raw.rows > MAX_GRID_DIM {
+            return Err(serde::de::Error::custom(format!(
+                "GridTopology.rows {} exceeds MAX_GRID_DIM ({})",
+                raw.rows, MAX_GRID_DIM
+            )));
+        }
+        Ok(Self { cols: raw.cols, rows: raw.rows })
+    }
+}
+
 impl GridTopology {
+    /// Total vertex count = (cols+1) * (rows+1). Panics on arithmetic overflow.
     pub fn vertex_count(&self) -> usize {
-        ((self.cols + 1) * (self.rows + 1)) as usize
+        let cols_p1 = (self.cols as usize)
+            .checked_add(1)
+            .expect("cols+1 overflow");
+        let rows_p1 = (self.rows as usize)
+            .checked_add(1)
+            .expect("rows+1 overflow");
+        cols_p1
+            .checked_mul(rows_p1)
+            .expect("vertex_count overflow")
     }
 
+    /// Row-major index. Panics if (col, row) out of bounds when usize-multiplied.
     pub fn vertex_index(&self, col: u32, row: u32) -> usize {
-        (row * (self.cols + 1) + col) as usize
+        let cols_p1 = (self.cols as usize)
+            .checked_add(1)
+            .expect("cols+1 overflow");
+        (row as usize)
+            .checked_mul(cols_p1)
+            .and_then(|r| r.checked_add(col as usize))
+            .expect("vertex_index overflow")
     }
 }
 

@@ -85,3 +85,35 @@ fn reconstructed_surface_yaml_round_trips_vectors() {
     assert_eq!(decoded.vertices, surf.vertices);
     assert_eq!(decoded.uv_coords, surf.uv_coords);
 }
+
+#[test]
+fn deserialize_rejects_topology_exceeding_max_grid_dim() {
+    let yaml = "cols: 20000\nrows: 100\n";
+    let result: Result<GridTopology, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err(), "should reject cols > MAX_GRID_DIM");
+
+    let yaml = "cols: 100\nrows: 20000\n";
+    let result: Result<GridTopology, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err(), "should reject rows > MAX_GRID_DIM");
+}
+
+#[test]
+fn deserialize_accepts_topology_at_max_grid_dim() {
+    use lmt_core::surface::MAX_GRID_DIM;
+    let yaml = format!("cols: {MAX_GRID_DIM}\nrows: {MAX_GRID_DIM}\n");
+    let result: Result<GridTopology, _> = serde_yaml::from_str(&yaml);
+    assert!(result.is_ok(), "boundary should be inclusive");
+}
+
+#[test]
+#[should_panic(expected = "vertex_count overflow")]
+fn vertex_count_panics_on_arithmetic_overflow() {
+    // Construct via field init bypasses the deserialize validator on purpose
+    // — proves checked_mul still catches the case if a buggy caller built
+    // an oversized GridTopology directly.
+    let topo = GridTopology {
+        cols: u32::MAX,
+        rows: u32::MAX,
+    };
+    let _ = topo.vertex_count();
+}
