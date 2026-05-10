@@ -82,7 +82,7 @@ pub struct QualityMetrics {
 }
 
 /// Reconstructed surface: grid of vertices in model frame, with UVs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ReconstructedSurface {
     pub screen_id: String,
     pub topology: GridTopology,
@@ -92,6 +92,34 @@ pub struct ReconstructedSurface {
     #[serde(with = "vec_vector2_serde")]
     pub uv_coords: Vec<Vector2<f64>>,
     pub quality_metrics: QualityMetrics,
+}
+
+#[derive(Deserialize)]
+struct ReconstructedSurfaceRaw {
+    screen_id: String,
+    topology: GridTopology,
+    #[serde(with = "vec_vector3_serde")]
+    vertices: Vec<Vector3<f64>>,
+    #[serde(with = "vec_vector2_serde")]
+    uv_coords: Vec<Vector2<f64>>,
+    quality_metrics: QualityMetrics,
+}
+
+impl<'de> Deserialize<'de> for ReconstructedSurface {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = ReconstructedSurfaceRaw::deserialize(d)?;
+        let surface = Self {
+            screen_id: raw.screen_id,
+            topology: raw.topology,
+            vertices: raw.vertices,
+            uv_coords: raw.uv_coords,
+            quality_metrics: raw.quality_metrics,
+        };
+        surface
+            .validate()
+            .map_err(|e| serde::de::Error::custom(e.to_string()))?;
+        Ok(surface)
+    }
 }
 
 /// Target export software (controls coordinate-frame + units).
@@ -107,7 +135,7 @@ pub enum TargetSoftware {
 }
 
 /// Final mesh ready for export — already adapted to the target software.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct MeshOutput {
     pub target: TargetSoftware,
     #[serde(with = "vec_vector3_serde")]
@@ -115,6 +143,32 @@ pub struct MeshOutput {
     pub triangles: Vec<[u32; 3]>,
     #[serde(with = "vec_vector2_serde")]
     pub uv_coords: Vec<Vector2<f64>>,
+}
+
+#[derive(Deserialize)]
+struct MeshOutputRaw {
+    target: TargetSoftware,
+    #[serde(with = "vec_vector3_serde")]
+    vertices: Vec<Vector3<f64>>,
+    triangles: Vec<[u32; 3]>,
+    #[serde(with = "vec_vector2_serde")]
+    uv_coords: Vec<Vector2<f64>>,
+}
+
+impl<'de> Deserialize<'de> for MeshOutput {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = MeshOutputRaw::deserialize(d)?;
+        let mesh = Self {
+            target: raw.target,
+            vertices: raw.vertices,
+            triangles: raw.triangles,
+            uv_coords: raw.uv_coords,
+        };
+        mesh
+            .validate()
+            .map_err(|e| serde::de::Error::custom(e.to_string()))?;
+        Ok(mesh)
+    }
 }
 
 mod vec_vector3_serde {

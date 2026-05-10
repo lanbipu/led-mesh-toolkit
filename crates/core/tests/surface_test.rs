@@ -198,3 +198,82 @@ fn mesh_output_validate_rejects_non_finite_uv() {
     };
     assert!(mo.validate().is_err());
 }
+
+#[test]
+fn deserialize_rejects_surface_with_vertex_count_mismatch() {
+    // topology = 2x2 → expects 9 vertices, but YAML provides 4
+    let yaml = r#"
+screen_id: MAIN
+topology:
+  cols: 2
+  rows: 2
+vertices:
+  - [0.0, 0.0, 0.0]
+  - [1.0, 0.0, 0.0]
+  - [0.0, 1.0, 0.0]
+  - [1.0, 1.0, 0.0]
+uv_coords:
+  - [0.0, 0.0]
+  - [1.0, 0.0]
+  - [0.0, 1.0]
+  - [1.0, 1.0]
+quality_metrics:
+  method: ""
+  middle_max_dev_mm: 0.0
+  middle_mean_dev_mm: 0.0
+  shape_fit_rms_mm: 0.0
+  measured_count: 0
+  expected_count: 0
+  missing: []
+  outliers: []
+  estimated_rms_mm: 0.0
+  estimated_p95_mm: 0.0
+  warnings: []
+"#;
+    let result: Result<ReconstructedSurface, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err());
+}
+
+#[test]
+fn deserialize_rejects_mesh_output_with_oob_triangle() {
+    let yaml = r#"
+target: neutral
+vertices:
+  - [0.0, 0.0, 0.0]
+  - [1.0, 0.0, 0.0]
+  - [0.0, 1.0, 0.0]
+triangles:
+  - [0, 1, 5]
+uv_coords:
+  - [0.0, 0.0]
+  - [1.0, 0.0]
+  - [0.0, 1.0]
+"#;
+    let result: Result<MeshOutput, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err());
+}
+
+#[test]
+fn deserialize_accepts_consistent_surface_round_trip() {
+    let topo = GridTopology { cols: 1, rows: 1 };
+    let surf = ReconstructedSurface {
+        screen_id: "MAIN".into(),
+        topology: topo,
+        vertices: vec![
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 1.0, 0.0),
+        ],
+        uv_coords: vec![
+            Vector2::new(0.0, 0.0),
+            Vector2::new(1.0, 0.0),
+            Vector2::new(0.0, 1.0),
+            Vector2::new(1.0, 1.0),
+        ],
+        quality_metrics: QualityMetrics::default(),
+    };
+    let yaml = serde_yaml::to_string(&surf).unwrap();
+    let back: ReconstructedSurface = serde_yaml::from_str(&yaml).unwrap();
+    assert_eq!(back.screen_id, surf.screen_id);
+}
