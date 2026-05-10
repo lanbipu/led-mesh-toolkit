@@ -12,10 +12,7 @@ use nalgebra::Vector3;
 /// Returns:
 /// - `welded` — the deduplicated vertex list (in insertion order)
 /// - `mapping` — for each input index, the index in `welded` it maps to
-pub fn weld_vertices(
-    vertices: &[Vector3<f64>],
-    tolerance_m: f64,
-) -> (Vec<Vector3<f64>>, Vec<u32>) {
+pub fn weld_vertices(vertices: &[Vector3<f64>], tolerance_m: f64) -> (Vec<Vector3<f64>>, Vec<u32>) {
     assert!(
         tolerance_m.is_finite(),
         "weld_vertices: tolerance_m must be finite, got {tolerance_m}"

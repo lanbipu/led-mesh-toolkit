@@ -52,9 +52,8 @@ mod matrix3_serde {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Matrix3<f64>, D::Error> {
         let arr: [[f64; 3]; 3] = Deserialize::deserialize(d)?;
         Ok(Matrix3::new(
-            arr[0][0], arr[0][1], arr[0][2],
-            arr[1][0], arr[1][1], arr[1][2],
-            arr[2][0], arr[2][1], arr[2][2],
+            arr[0][0], arr[0][1], arr[0][2], arr[1][0], arr[1][1], arr[1][2], arr[2][0], arr[2][1],
+            arr[2][2],
         ))
     }
 }

@@ -103,7 +103,10 @@ fn radial_basis_rejects_clustered_anchors_without_corners() {
         ],
     };
     let r = RadialBasisReconstructor;
-    assert!(!r.applicable(&mp), "should reject inputs without all 4 corners");
+    assert!(
+        !r.applicable(&mp),
+        "should reject inputs without all 4 corners"
+    );
 }
 
 #[test]
@@ -123,7 +126,10 @@ fn radial_basis_ignores_out_of_grid_anchor_names() {
         ],
     };
     let r = RadialBasisReconstructor;
-    assert!(!r.applicable(&mp), "out-of-grid stray must not count as anchor");
+    assert!(
+        !r.applicable(&mp),
+        "out-of-grid stray must not count as anchor"
+    );
 }
 
 #[test]
@@ -143,5 +149,8 @@ fn radial_basis_dedupes_repeated_anchor_names() {
         ],
     };
     let r = RadialBasisReconstructor;
-    assert!(!r.applicable(&mp), "duplicate names must not inflate anchor count");
+    assert!(
+        !r.applicable(&mp),
+        "duplicate names must not inflate anchor count"
+    );
 }

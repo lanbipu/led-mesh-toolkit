@@ -45,9 +45,7 @@ impl Reconstructor for RadialBasisReconstructor {
         // ≥1 non-corner anchor (so 4 corners alone fall through to nominal).
         let n_interior = anchors
             .iter()
-            .filter(|(c, r, _)| {
-                !((*c == 0 || *c == cols) && (*r == 0 || *r == rows))
-            })
+            .filter(|(c, r, _)| !((*c == 0 || *c == cols) && (*r == 0 || *r == rows)))
             .count();
         n_interior >= 1
     }
@@ -67,19 +65,15 @@ impl Reconstructor for RadialBasisReconstructor {
         let mut a_mat = DMatrix::<f64>::zeros(n, n);
         for (i, ai) in anchors.iter().enumerate() {
             for (j, aj) in anchors.iter().enumerate() {
-                let r = ((ai.0 as f64 - aj.0 as f64).powi(2)
-                    + (ai.1 as f64 - aj.1 as f64).powi(2))
-                .sqrt();
+                let r = ((ai.0 as f64 - aj.0 as f64).powi(2) + (ai.1 as f64 - aj.1 as f64).powi(2))
+                    .sqrt();
                 a_mat[(i, j)] = imq(r);
             }
         }
 
         let lu = a_mat.lu();
-        let mut weights: [DVector<f64>; 3] = [
-            DVector::zeros(n),
-            DVector::zeros(n),
-            DVector::zeros(n),
-        ];
+        let mut weights: [DVector<f64>; 3] =
+            [DVector::zeros(n), DVector::zeros(n), DVector::zeros(n)];
         for (axis, w_slot) in weights.iter_mut().enumerate() {
             let mut b = DVector::<f64>::zeros(n);
             for (i, a) in anchors.iter().enumerate() {
@@ -147,25 +141,35 @@ fn imq(r: f64) -> f64 {
 
 /// Returns (col_zero_based, row_zero_based, position).
 /// Filters out-of-grid names (col > cols, row > rows) and dedupes by (col, row).
-fn parse_anchors(
-    points: &MeasuredPoints,
-    cols: u32,
-    rows: u32,
-) -> Vec<(u32, u32, Vector3<f64>)> {
+fn parse_anchors(points: &MeasuredPoints, cols: u32, rows: u32) -> Vec<(u32, u32, Vector3<f64>)> {
     let prefix = format!("{}_V", points.screen_id);
     let mut seen: HashSet<(u32, u32)> = HashSet::new();
     let mut out = vec![];
     for p in &points.points {
-        let Some(rest) = p.name.strip_prefix(&prefix) else { continue };
+        let Some(rest) = p.name.strip_prefix(&prefix) else {
+            continue;
+        };
         let parts: Vec<&str> = rest.split("_R").collect();
-        if parts.len() != 2 { continue }
-        let Ok(col1) = parts[0].parse::<u32>() else { continue };
-        let Ok(row1) = parts[1].parse::<u32>() else { continue };
-        if col1 == 0 || row1 == 0 { continue }
+        if parts.len() != 2 {
+            continue;
+        }
+        let Ok(col1) = parts[0].parse::<u32>() else {
+            continue;
+        };
+        let Ok(row1) = parts[1].parse::<u32>() else {
+            continue;
+        };
+        if col1 == 0 || row1 == 0 {
+            continue;
+        }
         let col = col1 - 1;
         let row = row1 - 1;
-        if col > cols || row > rows { continue }
-        if !seen.insert((col, row)) { continue }
+        if col > cols || row > rows {
+            continue;
+        }
+        if !seen.insert((col, row)) {
+            continue;
+        }
         out.push((col, row, p.position));
     }
     out

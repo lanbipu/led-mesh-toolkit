@@ -85,13 +85,17 @@ fn top_bottom_plus_interior_picks_radial_basis() {
     };
 
     let surface = auto_reconstruct(&mp).unwrap();
-    assert_eq!(surface.quality_metrics.method, "radial_basis",
-        "interior anchor should pull dispatcher to radial_basis, not boundary_interp");
+    assert_eq!(
+        surface.quality_metrics.method, "radial_basis",
+        "interior anchor should pull dispatcher to radial_basis, not boundary_interp"
+    );
 
     // Verify the interior anchor is reproduced (RBF property)
     let mid = surface.topology.vertex_index(2, 2);
-    assert!((surface.vertices[mid] - nalgebra::Vector3::new(1.0, 0.5, 1.0)).norm() < 1e-3,
-        "radial_basis must reproduce the interior anchor");
+    assert!(
+        (surface.vertices[mid] - nalgebra::Vector3::new(1.0, 0.5, 1.0)).norm() < 1e-3,
+        "radial_basis must reproduce the interior anchor"
+    );
 }
 
 #[test]

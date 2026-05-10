@@ -30,7 +30,9 @@ pub struct DisguiseTarget {
 
 impl Default for DisguiseTarget {
     fn default() -> Self {
-        Self { weld_tolerance_m: 0.001 } // 1mm
+        Self {
+            weld_tolerance_m: 0.001,
+        } // 1mm
     }
 }
 
@@ -62,7 +64,9 @@ pub struct UnrealTarget {
 
 impl Default for UnrealTarget {
     fn default() -> Self {
-        Self { weld_tolerance_m: 0.001 } // 1mm in model frame; weld runs before unit conversion
+        Self {
+            weld_tolerance_m: 0.001,
+        } // 1mm in model frame; weld runs before unit conversion
     }
 }
 
@@ -94,7 +98,9 @@ pub struct NeutralTarget {
 
 impl Default for NeutralTarget {
     fn default() -> Self {
-        Self { weld_tolerance_m: 0.001 }
+        Self {
+            weld_tolerance_m: 0.001,
+        }
     }
 }
 

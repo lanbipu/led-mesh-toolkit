@@ -35,7 +35,10 @@ impl<'de> Deserialize<'de> for GridTopology {
                 raw.rows, MAX_GRID_DIM
             )));
         }
-        Ok(Self { cols: raw.cols, rows: raw.rows })
+        Ok(Self {
+            cols: raw.cols,
+            rows: raw.rows,
+        })
     }
 }
 
@@ -48,9 +51,7 @@ impl GridTopology {
         let rows_p1 = (self.rows as usize)
             .checked_add(1)
             .expect("rows+1 overflow");
-        cols_p1
-            .checked_mul(rows_p1)
-            .expect("vertex_count overflow")
+        cols_p1.checked_mul(rows_p1).expect("vertex_count overflow")
     }
 
     /// Row-major index. Panics if (col, row) out of bounds when usize-multiplied.
@@ -164,8 +165,7 @@ impl<'de> Deserialize<'de> for MeshOutput {
             triangles: raw.triangles,
             uv_coords: raw.uv_coords,
         };
-        mesh
-            .validate()
+        mesh.validate()
             .map_err(|e| serde::de::Error::custom(e.to_string()))?;
         Ok(mesh)
     }
@@ -182,7 +182,10 @@ mod vec_vector3_serde {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Vector3<f64>>, D::Error> {
         let arr: Vec<[f64; 3]> = Deserialize::deserialize(d)?;
-        Ok(arr.into_iter().map(|a| Vector3::new(a[0], a[1], a[2])).collect())
+        Ok(arr
+            .into_iter()
+            .map(|a| Vector3::new(a[0], a[1], a[2]))
+            .collect())
     }
 }
 

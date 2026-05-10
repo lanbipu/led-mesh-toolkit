@@ -61,9 +61,19 @@ fn boundary_interp_with_missing_top_corner_not_applicable() {
     for c in 1..=5 {
         // missing R001 corner (V001_R001)
         if c != 1 {
-            pts.push(p(&format!("MAIN_V{:03}_R001", c), (c - 1) as f64 * 0.5, 0.0, 0.0));
+            pts.push(p(
+                &format!("MAIN_V{:03}_R001", c),
+                (c - 1) as f64 * 0.5,
+                0.0,
+                0.0,
+            ));
         }
-        pts.push(p(&format!("MAIN_V{:03}_R003", c), (c - 1) as f64 * 0.5, 0.0, 1.0));
+        pts.push(p(
+            &format!("MAIN_V{:03}_R003", c),
+            (c - 1) as f64 * 0.5,
+            0.0,
+            1.0,
+        ));
     }
 
     let mp = MeasuredPoints {
@@ -105,10 +115,14 @@ fn boundary_interp_flags_interior_point_disagreement() {
 
     assert!(surface.quality_metrics.middle_max_dev_mm >= 49.0);
     assert!(surface.quality_metrics.middle_max_dev_mm <= 51.0);
-    assert_eq!(surface.quality_metrics.middle_max_dev_mm, surface.quality_metrics.middle_mean_dev_mm,
-        "single point — max == mean");
-    assert!(!surface.quality_metrics.warnings.is_empty(),
-        "should emit warning for >10mm deviation");
+    assert_eq!(
+        surface.quality_metrics.middle_max_dev_mm, surface.quality_metrics.middle_mean_dev_mm,
+        "single point — max == mean"
+    );
+    assert!(
+        !surface.quality_metrics.warnings.is_empty(),
+        "should emit warning for >10mm deviation"
+    );
     let warning = &surface.quality_metrics.warnings[0];
     assert!(warning.contains("MAIN_V003_R002"));
     assert!(warning.contains("50") || warning.contains("49") || warning.contains("51"));

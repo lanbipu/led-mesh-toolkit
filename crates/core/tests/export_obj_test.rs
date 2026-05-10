@@ -62,7 +62,10 @@ fn write_obj_rejects_uv_length_mismatch() {
     let result = write_obj(&mo, &path);
     assert!(result.is_err());
     // File should NOT have been created (validation runs before File::create)
-    assert!(!path.exists(), "validation must reject before file creation");
+    assert!(
+        !path.exists(),
+        "validation must reject before file creation"
+    );
 }
 
 #[test]
@@ -135,7 +138,10 @@ fn write_obj_overwrite_with_invalid_input_preserves_old_file() {
 
     // Existing OBJ must be unchanged.
     let after = std::fs::read_to_string(&path).unwrap();
-    assert_eq!(original, after, "failed export must not modify a previously valid file");
+    assert_eq!(
+        original, after,
+        "failed export must not modify a previously valid file"
+    );
 }
 
 #[test]

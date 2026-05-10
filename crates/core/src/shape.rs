@@ -41,14 +41,10 @@ impl<'de> Deserialize<'de> for CabinetArray {
             )));
         }
         if raw.cols == 0 {
-            return Err(serde::de::Error::custom(
-                "CabinetArray.cols must be > 0",
-            ));
+            return Err(serde::de::Error::custom("CabinetArray.cols must be > 0"));
         }
         if raw.rows == 0 {
-            return Err(serde::de::Error::custom(
-                "CabinetArray.rows must be > 0",
-            ));
+            return Err(serde::de::Error::custom("CabinetArray.rows must be > 0"));
         }
         for (i, v) in raw.cabinet_size_mm.iter().enumerate() {
             if !v.is_finite() || *v <= 0.0 {
@@ -114,7 +110,11 @@ impl CabinetArray {
 pub enum ShapePrior {
     Flat,
     /// Half-cylinder with constant radius.
-    Curved { radius_mm: f64 },
+    Curved {
+        radius_mm: f64,
+    },
     /// Multi-segment flat with folds at given column indices.
-    Folded { fold_seam_columns: Vec<u32> },
+    Folded {
+        fold_seam_columns: Vec<u32>,
+    },
 }

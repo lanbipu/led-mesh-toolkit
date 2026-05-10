@@ -33,7 +33,10 @@ impl<'de> Deserialize<'de> for CoordinateFrame {
         let raw = CoordinateFrameRaw::deserialize(d)?;
         validate_origin(&raw.origin_world).map_err(serde::de::Error::custom)?;
         validate_basis(&raw.basis).map_err(serde::de::Error::custom)?;
-        Ok(Self { origin_world: raw.origin_world, basis: raw.basis })
+        Ok(Self {
+            origin_world: raw.origin_world,
+            basis: raw.basis,
+        })
     }
 }
 
@@ -107,18 +110,12 @@ impl CoordinateFrame {
         let x = dx.normalize();
         let z_unnorm = dxy.cross(&x);
         if z_unnorm.norm() < 1e-9 {
-            return Err(CoreError::InvalidInput(
-                "three points are collinear".into(),
-            ));
+            return Err(CoreError::InvalidInput("three points are collinear".into()));
         }
         let z = z_unnorm.normalize();
         let y = z.cross(&x);
 
-        let basis = [
-            [x.x, x.y, x.z],
-            [y.x, y.y, y.z],
-            [z.x, z.y, z.z],
-        ];
+        let basis = [[x.x, x.y, x.z], [y.x, y.y, y.z], [z.x, z.y, z.z]];
 
         Ok(Self {
             origin_world: [origin.x, origin.y, origin.z],
@@ -135,7 +132,11 @@ impl CoordinateFrame {
     }
 
     fn origin(&self) -> Vector3<f64> {
-        Vector3::new(self.origin_world[0], self.origin_world[1], self.origin_world[2])
+        Vector3::new(
+            self.origin_world[0],
+            self.origin_world[1],
+            self.origin_world[2],
+        )
     }
 
     /// Transform a world-frame point to model frame.

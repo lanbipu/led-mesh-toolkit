@@ -1,4 +1,6 @@
-use lmt_core::surface::{GridTopology, MeshOutput, QualityMetrics, ReconstructedSurface, TargetSoftware};
+use lmt_core::surface::{
+    GridTopology, MeshOutput, QualityMetrics, ReconstructedSurface, TargetSoftware,
+};
 use nalgebra::{Vector2, Vector3};
 
 #[test]
@@ -7,7 +9,9 @@ fn surface_construction_holds_consistent_sizes() {
     let rows = 3;
     let n_verts = ((cols + 1) * (rows + 1)) as usize;
 
-    let vertices: Vec<Vector3<f64>> = (0..n_verts).map(|i| Vector3::new(i as f64, 0.0, 0.0)).collect();
+    let vertices: Vec<Vector3<f64>> = (0..n_verts)
+        .map(|i| Vector3::new(i as f64, 0.0, 0.0))
+        .collect();
     let uvs: Vec<Vector2<f64>> = (0..n_verts).map(|_| Vector2::zeros()).collect();
 
     let surf = ReconstructedSurface {
@@ -44,7 +48,14 @@ fn grid_topology_vertex_count_handles_boundaries() {
     assert_eq!(GridTopology { cols: 0, rows: 0 }.vertex_count(), 1);
     assert_eq!(GridTopology { cols: 0, rows: 3 }.vertex_count(), 4);
     assert_eq!(GridTopology { cols: 4, rows: 0 }.vertex_count(), 5);
-    assert_eq!(GridTopology { cols: 500, rows: 500 }.vertex_count(), 251_001);
+    assert_eq!(
+        GridTopology {
+            cols: 500,
+            rows: 500
+        }
+        .vertex_count(),
+        251_001
+    );
 }
 
 #[test]

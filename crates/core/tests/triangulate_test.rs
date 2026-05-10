@@ -67,17 +67,25 @@ fn shorter_diagonal_is_chosen_when_quad_is_skewed() {
     // Shorter diagonal: bl-tr  → triangles (bl,br,tr) + (bl,tr,tl)
     let topo = GridTopology { cols: 1, rows: 1 };
     let verts = vec![
-        Vector3::new(0.0, 0.0, 0.0),  // bl   index 0
-        Vector3::new(1.0, 5.0, 0.0),  // br   index 1
-        Vector3::new(0.0, 0.0, 1.0),  // tl   index 2
-        Vector3::new(1.0, 0.0, 1.0),  // tr   index 3
+        Vector3::new(0.0, 0.0, 0.0), // bl   index 0
+        Vector3::new(1.0, 5.0, 0.0), // br   index 1
+        Vector3::new(0.0, 0.0, 1.0), // tl   index 2
+        Vector3::new(1.0, 0.0, 1.0), // tr   index 3
     ];
     let cab = CabinetArray::rectangle(1, 1, [500.0, 500.0]);
     let tris = triangulate_grid(topo, &verts, &cab);
     assert_eq!(tris.len(), 2);
     // Both triangles should share the bl-tr diagonal (indices 0 and 3)
-    let shared: Vec<[u32; 3]> = tris.iter().filter(|t| t.contains(&0) && t.contains(&3)).copied().collect();
-    assert_eq!(shared.len(), 2, "both tris should share the shorter (bl-tr) diagonal");
+    let shared: Vec<[u32; 3]> = tris
+        .iter()
+        .filter(|t| t.contains(&0) && t.contains(&3))
+        .copied()
+        .collect();
+    assert_eq!(
+        shared.len(),
+        2,
+        "both tris should share the shorter (bl-tr) diagonal"
+    );
 }
 
 #[test]

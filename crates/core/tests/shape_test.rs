@@ -14,7 +14,8 @@ fn rectangle_array_yields_correct_grid_size() {
 #[test]
 fn irregular_array_respects_mask() {
     let arr = CabinetArray::irregular(
-        10, 10,
+        10,
+        10,
         [500.0, 500.0],
         vec![(5, 5), (5, 6), (6, 5), (6, 6)], // 4 missing cells
     );
@@ -42,8 +43,8 @@ fn curved_prior_carries_radius() {
 #[test]
 fn is_present_returns_false_out_of_bounds() {
     let arr = CabinetArray::rectangle(10, 10, [500.0, 500.0]);
-    assert!(!arr.is_present(10, 0));   // col == cols
-    assert!(!arr.is_present(0, 10));   // row == rows
+    assert!(!arr.is_present(10, 0)); // col == cols
+    assert!(!arr.is_present(0, 10)); // row == rows
     assert!(!arr.is_present(100, 100));
 }
 
@@ -62,7 +63,9 @@ cabinet_size_mm: [500.0, 500.0]
 
 #[test]
 fn folded_prior_carries_seam_columns() {
-    let p = ShapePrior::Folded { fold_seam_columns: vec![40, 80] };
+    let p = ShapePrior::Folded {
+        fold_seam_columns: vec![40, 80],
+    };
     let s = serde_yaml::to_string(&p).unwrap();
     assert!(s.contains("folded"));
     assert!(s.contains("40"));

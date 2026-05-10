@@ -1,6 +1,8 @@
 use lmt_core::export::build::surface_to_mesh_output;
 use lmt_core::shape::CabinetArray;
-use lmt_core::surface::{GridTopology, MeshOutput, QualityMetrics, ReconstructedSurface, TargetSoftware};
+use lmt_core::surface::{
+    GridTopology, MeshOutput, QualityMetrics, ReconstructedSurface, TargetSoftware,
+};
 use lmt_core::uv::compute_grid_uv;
 use nalgebra::Vector3;
 
@@ -32,9 +34,7 @@ fn rect_2x1() -> CabinetArray {
 fn neutral_output_preserves_vertex_count() {
     let s = sample_2x1_surface();
     let cab = rect_2x1();
-    let mo: MeshOutput = surface_to_mesh_output(
-        &s, &cab, TargetSoftware::Neutral, 0.001
-    ).unwrap();
+    let mo: MeshOutput = surface_to_mesh_output(&s, &cab, TargetSoftware::Neutral, 0.001).unwrap();
     assert_eq!(mo.vertices.len(), 6);
     assert_eq!(mo.uv_coords.len(), 6);
     assert_eq!(mo.triangles.len(), 4);
@@ -47,7 +47,7 @@ fn welding_drops_duplicates() {
     let v = vec![
         Vector3::new(0.0, 0.0, 0.0),
         Vector3::new(1.0, 0.0, 0.0),
-        Vector3::new(0.0, 0.0, 0.0),    // duplicate of vertex 0
+        Vector3::new(0.0, 0.0, 0.0), // duplicate of vertex 0
         Vector3::new(1.0, 0.0, 1.0),
     ];
     let uvs = compute_grid_uv(topo);
@@ -60,7 +60,7 @@ fn welding_drops_duplicates() {
     };
     let cab = CabinetArray::rectangle(1, 1, [500.0, 500.0]);
     let mo = surface_to_mesh_output(&s, &cab, TargetSoftware::Neutral, 0.001).unwrap();
-    assert_eq!(mo.vertices.len(), 3);  // 1 dup welded
+    assert_eq!(mo.vertices.len(), 3); // 1 dup welded
 }
 
 #[test]
@@ -92,7 +92,10 @@ fn surface_to_mesh_disguise_limit_rejected_before_allocation() {
     // Build a surface with vertex count > DISGUISE_VERTEX_LIMIT.
     // Use cols=500, rows=500 → 251_001 vertices. Limit check should fire
     // before triangulate/weld run.
-    let topo = GridTopology { cols: 500, rows: 500 };
+    let topo = GridTopology {
+        cols: 500,
+        rows: 500,
+    };
     let n = topo.vertex_count();
     let vertices = vec![Vector3::zeros(); n];
     let uvs = vec![nalgebra::Vector2::zeros(); n];

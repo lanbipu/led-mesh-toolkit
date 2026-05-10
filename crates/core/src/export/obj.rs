@@ -55,7 +55,13 @@ pub fn write_obj(mesh: &MeshOutput, path: &Path) -> Result<(), CoreError> {
         writeln!(w)?;
 
         for v in &mesh.vertices {
-            writeln!(w, "v {} {} {}", trim_zero(v.x), trim_zero(v.y), trim_zero(v.z))?;
+            writeln!(
+                w,
+                "v {} {} {}",
+                trim_zero(v.x),
+                trim_zero(v.y),
+                trim_zero(v.z)
+            )?;
         }
         for uv in &mesh.uv_coords {
             writeln!(w, "vt {} {}", trim_zero(uv.x), trim_zero(uv.y))?;
@@ -72,7 +78,10 @@ pub fn write_obj(mesh: &MeshOutput, path: &Path) -> Result<(), CoreError> {
         // Flush BufWriter, fsync the file, then drop to release the handle.
         w.flush()?;
         let file = w.into_inner().map_err(|e| {
-            CoreError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+            CoreError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ))
         })?;
         file.sync_all()?;
         Ok(())
@@ -97,5 +106,9 @@ pub fn write_obj(mesh: &MeshOutput, path: &Path) -> Result<(), CoreError> {
 fn trim_zero(x: f64) -> String {
     let s = format!("{:.6}", x);
     let s = s.trim_end_matches('0').trim_end_matches('.').to_string();
-    if s.is_empty() || s == "-" { "0".to_string() } else { s }
+    if s.is_empty() || s == "-" {
+        "0".to_string()
+    } else {
+        s
+    }
 }

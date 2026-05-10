@@ -60,8 +60,7 @@ pub fn surface_to_mesh_output(
     }
 
     // 0d. Disguise vertex-count limit (early reject before allocation).
-    if matches!(target, TargetSoftware::Disguise)
-        && surface.vertices.len() > DISGUISE_VERTEX_LIMIT
+    if matches!(target, TargetSoftware::Disguise) && surface.vertices.len() > DISGUISE_VERTEX_LIMIT
     {
         return Err(CoreError::Reconstruction(format!(
             "input surface has {} vertices, exceeds Disguise limit of {}",
@@ -79,7 +78,13 @@ pub fn surface_to_mesh_output(
     // 3. Remap + drop degenerate triangles.
     let mut triangles: Vec<[u32; 3]> = raw_tris
         .iter()
-        .map(|t| [mapping[t[0] as usize], mapping[t[1] as usize], mapping[t[2] as usize]])
+        .map(|t| {
+            [
+                mapping[t[0] as usize],
+                mapping[t[1] as usize],
+                mapping[t[2] as usize],
+            ]
+        })
         .filter(|t| t[0] != t[1] && t[1] != t[2] && t[0] != t[2])
         .collect();
 

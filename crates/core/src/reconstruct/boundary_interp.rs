@@ -74,17 +74,31 @@ impl Reconstructor for BoundaryInterpReconstructor {
         const INTERIOR_DEV_WARN_MM: f64 = 10.0;
 
         for mp in &points.points {
-            let Some(rest) = mp.name.strip_prefix(&prefix) else { continue };
+            let Some(rest) = mp.name.strip_prefix(&prefix) else {
+                continue;
+            };
             let parts: Vec<&str> = rest.split("_R").collect();
-            if parts.len() != 2 { continue }
-            let Ok(col_1based) = parts[0].parse::<u32>() else { continue };
-            let Ok(row_1based) = parts[1].parse::<u32>() else { continue };
-            if col_1based == 0 || row_1based == 0 { continue }
+            if parts.len() != 2 {
+                continue;
+            }
+            let Ok(col_1based) = parts[0].parse::<u32>() else {
+                continue;
+            };
+            let Ok(row_1based) = parts[1].parse::<u32>() else {
+                continue;
+            };
+            if col_1based == 0 || row_1based == 0 {
+                continue;
+            }
             let col = col_1based - 1;
             let row = row_1based - 1;
-            if col > cols || row > rows { continue }
+            if col > cols || row > rows {
+                continue;
+            }
             // Skip top/bottom anchors — they're exactly reproduced by interpolation.
-            if row == 0 || row == rows { continue }
+            if row == 0 || row == rows {
+                continue;
+            }
 
             let interpolated = vertices[topo.vertex_index(col, row)];
             let dev_m = (mp.position - interpolated).norm();

@@ -98,7 +98,9 @@ fn disguise_export_actually_swaps_y_z_axes() {
             .filter_map(|l| {
                 let stripped = l.strip_prefix("v ")?;
                 let parts: Vec<&str> = stripped.split_whitespace().collect();
-                if parts.len() != 3 { return None; }
+                if parts.len() != 3 {
+                    return None;
+                }
                 let x: f64 = parts[0].parse().ok()?;
                 let y: f64 = parts[1].parse().ok()?;
                 let z: f64 = parts[2].parse().ok()?;
@@ -118,7 +120,11 @@ fn disguise_export_actually_swaps_y_z_axes() {
     fn approx_key(t: (f64, f64, f64)) -> (i64, i64, i64) {
         // Round to 6 decimals (matches OBJ writer precision)
         let scale = 1_000_000.0_f64;
-        ((t.0 * scale).round() as i64, (t.1 * scale).round() as i64, (t.2 * scale).round() as i64)
+        (
+            (t.0 * scale).round() as i64,
+            (t.1 * scale).round() as i64,
+            (t.2 * scale).round() as i64,
+        )
     }
 
     let neutral_set: BTreeSet<_> = neutral_vs.iter().copied().map(approx_key).collect();
@@ -129,9 +135,11 @@ fn disguise_export_actually_swaps_y_z_axes() {
         .collect();
     let disguise_set: BTreeSet<_> = disguise_vs.iter().copied().map(approx_key).collect();
 
-    assert_eq!(disguise_set, expected_disguise_set,
+    assert_eq!(
+        disguise_set, expected_disguise_set,
         "Disguise OBJ vertices must equal (x, z, -y) of neutral OBJ vertices.\n\
          Neutral: {neutral_set:?}\n\
          Expected: {expected_disguise_set:?}\n\
-         Got:      {disguise_set:?}");
+         Got:      {disguise_set:?}"
+    );
 }

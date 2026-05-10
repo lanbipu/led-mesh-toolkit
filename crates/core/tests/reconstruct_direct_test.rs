@@ -69,7 +69,10 @@ fn direct_link_rejects_irregular_cabinet_array() {
     let mut mp = full_grid_3x2();
     mp.cabinet_array = CabinetArray::irregular(3, 2, [500.0, 500.0], vec![(1, 0)]);
     let r = DirectLinkReconstructor;
-    assert!(!r.applicable(&mp), "irregular CabinetArray should not be applicable for DirectLink");
+    assert!(
+        !r.applicable(&mp),
+        "irregular CabinetArray should not be applicable for DirectLink"
+    );
 }
 
 #[test]
