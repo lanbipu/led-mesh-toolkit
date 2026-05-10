@@ -7,5 +7,6 @@
 pub mod error;
 pub mod uncertainty;
 pub mod point;
+pub mod coordinate;
 
 pub use error::CoreError;
