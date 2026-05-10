@@ -1,10 +1,12 @@
 //! Visual photogrammetry adapter (M2).
 //!
-//! Wraps a Python sidecar that runs OpenCV ChArUco detection
-//! + scipy BA. Implementation deferred to M2 plan.
+//! Wraps a one-shot Python sidecar invocation. The sidecar handles
+//! ChArUco detection, bundle adjustment, and Procrustes alignment;
+//! this crate handles subprocess management, NDJSON parsing, and IR
+//! conversion.
 
-#![allow(unused)]
+pub mod error;
+pub mod ipc;
 
-pub fn placeholder() -> &'static str {
-    "M2 adapter not yet implemented"
-}
+pub use error::{VbaError, VbaResult};
+pub use ipc::{Event, FrameStrategy, ReconstructInput, ResultData};
