@@ -234,13 +234,13 @@ BA 收敛后，sidecar 从 Jacobian 提取每个 3D 点的协方差：
 ```
 cov_3x3 = sigma_residual^2 * (J^T @ J)^{-1}_block(point)
 ```
-注入到 IR：
+注入到 IR（与 `crates/core/src/point.rs` 实际定义一致）：
 ```rust
 MeasuredPoint {
     name: "MAIN_V003_R002",
-    position_world: [x, y, z],
-    uncertainty: Uncertainty::Covariance3x3([[..]; 3]),
-    source: PointSource::VisualBA,
+    position: Vector3::new(x, y, z),                  // model / origin frame，单位 m
+    uncertainty: Uncertainty::Covariance3x3(cov_3x3),
+    source: PointSource::VisualBA { camera_count: 5 }, // 该点的有效观测相机数
 }
 ```
 
@@ -279,20 +279,21 @@ M2 阶段不集成 Tauri（headless）。`target/sidecar-vendor/<platform>/` 路
 
 ### 9.1 PoC 何时跑
 
-Plan 分两段：
+Plan 分两段。**A 模式和 C 模式都必须在 Part A 交付**（PoC 要拿两者对比，不能让 gate 依赖未实现的代码）：
 
 - **Part A — MVP**（PoC 之前必须交付）：
   - sidecar 三个子命令在合成数据上跑通
-  - Rust adapter 端到端跑通 reconstruct 流程
+  - Reconstruct 子命令同时支持 A 模式（标称 anchoring）和 C 模式（3-参考点 fallback），共用 Procrustes
+  - 两种模式各自的单元测试覆盖
+  - Rust adapter 端到端跑通 reconstruct 流程（两种模式都通过 IR 转换输出）
   - ChArUco pattern 三件套能输出
-  - PoC 对比工具能跑
+  - PoC 对比工具能跑（含 holdout 分离逻辑，见 §9.3）
 
 - **PoC 闸门**（用户在外部安排，plan 里是 manual gate）
 
 - **Part B — 生产化**（PoC 通过后做）：
   - 错误处理 + cancel 机制完整化
   - PyInstaller 打包 + CI 集成
-  - C 模式 fallback 完整实现 + 单元测试
   - 精度报告 / 日志 / 诊断
   - Windows + macOS build 验证
 
@@ -301,25 +302,39 @@ Plan 分两段：
 | 项 | 配置 |
 |---|---|
 | LED 测试墙 | 4×4 箱体（1m × 1m） |
-| Ground truth | 全站仪测同一组 ChArUco 角点 |
+| Ground truth | 全站仪测**全部** ChArUco 角点（不只 3 个），按命名 `MAIN_V<col>_R<row>` 与 sidecar 输出对应 |
 | 拍摄 | 10–15 张图（远 / 中 / 近混合） |
-| 模式 | A 模式 + C 模式各跑一次（同一组数据） |
+| 模式 | A 模式 + C 模式各跑一次（同一组照片） |
 
-### 9.3 通过门槛
+### 9.3 通过门槛与 holdout 策略
 
-| 模式 | 门槛 |
-|---|---|
-| A（标称 anchoring） | RMS < 10mm（宽松，留 M3 refinement 空间） |
-| C（3-参考点） | RMS < 5mm（VP 标准，spec §10.2 PoC 阶段定义） |
+PoC 报告必须区分**对齐 anchor（拿来做 Procrustes 的点）**和**验证点（不参与对齐，只参与 RMS）**：
+
+- **A 模式**：Procrustes 用全部 ChArUco 标称位置做对齐目标。RMS 是 BA 点 → 标称位置的对齐残差；这反映"实际形状 vs 先验形状"的偏差，本身就是有效指标。无需 holdout。
+- **C 模式**：Procrustes 只用 3 个 `frame_anchors` 做对齐。**RMS 必须排除这 3 个 anchor**，仅在剩余的 `(N-3)` 个验证点上计算，避免在训练集上测精度。3 个 anchor 在屏幕上**空间分布要尽量分散**（不共线、近角落），PoC 报告需明确列出 anchor ID。
+
+通过门槛：
+
+| 模式 | 指标 | 门槛 |
+|---|---|---|
+| A（标称 anchoring） | 全部 ChArUco 点对齐残差 RMS | < 10mm（宽松，留 M3 refinement 空间） |
+| C（3-参考点） | **holdout** 验证点（N-3 个）RMS | < 5mm（VP 标准，spec §10.2 PoC 阶段定义） |
+| C（3-参考点） | 95th percentile（同 holdout 集） | < 8mm（避免单点拉低均值掩盖局部漂移） |
 
 判定：
 - A 通过 + C 通过 → 进 Part B，A 作为默认
-- 仅 C 通过 → 进 Part B，但 A 标记为 "实验性"，默认走 C
+- 仅 C 通过 → 进 Part B，但 A 标记为"实验性"，默认走 C
 - 都不通过 → plan 暂停，分析失败原因（pattern / SOP / 算法）→ 重新设计
 
 ### 9.4 PoC 交付物
 
-- `docs/poc/2026-XX-XX-m2-poc-report.md`：测试条件 + 原始数据路径 + RMS / per-point error 报告 + 通过/不通过结论 + 下一步动作
+- `docs/poc/2026-XX-XX-m2-poc-report.md`：包含
+  - 测试条件（屏幕规格、相机、镜头、光照）
+  - 原始数据路径（图像 + 全站仪 CSV）
+  - 列出的 C 模式 anchor ID + 它们在屏上的位置
+  - A 模式：全点对齐残差 RMS、95th percentile、per-point error 表格
+  - C 模式：holdout 集的 RMS、95th percentile、per-point error 表格；anchor 残差单独列出（应接近 0）
+  - 通过/不通过结论 + 下一步动作
 
 ---
 
@@ -341,15 +356,15 @@ Plan 分两段：
 
 ## 11. Plan 结构预告
 
-`writing-plans` 阶段产出的实施计划预计 **18–22 个 task**，分 7 块：
+`writing-plans` 阶段产出的实施计划预计 **20–24 个 task**，分 7 块：
 
 1. **Sidecar 骨架**：pyproject、CLI 入口、IPC schema 文件、空命令路由、合成数据 fixture
 2. **Pattern 生成**：单箱 PNG → 整屏拼接 → pattern_meta.json
 3. **Calibration 子命令**：棋盘格检测 → intrinsics 输出
-4. **Reconstruct A 模式**：检测 + 亚像素 + BA + Procrustes（标称）
-5. **Rust adapter**：spawn + NDJSON + 进度 channel + 错误 + IR 转换
-6. **PoC 闸门**：对比工具 + 报告模板 + manual gate 标识
-7. **生产化**：C 模式 fallback + PyInstaller + CI + Windows/macOS build 验证
+4. **Reconstruct 核心**：检测 + 亚像素 + BA + Procrustes（A + C 共用）+ 两种模式的单测
+5. **Rust adapter**：spawn + NDJSON + 进度 channel + 错误 + IR 转换（两种模式都覆盖）
+6. **PoC 闸门**：对比工具（含 holdout 分离）+ 报告模板 + manual gate 标识
+7. **生产化**：错误/cancel 完整化 + PyInstaller + CI + Windows/macOS build 验证
 
 每个 task 在 commit 前用 `/codex:adversarial-review` 走一遍。
 
