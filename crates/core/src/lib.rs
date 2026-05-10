@@ -10,5 +10,6 @@ pub mod point;
 pub mod coordinate;
 pub mod shape;
 pub mod measured_points;
+pub mod surface;
 
 pub use error::CoreError;
