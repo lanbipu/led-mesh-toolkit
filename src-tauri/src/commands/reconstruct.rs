@@ -79,3 +79,44 @@ pub fn reconstruct_surface(
         &measurements_path,
     )
 }
+
+pub fn list_runs_for(
+    db: Db,
+    project_path: &str,
+    screen_id: Option<&str>,
+) -> LmtResult<Vec<crate::dto::ReconstructionRun>> {
+    let conn = db.lock().unwrap();
+    runs::list_by_project(&conn, project_path, screen_id)
+}
+
+pub fn read_run_report(db: Db, run_id: i64) -> LmtResult<serde_json::Value> {
+    let (project_path, report_rel) = {
+        let conn = db.lock().unwrap();
+        runs::get_report_path(&conn, run_id)?
+    };
+    let report_abs = PathBuf::from(&project_path).join(&report_rel);
+    let bytes = std::fs::read(&report_abs)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| crate::error::LmtError::Yaml(format!("json: {e}")))
+}
+
+#[tauri::command]
+pub fn list_runs(
+    state: tauri::State<'_, Db>,
+    project_path: String,
+    screen_id: Option<String>,
+) -> LmtResult<Vec<crate::dto::ReconstructionRun>> {
+    list_runs_for(
+        state.inner().clone(),
+        &project_path,
+        screen_id.as_deref(),
+    )
+}
+
+#[tauri::command]
+pub fn get_run_report(
+    state: tauri::State<'_, Db>,
+    run_id: i64,
+) -> LmtResult<serde_json::Value> {
+    read_run_report(state.inner().clone(), run_id)
+}
