@@ -1,6 +1,5 @@
 use lmt_core::coordinate::CoordinateFrame;
 use nalgebra::Vector3;
-use pretty_assertions::assert_eq;
 
 #[test]
 fn three_point_frame_is_orthonormal() {
