@@ -1,11 +1,32 @@
 <script setup lang="ts">
-import { useI18n } from "vue-i18n";
-const { t } = useI18n();
+import { computed, onMounted } from "vue";
+import { useRoute } from "vue-router";
+import { useCurrentProjectStore } from "@/stores/currentProject";
+import { useReconstructionStore } from "@/stores/reconstruction";
+import { useUiStore } from "@/stores/ui";
+import PreviewToolbar from "@/components/preview/PreviewToolbar.vue";
+import MeshPreview from "@/components/preview/MeshPreview.vue";
+
+const route = useRoute();
+const proj = useCurrentProjectStore();
+const recon = useReconstructionStore();
+const ui = useUiStore();
+const id = computed(() => Number(route.params.id));
+
+onMounted(async () => {
+  try {
+    if (proj.id !== id.value) await proj.load(id.value);
+  } catch (e) {
+    ui.toast("error", `${e}`);
+  }
+});
 </script>
 
 <template>
-  <div class="p-8">
-    <h1 class="text-2xl font-bold">{{ t("nav.preview") }}</h1>
-    <p class="mt-4 text-muted-foreground">M0.2 stub. Implementation pending.</p>
+  <div class="flex h-full flex-col">
+    <PreviewToolbar />
+    <div class="min-h-0 flex-1">
+      <MeshPreview :surface="recon.currentSurface" />
+    </div>
   </div>
 </template>
