@@ -8,6 +8,7 @@
 pub mod csv_parser;
 pub mod error;
 pub mod project;
+pub mod project_loader;
 pub mod raw_point;
 pub mod report;
 

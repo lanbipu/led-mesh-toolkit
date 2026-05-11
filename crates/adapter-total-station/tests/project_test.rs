@@ -163,3 +163,26 @@ coordinate_system:
     let err = cfg.validate().unwrap_err();
     assert!(format!("{err}").contains("distinct"));
 }
+
+#[test]
+fn load_project_from_path() {
+    use lmt_adapter_total_station::project_loader::load_project;
+    use std::path::PathBuf;
+
+    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.push("tests/fixtures/sample_project.yaml");
+    let cfg = load_project(&p).unwrap();
+    assert_eq!(cfg.project.name, "Studio_A_Volume");
+    assert!(cfg.screens.contains_key("MAIN"));
+}
+
+#[test]
+fn load_project_rejects_invalid_geometry() {
+    use lmt_adapter_total_station::project_loader::load_project;
+    use std::path::PathBuf;
+
+    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.push("tests/fixtures/invalid_project.yaml");
+    let err = load_project(&p).unwrap_err();
+    assert!(format!("{err}").contains("cabinet_count"));
+}
