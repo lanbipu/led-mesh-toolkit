@@ -13,6 +13,17 @@ __pycache__/
 *.py[cod]
 .venv
 
+# Tauri auto-generated
+/src-tauri/gen
+/src-tauri/target
+
+# TypeScript / Vite build artifacts
+*.tsbuildinfo
+vite.config.d.ts
+vite.config.js
+vitest.config.d.ts
+vitest.config.js
+
 # Editor / OS
 .DS_Store
 .vscode/
