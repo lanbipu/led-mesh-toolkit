@@ -348,6 +348,11 @@
             "frame_strategy_used": {
               "type": "string",
               "enum": ["nominal_anchoring", "three_points"]
+            },
+            "procrustes_align_rms_m": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Procrustes residual RMS in meters. A mode: misfit to nominal cabinet positions. C mode: residual of 3 anchor centroids."
             }
           }
         }

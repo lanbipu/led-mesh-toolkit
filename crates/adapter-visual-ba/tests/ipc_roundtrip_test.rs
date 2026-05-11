@@ -26,7 +26,8 @@ fn parse_result_event_with_visual_ba_source() {
           "source":{"visual_ba":{"camera_count":5}}
         }],
         "ba_stats":{"rms_reprojection_px":0.5,"iterations":12,"converged":true},
-        "frame_strategy_used":"nominal_anchoring"
+        "frame_strategy_used":"nominal_anchoring",
+        "procrustes_align_rms_m":0.003
       }
     }"#;
     match serde_json::from_str::<Event>(raw).unwrap() {

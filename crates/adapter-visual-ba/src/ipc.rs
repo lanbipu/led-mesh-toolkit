@@ -144,6 +144,11 @@ pub struct ResultData {
     pub measured_points: Vec<MeasuredPointDto>,
     pub ba_stats: BaStats,
     pub frame_strategy_used: FrameStrategy,
+    // Forward compat: older sidecars (and the calibrate / generate_pattern
+    // subcommands, which don't run Procrustes) may omit this. Default to 0.0
+    // so Rust adapter doesn't reject otherwise-valid responses.
+    #[serde(default)]
+    pub procrustes_align_rms_m: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

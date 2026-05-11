@@ -47,6 +47,17 @@ from lmt_vba_sidecar.procrustes import procrustes_rigid
 
 MIN_OBSERVATIONS = 30  # below this, abort with detection_failed
 
+# Procrustes alignment quality gates. Both in meters.
+#
+# A mode aligns BA cabinet centroids to *nominal* cabinet positions: real
+# screens deviate from the prior, so allow a generous tolerance.
+# C mode aligns to 3 user-supplied anchors (typically total-station measured):
+# anchor residuals should be tight; loose fit indicates inconsistent input.
+PROCRUSTES_RMS_THRESHOLD_M = {
+    "nominal_anchoring": 0.050,  # 50mm
+    "three_points": 0.020,       # 20mm
+}
+
 
 def _undistort_obs(
     pix: np.ndarray, K: np.ndarray, dist: np.ndarray,
@@ -165,9 +176,19 @@ def _aggregate_ba_per_cabinet(
 def _world_to_model(coord_frame, world_pos: np.ndarray) -> np.ndarray:
     """Apply CoordinateFrame.world_to_model: model = R^T @ (world - origin).
 
-    `coord_frame.basis` columns are X, Y, Z in world frame. Stack as 3×3 R.
+    `coord_frame.basis` is a list of *column* vectors per the lmt_core IR
+    docstring (`basis[i]` is the i-th column of R). numpy reads list-of-lists
+    as rows, so plain `np.array(basis)` yields R^T. We use `np.column_stack`
+    to build R, then take its transpose to apply the world→model rotation.
+
+    Identity-frame inputs hide this bug because R == R^T == I; the regression
+    test in test_reconstruct uses a non-identity basis to catch it.
     """
-    R = np.array(coord_frame.basis, dtype=float)
+    R = np.column_stack([
+        np.asarray(coord_frame.basis[0], dtype=float),
+        np.asarray(coord_frame.basis[1], dtype=float),
+        np.asarray(coord_frame.basis[2], dtype=float),
+    ])
     o = np.array(coord_frame.origin_world, dtype=float)
     return R.T @ (world_pos - o)
 
@@ -248,9 +269,22 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
                 by_cabinet, aid_to_cabinet, cmd.project.frame_anchors or [],
                 cmd.project.coordinate_frame,
             )
-        R_align, t_align, _ = procrustes_rigid(src, dst)
+        R_align, t_align, align_rms_m = procrustes_rigid(src, dst)
     except ValueError as e:
         write_event(ErrorEvent(event="error", code="procrustes_failed", message=str(e), fatal=True))
+        return 1
+
+    rms_threshold = PROCRUSTES_RMS_THRESHOLD_M[cmd.project.frame_strategy]
+    if align_rms_m > rms_threshold:
+        write_event(ErrorEvent(
+            event="error", code="procrustes_failed",
+            message=(
+                f"Procrustes alignment residual {align_rms_m * 1000:.1f}mm "
+                f"exceeds {cmd.project.frame_strategy} threshold "
+                f"{rms_threshold * 1000:.0f}mm — anchors / nominal model inconsistent"
+            ),
+            fatal=True,
+        ))
         return 1
 
     measured_points: list[MeasuredPoint] = []
@@ -285,6 +319,7 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
                 converged=True,
             ),
             frame_strategy_used=cmd.project.frame_strategy,
+            procrustes_align_rms_m=align_rms_m,
         ),
     ))
     return 0
@@ -336,6 +371,16 @@ def _select_anchors_c(
                 f"frame_anchor aruco_id={anchor.aruco_id} not in pattern_meta"
             )
         cab_xy = aid_to_cabinet[anchor.aruco_id]
+        declared = (anchor.cabinet_col, anchor.cabinet_row)
+        if declared != cab_xy:
+            # Defense-in-depth: total-station CSV rows are hand-entered and
+            # easy to mismatch. Refuse rather than silently use the ID-derived
+            # cabinet, which would anchor a different point than the report says.
+            raise ValueError(
+                f"frame_anchor aruco_id={anchor.aruco_id} maps to cabinet "
+                f"V{cab_xy[0]:03d}_R{cab_xy[1]:03d} but the anchor declares "
+                f"V{declared[0]:03d}_R{declared[1]:03d}"
+            )
         if cab_xy not in by_cabinet:
             raise ValueError(
                 f"frame_anchor aruco_id={anchor.aruco_id} (cabinet "

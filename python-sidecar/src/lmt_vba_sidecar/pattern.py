@@ -239,6 +239,7 @@ def run_generate_pattern(cmd: GeneratePatternInput) -> int:
             measured_points=[],
             ba_stats=BaStats(rms_reprojection_px=0.0, iterations=0, converged=True),
             frame_strategy_used="nominal_anchoring",
+            procrustes_align_rms_m=0.0,  # pattern gen does no Procrustes
         ),
     ))
     return 0

@@ -186,6 +186,9 @@ class ResultData(BaseModel):
     measured_points: list[MeasuredPoint]
     ba_stats: BaStats
     frame_strategy_used: Literal["nominal_anchoring", "three_points"]
+    # Optional for forward/backward compat with subcommands that don't run
+    # Procrustes (calibrate, generate_pattern) and with older sidecar versions.
+    procrustes_align_rms_m: float = Field(default=0.0, ge=0.0)
 
 
 class ProgressEvent(BaseModel):

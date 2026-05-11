@@ -105,10 +105,12 @@ def test_result_event_round_trips() -> None:
             "measured_points": [],
             "ba_stats": {"rms_reprojection_px": 0.5, "iterations": 10, "converged": True},
             "frame_strategy_used": "nominal_anchoring",
+            "procrustes_align_rms_m": 0.003,
         },
     }
     parsed = ResultEvent.model_validate(raw)
     assert parsed.data.ba_stats.converged is True
+    assert parsed.data.procrustes_align_rms_m == 0.003
 
 
 def test_three_points_strategy_requires_exactly_3_anchors() -> None:

@@ -182,6 +182,7 @@ def run_calibrate(cmd: CalibrateInput) -> int:
             measured_points=[],
             ba_stats=BaStats(rms_reprojection_px=float(rms), iterations=0, converged=True),
             frame_strategy_used="nominal_anchoring",
+            procrustes_align_rms_m=0.0,  # calibrate does no Procrustes
         ),
     ))
     return 0
