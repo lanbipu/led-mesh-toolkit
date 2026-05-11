@@ -8,6 +8,7 @@
 pub mod error;
 pub mod project;
 pub mod raw_point;
+pub mod report;
 
 pub use error::AdapterError;
 pub use raw_point::RawPoint;
