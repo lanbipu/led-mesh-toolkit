@@ -12,6 +12,7 @@ pub mod project_loader;
 pub mod raw_point;
 pub mod reference_frame;
 pub mod report;
+pub mod transform;
 
 pub use error::AdapterError;
 pub use raw_point::RawPoint;
