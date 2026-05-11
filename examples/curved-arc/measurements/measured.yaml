@@ -14,38 +14,38 @@ shape_prior: !curved
   radius_mm: 12000.0
 points:
   - name: MAIN_V001_R001
-    position: [-3.689262, 0.581185, 0.0]
+    position: [-3.926336, 0.660517, 0.0]
     uncertainty: !isotropic 2.0
     source: total_station
-  - name: MAIN_V016_R001
-    position: [3.689262, 0.581185, 0.0]
+  - name: MAIN_V017_R001
+    position: [3.926336, 0.660517, 0.0]
     uncertainty: !isotropic 2.0
     source: total_station
-  - name: MAIN_V001_R006
-    position: [-3.689262, 0.581185, 2.5]
+  - name: MAIN_V001_R007
+    position: [-3.926336, 0.660517, 3.0]
     uncertainty: !isotropic 2.0
     source: total_station
-  - name: MAIN_V016_R006
-    position: [3.689262, 0.581185, 2.5]
+  - name: MAIN_V017_R007
+    position: [3.926336, 0.660517, 3.0]
     uncertainty: !isotropic 2.0
     source: total_station
-  - name: MAIN_V008_R001
-    position: [-0.249982, 0.002604, 0.0]
+  - name: MAIN_V009_R001
+    position: [0.0, 0.0, 0.0]
     uncertainty: !isotropic 2.0
     source: total_station
-  - name: MAIN_V008_R006
-    position: [-0.249982, 0.002604, 2.5]
+  - name: MAIN_V009_R007
+    position: [0.0, 0.0, 3.0]
     uncertainty: !isotropic 2.0
     source: total_station
-  - name: MAIN_V001_R003
-    position: [-3.689262, 0.581185, 1.0]
+  - name: MAIN_V001_R004
+    position: [-3.926336, 0.660517, 1.5]
     uncertainty: !isotropic 2.0
     source: total_station
-  - name: MAIN_V016_R003
-    position: [3.689262, 0.581185, 1.0]
+  - name: MAIN_V017_R004
+    position: [3.926336, 0.660517, 1.5]
     uncertainty: !isotropic 2.0
     source: total_station
-  - name: MAIN_V008_R003
-    position: [-0.249982, 0.002604, 1.0]
+  - name: MAIN_V009_R004
+    position: [0.0, 0.0, 1.5]
     uncertainty: !isotropic 2.0
     source: total_station

@@ -14,8 +14,8 @@ screens:
     irregular_mask: []
 coordinate_system:
   origin_point: MAIN_V001_R001
-  x_axis_point: MAIN_V016_R001
-  xy_plane_point: MAIN_V001_R006
+  x_axis_point: MAIN_V017_R001
+  xy_plane_point: MAIN_V001_R007
 output:
   target: disguise
   obj_filename: "{screen_id}_mesh.obj"
