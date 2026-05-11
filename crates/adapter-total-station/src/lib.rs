@@ -5,6 +5,7 @@
 //! for reconstruction + export, plus a JSON validation report and a
 //! field instruction card (PDF + HTML).
 
+pub mod csv_parser;
 pub mod error;
 pub mod project;
 pub mod raw_point;
