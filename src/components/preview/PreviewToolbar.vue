@@ -7,6 +7,14 @@ const recon = useReconstructionStore();
 const proj = useCurrentProjectStore();
 const ui = useUiStore();
 
+function lmtErrMsg(e: unknown): string {
+  if (e && typeof e === "object") {
+    const err = e as Record<string, unknown>;
+    if (typeof err.message === "string") return `[${err.kind ?? "error"}] ${err.message}`;
+  }
+  return String(e);
+}
+
 async function reconstructNow() {
   if (!proj.absPath) return;
   if (!recon.canReconstruct) {
@@ -17,7 +25,7 @@ async function reconstructNow() {
     await recon.reconstruct(proj.absPath, "MAIN");
     ui.toast("success", "Reconstruction done");
   } catch (e) {
-    ui.toast("error", `${e}`);
+    ui.toast("error", lmtErrMsg(e));
   }
 }
 
@@ -26,7 +34,7 @@ async function exportNow(target: string) {
     const path = await recon.exportObj(target);
     ui.toast("success", `Wrote ${path}`);
   } catch (e) {
-    ui.toast("error", `${e}`);
+    ui.toast("error", lmtErrMsg(e));
   }
 }
 </script>

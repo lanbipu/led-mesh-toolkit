@@ -4,6 +4,7 @@ import { RouterView } from "vue-router";
 import LmtSidebar from "./LmtSidebar.vue";
 import LmtTopBar from "./LmtTopBar.vue";
 import LmtLogPanel from "./LmtLogPanel.vue";
+import LmtToastHost from "./LmtToastHost.vue";
 
 const logOpen = ref(false);
 </script>
@@ -18,5 +19,6 @@ const logOpen = ref(false);
       </main>
       <LmtLogPanel v-if="logOpen" @close="logOpen = false" />
     </div>
+    <LmtToastHost />
   </div>
 </template>
