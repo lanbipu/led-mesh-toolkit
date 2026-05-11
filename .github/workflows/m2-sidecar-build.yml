@@ -1,0 +1,84 @@
+name: m2-sidecar-build
+
+on:
+  push:
+    branches: [m2, main]
+    paths:
+      - 'python-sidecar/**'
+      - '.github/workflows/m2-sidecar-build.yml'
+  pull_request:
+    paths:
+      - 'python-sidecar/**'
+      - '.github/workflows/m2-sidecar-build.yml'
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: |
+          cd python-sidecar
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+      - name: Pytest
+        run: cd python-sidecar && pytest -ra
+
+  build-windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: Build
+        shell: pwsh
+        run: pwsh -File python-sidecar/build_exe.ps1
+      - name: Smoke-test bundled binary
+        shell: pwsh
+        run: |
+          # Confirm cv2 + lmt_vba_sidecar submodules actually shipped.
+          # PyInstaller's static analyzer doesn't see importlib.import_module
+          # so a missing --collect-submodules flag would silently produce
+          # a broken artifact. This step fails the build instead.
+          $payload = '{"command":"generate_pattern","version":1,"project":{"screen_id":"MAIN","cabinet_array":{"cols":1,"rows":1,"cabinet_size_mm":[500,500]}},"output_dir":"smoke","screen_resolution":[360,360]}'
+          $output = $payload | & target/sidecar-vendor/windows-x86_64/lmt-vba-sidecar.exe generate_pattern
+          if ($LASTEXITCODE -ne 0) { Write-Error "sidecar exit $LASTEXITCODE; output: $output"; exit 1 }
+          if (-not (Test-Path "smoke/full_screen.png")) { Write-Error "full_screen.png missing"; exit 1 }
+          if (-not (Test-Path "smoke/pattern_meta.json")) { Write-Error "pattern_meta.json missing"; exit 1 }
+          Write-Host "smoke OK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lmt-vba-sidecar-windows-x86_64
+          path: target/sidecar-vendor/windows-x86_64/lmt-vba-sidecar.exe
+
+  build-macos:
+    needs: test
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: Build
+        run: ./python-sidecar/build_exe.sh
+      - name: Smoke-test bundled binary
+        run: |
+          # Confirm cv2 + lmt_vba_sidecar submodules actually shipped.
+          # See build-windows for rationale.
+          set -euo pipefail
+          payload='{"command":"generate_pattern","version":1,"project":{"screen_id":"MAIN","cabinet_array":{"cols":1,"rows":1,"cabinet_size_mm":[500,500]}},"output_dir":"smoke","screen_resolution":[360,360]}'
+          echo "$payload" | ./target/sidecar-vendor/darwin-arm64/lmt-vba-sidecar generate_pattern
+          test -f smoke/full_screen.png
+          test -f smoke/pattern_meta.json
+          echo "smoke OK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lmt-vba-sidecar-darwin-arm64
+          path: target/sidecar-vendor/darwin-arm64/lmt-vba-sidecar
