@@ -10,6 +10,7 @@ pub mod error;
 pub mod project;
 pub mod project_loader;
 pub mod raw_point;
+pub mod reference_frame;
 pub mod report;
 
 pub use error::AdapterError;
