@@ -69,7 +69,27 @@ pub fn build_frame_from_first_three(raw: &[RawPoint]) -> Result<CoordinateFrame,
         )));
     }
 
-    let frame = CoordinateFrame::from_three_points(origin, x_axis, xy_plane)
+    let native = CoordinateFrame::from_three_points(origin, x_axis, xy_plane)
         .map_err(AdapterError::Core)?;
+
+    // M0.1 IR convention (per crates/core/tests/fixtures/curved_demo_points.yaml):
+    //   model +X = cols, model +Z = rows-up, model +Y = screen normal.
+    //
+    // But `from_three_points` produces basis = [X_cols, Y_in_plane, Z_normal]
+    // where Y_in_plane is the rows direction (with a sign depending on the
+    // cross-product handedness; here Y_in_plane points rows-DOWN). To match
+    // M0.1, we permute the basis so that:
+    //   new_X = X_cols (unchanged)
+    //   new_Y = Z_normal     (so model +Y is the normal)
+    //   new_Z = -Y_in_plane  (so model +Z is rows-UP; negation keeps a right-handed basis)
+    let b = &native.basis;
+    let frame = CoordinateFrame {
+        origin_world: native.origin_world,
+        basis: [
+            b[0],
+            b[2],
+            [-b[1][0], -b[1][1], -b[1][2]],
+        ],
+    };
     Ok(frame)
 }
