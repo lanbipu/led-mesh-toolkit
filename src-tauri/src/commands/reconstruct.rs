@@ -26,7 +26,29 @@ pub fn run_reconstruction(
 
     let m_abs = project_path.join(measurements_rel_path);
     let measurements = load_measurements_from_path(&m_abs)?;
-    let surface = auto_reconstruct(&measurements)?;
+    tracing::info!(
+        project_path = %project_path.display(),
+        screen_id = %screen_id,
+        measurements_abs = %m_abs.display(),
+        points_count = measurements.points.len(),
+        measurements_screen_id = %measurements.screen_id,
+        cabinet_cols = measurements.cabinet_array.cols,
+        cabinet_rows = measurements.cabinet_array.rows,
+        shape_prior = ?measurements.shape_prior,
+        first_point = measurements.points.first().map(|p| p.name.as_str()).unwrap_or("(empty)"),
+        "reconstruct: loaded measurements",
+    );
+    let surface = auto_reconstruct(&measurements).map_err(|e| {
+        tracing::error!(
+            error = %e,
+            points_count = measurements.points.len(),
+            cabinet_cols = measurements.cabinet_array.cols,
+            cabinet_rows = measurements.cabinet_array.rows,
+            shape_prior = ?measurements.shape_prior,
+            "reconstruct: auto_reconstruct failed",
+        );
+        LmtError::from(e)
+    })?;
     let metrics = surface.quality_metrics.clone();
 
     let now = Utc::now();
