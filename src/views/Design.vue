@@ -21,12 +21,16 @@ async function load() {
   if (proj.config) {
     const ids = Object.keys(proj.config.screens);
     currentScreenId.value = ids[0] ?? "MAIN";
-    editor.initFromScreen(proj.config.screens[currentScreenId.value]);
+    editor.initFromScreen(
+      proj.config.screens[currentScreenId.value],
+      proj.config.coordinate_system,
+    );
   }
 }
 
 watch(currentScreenId, (next) => {
-  if (proj.config?.screens[next]) editor.initFromScreen(proj.config.screens[next]);
+  if (proj.config?.screens[next])
+    editor.initFromScreen(proj.config.screens[next], proj.config?.coordinate_system);
 });
 
 function onKey(e: KeyboardEvent) {

@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import type { ScreenConfig } from "@/services/tauri";
+import type { CoordinateSystemConfig, ScreenConfig } from "@/services/tauri";
 
 export type EditorMode = "mask" | "refs" | "baseline";
 export type RefRole = "origin" | "x_axis" | "xy_plane";
@@ -55,12 +55,23 @@ export const useEditorStore = defineStore("editor", () => {
     redoStack.value = [];
   }
 
-  function initFromScreen(screen: ScreenConfig) {
+  function initFromScreen(
+    screen: ScreenConfig,
+    cs?: CoordinateSystemConfig | null,
+    baselineOverride?: number | null,
+  ) {
     cols.value = screen.cabinet_count[0];
     rows.value = screen.cabinet_count[1];
     mask.value = new Set(screen.irregular_mask.map(([c, r]) => `${c},${r}`));
-    refs.value = { origin: null, x_axis: null, xy_plane: null };
-    baselineRow.value = null;
+    refs.value = {
+      origin: cs?.origin_point ?? null,
+      x_axis: cs?.x_axis_point ?? null,
+      xy_plane: cs?.xy_plane_point ?? null,
+    };
+    baselineRow.value =
+      baselineOverride !== undefined
+        ? baselineOverride
+        : screen.bottom_completion?.lowest_measurable_row ?? null;
     undoStack.value = [];
     redoStack.value = [];
   }

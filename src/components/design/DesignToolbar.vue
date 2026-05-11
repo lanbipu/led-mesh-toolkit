@@ -84,7 +84,7 @@ async function save() {
       </button>
       <button
         class="rounded bg-primary px-3 py-1 text-sm text-primary-foreground disabled:opacity-50"
-        :disabled="!proj.dirty"
+        :disabled="editor.undoDepth === 0 && !proj.dirty"
         @click="save"
       >
         Save
