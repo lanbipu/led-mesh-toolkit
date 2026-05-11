@@ -22,6 +22,7 @@ pyinstaller `
     --specpath "$PSScriptRoot/build" `
     --collect-all cv2 `
     --collect-submodules scipy `
+    --collect-submodules lmt_vba_sidecar `
     --paths "$PSScriptRoot/src" `
     "$PSScriptRoot/src/lmt_vba_sidecar/__main__.py"
 

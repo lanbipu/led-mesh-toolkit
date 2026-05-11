@@ -31,6 +31,7 @@ pyinstaller \
     --specpath "$SCRIPT_DIR/build" \
     --collect-all cv2 \
     --collect-submodules scipy \
+    --collect-submodules lmt_vba_sidecar \
     --paths "$SCRIPT_DIR/src" \
     "$SCRIPT_DIR/src/lmt_vba_sidecar/__main__.py"
 

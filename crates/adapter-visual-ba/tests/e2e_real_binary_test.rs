@@ -40,3 +40,53 @@ async fn real_sidecar_handles_invalid_input_gracefully() {
         other => panic!("expected Protocol(invalid_input), got {other:?}"),
     }
 }
+
+#[tokio::test]
+#[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary or wrapper"]
+async fn real_sidecar_generate_pattern_exercises_cv2_and_submodules() {
+    // Goes deeper than the invalid_input path: this actually invokes
+    // `lmt_vba_sidecar.pattern` (which imports cv2 + uses cv2.aruco). If
+    // PyInstaller missed `--collect-submodules lmt_vba_sidecar` or `--collect-all cv2`,
+    // this test surfaces the regression in CI before users hit it.
+    let exe = match env::var("LMT_VBA_SIDECAR_PATH") {
+        Ok(p) => p,
+        Err(_) => {
+            eprintln!("skipping: LMT_VBA_SIDECAR_PATH not set");
+            return;
+        }
+    };
+    env::set_var("LMT_VBA_SIDECAR_PATH", &exe);
+
+    let tmp = tempfile::tempdir().expect("tmpdir");
+    let out_dir = tmp.path().join("patterns");
+    let payload = json!({
+        "command": "generate_pattern",
+        "version": 1,
+        "project": {
+            "screen_id": "MAIN",
+            "cabinet_array": {"cols": 1, "rows": 1, "cabinet_size_mm": [500.0, 500.0]}
+        },
+        "output_dir": out_dir.to_str().unwrap(),
+        "screen_resolution": [360, 360]
+    });
+
+    let result = run_sidecar(SidecarRequest {
+        subcommand: "generate_pattern".into(),
+        payload,
+        progress_tx: None,
+        cancel: None,
+    })
+    .await;
+
+    match result {
+        Ok(_) => {
+            // generate_pattern returns an empty result envelope on success.
+            // The proof is the produced files.
+            assert!(out_dir.join("full_screen.png").exists(),
+                "full_screen.png not produced — cv2 likely missing from build");
+            assert!(out_dir.join("pattern_meta.json").exists());
+            assert!(out_dir.join("cabinets/V000_R000.png").exists());
+        }
+        Err(e) => panic!("expected success, got {e}"),
+    }
+}
