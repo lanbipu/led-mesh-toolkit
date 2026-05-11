@@ -7,6 +7,7 @@
 
 pub mod csv_parser;
 pub mod error;
+pub mod fallback;
 pub mod geometric_naming;
 pub mod project;
 pub mod project_loader;
