@@ -50,11 +50,7 @@ fn parse_csv_rejects_non_finite_coordinate() {
 fn parse_csv_rejects_duplicate_instrument_id() {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path().join("dup.csv");
-    std::fs::write(
-        &p,
-        "name,x,y,z,note\n1,0,0,0,\n2,1,0,0,\n2,2,0,0,\n",
-    )
-    .unwrap();
+    std::fs::write(&p, "name,x,y,z,note\n1,0,0,0,\n2,1,0,0,\n2,2,0,0,\n").unwrap();
     let err = parse_csv(&p).unwrap_err();
     assert!(format!("{err}").contains("duplicate"));
 }

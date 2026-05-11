@@ -1,6 +1,4 @@
-use lmt_adapter_total_station::geometric_naming::{
-    name_points_geometrically, NamingTolerances,
-};
+use lmt_adapter_total_station::geometric_naming::{name_points_geometrically, NamingTolerances};
 use lmt_adapter_total_station::shape_grid::GridExpected;
 use nalgebra::Vector3;
 
@@ -22,9 +20,9 @@ fn matched_points_get_assigned_to_nearest_grid_name() {
         ge("MAIN_V002_R002", 0.5, 0.5, 1, 1),
     ];
     let model = vec![
-        (10u32, Vector3::new(0.001, 0.0, 0.0)),    // 1mm from V001_R001
-        (11u32, Vector3::new(0.499, 0.0, 0.0)),    // 1mm from V002_R001
-        (12u32, Vector3::new(0.001, 0.0, 0.500)),  // 0mm from V001_R002
+        (10u32, Vector3::new(0.001, 0.0, 0.0)),   // 1mm from V001_R001
+        (11u32, Vector3::new(0.499, 0.0, 0.0)),   // 1mm from V002_R001
+        (12u32, Vector3::new(0.001, 0.0, 0.500)), // 0mm from V001_R002
     ];
     let outcome = name_points_geometrically(&model, &expected, &NamingTolerances::default());
 
@@ -87,5 +85,8 @@ fn runner_up_beyond_ambiguity_radius_is_silently_dropped() {
     let outcome = name_points_geometrically(&model, &expected, &NamingTolerances::default());
     assert_eq!(outcome.matches.len(), 1);
     assert_eq!(outcome.matches.get(&10).unwrap().as_str(), "MAIN_V001_R001");
-    assert!(outcome.ambiguous.is_empty(), "runner-up at 40mm should not be ambiguous");
+    assert!(
+        outcome.ambiguous.is_empty(),
+        "runner-up at 40mm should not be ambiguous"
+    );
 }

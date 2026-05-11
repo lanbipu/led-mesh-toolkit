@@ -159,7 +159,8 @@ pub fn generate_pdf(card: &InstructionCard, path: &Path) -> Result<(), AdapterEr
         .map_err(|e| AdapterError::Pdf(e.to_string()))?;
     // Explicit flush so callers don't see Ok(()) while the final buffered
     // bytes are still pending — important on full-disk or interrupted writes.
-    buf.flush().map_err(|e| AdapterError::Pdf(format!("flush: {e}")))?;
+    buf.flush()
+        .map_err(|e| AdapterError::Pdf(format!("flush: {e}")))?;
 
     Ok(())
 }

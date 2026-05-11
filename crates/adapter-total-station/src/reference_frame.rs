@@ -69,8 +69,8 @@ pub fn build_frame_from_first_three(raw: &[RawPoint]) -> Result<CoordinateFrame,
         )));
     }
 
-    let native = CoordinateFrame::from_three_points(origin, x_axis, xy_plane)
-        .map_err(AdapterError::Core)?;
+    let native =
+        CoordinateFrame::from_three_points(origin, x_axis, xy_plane).map_err(AdapterError::Core)?;
 
     // M0.1 IR convention (per crates/core/tests/fixtures/curved_demo_points.yaml):
     //   model +X = cols, model +Z = rows-up, model +Y = screen normal.
@@ -85,11 +85,7 @@ pub fn build_frame_from_first_three(raw: &[RawPoint]) -> Result<CoordinateFrame,
     let b = &native.basis;
     let frame = CoordinateFrame {
         origin_world: native.origin_world,
-        basis: [
-            b[0],
-            b[2],
-            [-b[1][0], -b[1][1], -b[1][2]],
-        ],
+        basis: [b[0], b[2], [-b[1][0], -b[1][1], -b[1][2]]],
     };
     Ok(frame)
 }

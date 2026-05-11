@@ -78,7 +78,9 @@ pub fn expected_grid_positions(
                 }
             }
         }
-        ShapePriorConfig::Folded { fold_seam_columns: _ } => {
+        ShapePriorConfig::Folded {
+            fold_seam_columns: _,
+        } => {
             // M1.1: treat folded as flat for the nominal grid; the actual
             // fold geometry is recovered from measured points in the
             // reconstructor. Future enhancement: piecewise-flat by seam.

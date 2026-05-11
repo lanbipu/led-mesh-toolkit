@@ -9,8 +9,7 @@ use crate::shape_grid::expected_grid_positions;
 /// downstream by vertical extension. Telling the field operator to
 /// measure them would be misleading.
 pub fn generate_html(card: &InstructionCard) -> String {
-    let grid =
-        expected_grid_positions(&card.screen_id, &card.cfg).unwrap_or_default();
+    let grid = expected_grid_positions(&card.screen_id, &card.cfg).unwrap_or_default();
     let total = grid.len();
     // 1-based row threshold: only render rows >= this row index in the
     // measurement table. Without bottom_completion, this is 1 (all rows).
@@ -60,9 +59,7 @@ pub fn generate_html(card: &InstructionCard) -> String {
             "<p>可测点数：{measurable_count}（含 3 参考点）；底部 {fabricated_below} 点因遮挡跳过，工具将垂直延伸补全</p>\n"
         ));
     } else {
-        html.push_str(&format!(
-            "<p>总测点数：{total}（含 3 参考点）</p>\n"
-        ));
+        html.push_str(&format!("<p>总测点数：{total}（含 3 参考点）</p>\n"));
     }
 
     html.push_str("<h2>第一步：3 个参考点（必须按仪器点号 1, 2, 3 顺序测量）</h2>\n<table>\n");

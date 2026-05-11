@@ -1,13 +1,13 @@
 # LED Mesh Toolkit
 
-LED 屏几何建模工具集（M0.1 阶段：Rust core 已完成）。
+LED 屏几何建模工具集。
 
 ## Status
 
-- M0.1 Rust core (this milestone) — done
+- M0.1 Rust core — done (tag `m0.1-complete`)
+- M1.1 Total-station adapter — done (tag `m1.1-complete`)
 - M0.2 GUI shell + Tauri integration — pending
-- M1 全站仪 adapter (parallel session) — pending
-- M2 视觉反算 adapter (parallel session) — pending
+- M2 视觉反算 adapter — pending
 
 ## Structure
 

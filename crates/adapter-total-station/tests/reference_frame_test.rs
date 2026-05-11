@@ -18,9 +18,9 @@ fn xy_plane_marker_lands_on_positive_z_in_model() {
     // In model frame it must therefore land on +Z, not +Y or -Y. This test
     // catches the basis Y/Z permutation contract.
     let raw = vec![
-        rp(1, 0.0, 0.0, 0.0),       // origin → (0,0,0)
-        rp(2, 2000.0, 0.0, 0.0),    // x-axis → (+2m X)
-        rp(3, 0.0, 0.0, 1000.0),    // xy-plane marker, 1m above origin
+        rp(1, 0.0, 0.0, 0.0),    // origin → (0,0,0)
+        rp(2, 2000.0, 0.0, 0.0), // x-axis → (+2m X)
+        rp(3, 0.0, 0.0, 1000.0), // xy-plane marker, 1m above origin
     ];
     let frame = build_frame_from_first_three(&raw).unwrap();
     let xy = frame.world_to_model(&Vector3::new(0.0, 0.0, 1.0));

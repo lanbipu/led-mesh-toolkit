@@ -69,8 +69,7 @@ pub fn build_screen_measured_points_with_outcome(
     let outcome = name_points_geometrically(&model, &expected, &NamingTolerances::default());
 
     // 5. Build name → model position map for matched raw points.
-    let model_by_id: HashMap<u32, Vector3<f64>> =
-        model.iter().map(|(id, p)| (*id, *p)).collect();
+    let model_by_id: HashMap<u32, Vector3<f64>> = model.iter().map(|(id, p)| (*id, *p)).collect();
 
     let mut measured_by_name: HashMap<String, Vector3<f64>> = HashMap::new();
     for (id, name) in &outcome.matches {

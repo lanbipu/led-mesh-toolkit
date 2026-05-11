@@ -68,7 +68,11 @@ pub fn name_points_geometrically(
     let mut tree: KdTree<f64, u64, 3, 32, u32> = KdTree::new();
     for (i, ge) in expected.iter().enumerate() {
         tree.add(
-            &[ge.model_position.x, ge.model_position.y, ge.model_position.z],
+            &[
+                ge.model_position.x,
+                ge.model_position.y,
+                ge.model_position.z,
+            ],
             i as u64,
         );
     }
@@ -125,5 +129,9 @@ pub fn name_points_geometrically(
         }
     }
 
-    NameOutcome { matches, outliers, ambiguous }
+    NameOutcome {
+        matches,
+        outliers,
+        ambiguous,
+    }
 }

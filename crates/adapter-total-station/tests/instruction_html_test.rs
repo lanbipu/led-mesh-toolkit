@@ -57,8 +57,20 @@ fn html_excludes_rows_below_lowest_measurable_row() {
         xy_plane_grid_name: "MAIN_V001_R006".into(),
     };
     let html = generate_html(&card);
-    assert!(!html.contains("MAIN_V001_R001"), "R001 should be excluded from measurement table");
-    assert!(!html.contains("MAIN_V003_R002"), "R002 should be excluded from measurement table");
-    assert!(html.contains("MAIN_V001_R003"), "R003 should appear (reference)");
-    assert!(html.contains("垂直向下推算"), "fallback note should be present");
+    assert!(
+        !html.contains("MAIN_V001_R001"),
+        "R001 should be excluded from measurement table"
+    );
+    assert!(
+        !html.contains("MAIN_V003_R002"),
+        "R002 should be excluded from measurement table"
+    );
+    assert!(
+        html.contains("MAIN_V001_R003"),
+        "R003 should appear (reference)"
+    );
+    assert!(
+        html.contains("垂直向下推算"),
+        "fallback note should be present"
+    );
 }

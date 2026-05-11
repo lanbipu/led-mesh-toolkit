@@ -140,12 +140,8 @@ pub struct ScreenConfig {
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum ShapePriorConfig {
     Flat,
-    Curved {
-        radius_mm: f64,
-    },
-    Folded {
-        fold_seam_columns: Vec<u32>,
-    },
+    Curved { radius_mm: f64 },
+    Folded { fold_seam_columns: Vec<u32> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

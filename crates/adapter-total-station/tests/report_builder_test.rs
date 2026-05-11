@@ -27,8 +27,7 @@ fn report_counts_measured_and_missing() {
         bottom_completion: None,
         absent_cells: vec![],
     };
-    let (mp, outcome) =
-        build_screen_measured_points_with_outcome("MAIN", &raw, &cfg).unwrap();
+    let (mp, outcome) = build_screen_measured_points_with_outcome("MAIN", &raw, &cfg).unwrap();
     let report = build_screen_report("MAIN", &mp, &outcome, &cfg);
 
     // Expected = 5×3 = 15
@@ -56,8 +55,7 @@ fn report_records_outliers_when_point_too_far() {
         bottom_completion: None,
         absent_cells: vec![],
     };
-    let (mp, outcome) =
-        build_screen_measured_points_with_outcome("MAIN", &raw, &cfg).unwrap();
+    let (mp, outcome) = build_screen_measured_points_with_outcome("MAIN", &raw, &cfg).unwrap();
     let report = build_screen_report("MAIN", &mp, &outcome, &cfg);
 
     assert_eq!(report.outliers.len(), 1);

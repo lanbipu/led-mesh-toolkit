@@ -1,9 +1,7 @@
 use lmt_adapter_total_station::project::{
     BottomCompletion, FallbackMethod, ScreenConfig, ShapePriorConfig,
 };
-use lmt_adapter_total_station::shape_grid::{
-    expected_grid_positions, GridExpected,
-};
+use lmt_adapter_total_station::shape_grid::{expected_grid_positions, GridExpected};
 use nalgebra::Vector3;
 
 fn flat_screen(cols: u32, rows: u32) -> ScreenConfig {
