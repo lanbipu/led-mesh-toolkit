@@ -9,3 +9,16 @@ description = "Total-station CSV adapter for LMT (M1)"
 
 [dependencies]
 lmt-core = { path = "../core" }
+nalgebra.workspace = true
+kiddo.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+csv = "1"
+printpdf = "0.7"
+
+[dev-dependencies]
+insta.workspace = true
+pretty_assertions.workspace = true
+tempfile = "3"

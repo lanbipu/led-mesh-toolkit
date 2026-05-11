@@ -1,10 +1,24 @@
 //! Total-station CSV adapter (M1).
 //!
-//! Implementation deferred to the M1 plan. This crate exists
-//! only to lock the workspace shape during M0.
+//! Reads instrument-numbered CSV from a Trimble / Leica total station,
+//! a project YAML config, and produces `lmt_core::MeasuredPoints` ready
+//! for reconstruction + export, plus a JSON validation report and a
+//! field instruction card (PDF + HTML).
 
-#![allow(unused)]
+pub mod builder;
+pub mod csv_parser;
+pub mod error;
+pub mod fallback;
+pub mod geometric_naming;
+pub mod instruction_card;
+pub mod project;
+pub mod project_loader;
+pub mod raw_point;
+pub mod reference_frame;
+pub mod report;
+pub mod report_builder;
+pub mod shape_grid;
+pub mod transform;
 
-pub fn placeholder() -> &'static str {
-    "M1 adapter not yet implemented"
-}
+pub use error::AdapterError;
+pub use raw_point::RawPoint;
