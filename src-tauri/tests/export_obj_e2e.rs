@@ -1,5 +1,5 @@
 use lmt_tauri_lib::commands::export::run_export;
-use lmt_tauri_lib::commands::reconstruct::run_reconstruction;
+use lmt_tauri_lib::commands::reconstruct::{list_runs_for, run_reconstruction};
 use lmt_tauri_lib::data::{open_in_memory, schema};
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -73,5 +73,76 @@ fn reconstruct_then_export_writes_obj() {
     println!(
         "f lines: {}",
         content.lines().filter(|l| l.starts_with("f ")).count()
+    );
+}
+
+#[test]
+fn two_runs_same_target_no_overwrite() {
+    let proj = TempDir::new().unwrap();
+    copy_example("curved-flat", proj.path());
+
+    let db = open_in_memory().unwrap();
+    {
+        let mut c = db.lock().unwrap();
+        schema::migrate(&mut c).unwrap();
+    }
+
+    let r1 = run_reconstruction(
+        db.clone(),
+        proj.path(),
+        "MAIN",
+        "measurements/measured.yaml",
+    )
+    .expect("first reconstruction should succeed");
+
+    let r2 = run_reconstruction(
+        db.clone(),
+        proj.path(),
+        "MAIN",
+        "measurements/measured.yaml",
+    )
+    .expect("second reconstruction should succeed");
+
+    let path_1 = run_export(db.clone(), r1.run_id, "disguise")
+        .expect("first export should succeed");
+    let path_2 = run_export(db.clone(), r2.run_id, "disguise")
+        .expect("second export should succeed");
+
+    assert_ne!(path_1, path_2, "two runs must produce different OBJ paths");
+    assert!(
+        std::path::Path::new(&path_1).is_file(),
+        "first run OBJ must still exist on disk: {path_1}"
+    );
+    assert!(
+        std::path::Path::new(&path_2).is_file(),
+        "second run OBJ must still exist on disk: {path_2}"
+    );
+
+    // Verify DB rows point to their respective paths
+    let runs = list_runs_for(
+        db.clone(),
+        proj.path().to_str().unwrap(),
+        Some("MAIN"),
+    )
+    .expect("list_runs_for should succeed");
+
+    let row_1 = runs
+        .iter()
+        .find(|r| r.id == r1.run_id)
+        .expect("run 1 should appear in listing");
+    let row_2 = runs
+        .iter()
+        .find(|r| r.id == r2.run_id)
+        .expect("run 2 should appear in listing");
+
+    assert!(
+        row_1.output_obj_path.as_deref().map(|p| path_1.ends_with(p)).unwrap_or(false),
+        "DB row for run1 should point to path_1, got: {:?}",
+        row_1.output_obj_path
+    );
+    assert!(
+        row_2.output_obj_path.as_deref().map(|p| path_2.ends_with(p)).unwrap_or(false),
+        "DB row for run2 should point to path_2, got: {:?}",
+        row_2.output_obj_path
     );
 }

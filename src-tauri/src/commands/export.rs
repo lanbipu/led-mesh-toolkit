@@ -57,7 +57,7 @@ pub fn run_export(db: Db, run_id: i64, target: &str) -> LmtResult<String> {
 
     let mesh = surface_to_mesh_output(&report.surface, &cabinet_array, target_enum, weld_m)?;
 
-    let out_rel = PathBuf::from("output").join(format!("{}_{target}.obj", report.screen_id));
+    let out_rel = PathBuf::from("output").join(format!("{}_{target}_run{run_id}.obj", report.screen_id));
     let out_abs = project_root.join(&out_rel);
     std::fs::create_dir_all(out_abs.parent().unwrap())?;
     write_obj(&mesh, &out_abs)?;
