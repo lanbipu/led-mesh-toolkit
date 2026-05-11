@@ -1,7 +1,8 @@
+use crate::commands::export::build_cabinet_array;
 use crate::commands::measurements::load_measurements_from_path;
 use crate::data::{runs, Db};
 use crate::dto::{ReconstructionReport, ReconstructionResult};
-use crate::error::{LmtResult};
+use crate::error::{LmtError, LmtResult};
 use chrono::Utc;
 use lmt_core::reconstruct::auto_reconstruct;
 use std::path::{Path, PathBuf};
@@ -12,6 +13,17 @@ pub fn run_reconstruction(
     screen_id: &str,
     measurements_rel_path: &str,
 ) -> LmtResult<ReconstructionResult> {
+    // Load project.yaml to snapshot cabinet_array and weld_tolerance at this moment.
+    let yaml = std::fs::read_to_string(project_path.join("project.yaml"))?;
+    let cfg: crate::dto::ProjectConfig = serde_yaml::from_str(&yaml)
+        .map_err(|e| LmtError::Yaml(format!("project.yaml: {e}")))?;
+    let screen_cfg = cfg
+        .screens
+        .get(screen_id)
+        .ok_or_else(|| LmtError::NotFound(format!("screen {screen_id} in project.yaml")))?;
+    let cabinet_array = build_cabinet_array(screen_cfg)?;
+    let weld_tolerance_mm = cfg.output.weld_vertices_tolerance_mm;
+
     let m_abs = project_path.join(measurements_rel_path);
     let measurements = load_measurements_from_path(&m_abs)?;
     let surface = auto_reconstruct(&measurements)?;
@@ -30,6 +42,8 @@ pub fn run_reconstruction(
         screen_id: screen_id.to_string(),
         measurements_path: measurements_rel_path.to_string(),
         created_at: now.to_rfc3339(),
+        cabinet_array,
+        weld_tolerance_mm,
     };
     let json =
         serde_json::to_vec_pretty(&report).map_err(|e| crate::error::LmtError::Yaml(format!("json: {e}")))?;

@@ -2,6 +2,7 @@ use lmt_tauri_lib::commands::export::run_export;
 use lmt_tauri_lib::commands::reconstruct::{list_runs_for, run_reconstruction};
 use lmt_tauri_lib::data::{open_in_memory, schema};
 use std::path::PathBuf;
+use std::io::Write;
 use tempfile::TempDir;
 
 fn copy_example(name: &str, dst: &std::path::Path) {
@@ -145,4 +146,50 @@ fn two_runs_same_target_no_overwrite() {
         "DB row for run2 should point to path_2, got: {:?}",
         row_2.output_obj_path
     );
+}
+
+#[test]
+fn export_uses_snapshot_after_project_yaml_changed() {
+    let proj = TempDir::new().unwrap();
+    copy_example("curved-flat", proj.path());
+
+    let db = open_in_memory().unwrap();
+    {
+        let mut c = db.lock().unwrap();
+        schema::migrate(&mut c).unwrap();
+    }
+
+    // Reconstruct once — snapshot captures original 8×4 cabinet_array.
+    let r1 = run_reconstruction(
+        db.clone(),
+        proj.path(),
+        "MAIN",
+        "measurements/measured.yaml",
+    )
+    .expect("reconstruction should succeed");
+
+    // Now mutate project.yaml: change cabinet_count from [8, 4] to [12, 6].
+    let yaml_path = proj.path().join("project.yaml");
+    let original_yaml = std::fs::read_to_string(&yaml_path).unwrap();
+    let mutated_yaml = original_yaml.replace("cabinet_count: [8, 4]", "cabinet_count: [12, 6]");
+    assert_ne!(original_yaml, mutated_yaml, "yaml mutation must have taken effect");
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&yaml_path)
+            .unwrap();
+        f.write_all(mutated_yaml.as_bytes()).unwrap();
+    }
+
+    // Export must succeed using the snapshot (8×4), not the mutated yaml (12×6).
+    let obj_path = run_export(db.clone(), r1.run_id, "disguise")
+        .expect("export should succeed using snapshotted cabinet_array");
+
+    let path = std::path::Path::new(&obj_path);
+    assert!(path.is_file(), "OBJ file should exist at {obj_path}");
+
+    let content = std::fs::read_to_string(path).unwrap();
+    assert!(content.contains("v "), "OBJ should have vertex lines");
+    assert!(content.contains("f "), "OBJ should have face lines");
 }

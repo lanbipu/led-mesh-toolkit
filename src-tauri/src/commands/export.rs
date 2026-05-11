@@ -16,7 +16,7 @@ fn parse_target(s: &str) -> LmtResult<TargetSoftware> {
     }
 }
 
-fn build_cabinet_array(screen_cfg: &crate::dto::ScreenConfig) -> LmtResult<CabinetArray> {
+pub fn build_cabinet_array(screen_cfg: &crate::dto::ScreenConfig) -> LmtResult<CabinetArray> {
     let [cols, rows] = screen_cfg.cabinet_count;
     let cabinet_size_mm = screen_cfg.cabinet_size_mm;
     match screen_cfg.shape_mode {
@@ -44,18 +44,9 @@ pub fn run_export(db: Db, run_id: i64, target: &str) -> LmtResult<String> {
     let report_abs = project_root.join(&report_rel);
     let report: ReconstructionReport = serde_json::from_slice(&std::fs::read(&report_abs)?)?;
 
-    let yaml = std::fs::read_to_string(project_root.join("project.yaml"))?;
-    let cfg: crate::dto::ProjectConfig = serde_yaml::from_str(&yaml)?;
-
-    let screen_cfg = cfg
-        .screens
-        .get(&report.screen_id)
-        .ok_or_else(|| LmtError::NotFound(format!("screen {} in project.yaml", report.screen_id)))?;
-
-    let cabinet_array = build_cabinet_array(screen_cfg)?;
-    let weld_m = cfg.output.weld_vertices_tolerance_mm / 1000.0;
-
-    let mesh = surface_to_mesh_output(&report.surface, &cabinet_array, target_enum, weld_m)?;
+    // Use snapshotted values from the report — no re-read of project.yaml.
+    let weld_m = report.weld_tolerance_mm / 1000.0;
+    let mesh = surface_to_mesh_output(&report.surface, &report.cabinet_array, target_enum, weld_m)?;
 
     let out_rel = PathBuf::from("output").join(format!("{}_{target}_run{run_id}.obj", report.screen_id));
     let out_abs = project_root.join(&out_rel);

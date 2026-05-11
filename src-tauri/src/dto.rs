@@ -1,4 +1,5 @@
 use lmt_core::{
+    shape::CabinetArray,
     surface::QualityMetrics,
     surface::ReconstructedSurface,
 };
@@ -111,4 +112,9 @@ pub struct ReconstructionReport {
     pub screen_id: String,
     pub measurements_path: String,
     pub created_at: String,
+    /// Cabinet array snapshot captured at reconstruction time.
+    /// Export uses this instead of re-reading project.yaml.
+    pub cabinet_array: CabinetArray,
+    /// Weld tolerance (mm) snapshot captured at reconstruction time.
+    pub weld_tolerance_mm: f64,
 }
