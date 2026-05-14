@@ -2,9 +2,12 @@
 import { onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useProjectsStore } from "@/stores/projects";
 import { useUiStore } from "@/stores/ui";
-import { open } from "@tauri-apps/plugin-dialog";
+import LmtPageHeader from "@/components/primitives/LmtPageHeader.vue";
+import LmtIcon from "@/components/primitives/LmtIcon.vue";
+import Button from "@/components/ui/Button.vue";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -35,36 +38,120 @@ async function openExisting() {
     ui.toast("error", `${e}`);
   }
 }
+
+function fmtDate(s: string | null | undefined): string {
+  if (!s) return "—";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  return d.toISOString().slice(0, 16).replace("T", " ");
+}
 </script>
 
 <template>
-  <div class="p-8">
-    <h1 class="text-2xl font-bold">{{ t("home.recent") }}</h1>
-    <div v-if="projects.recent.length === 0" class="mt-6 text-muted-foreground">
-      {{ t("home.empty") }}
-    </div>
-    <ul v-else class="mt-4 divide-y">
-      <li v-for="p in projects.recent" :key="p.id" class="flex items-center gap-4 py-2">
-        <RouterLink :to="`/projects/${p.id}/design`" class="flex-1 hover:underline">
-          <div class="font-medium">{{ p.display_name }}</div>
-          <div class="text-xs text-muted-foreground">{{ p.abs_path }}</div>
-        </RouterLink>
-        <button class="text-xs text-destructive" @click="projects.remove(p.id)">
-          {{ t("home.remove") }}
-        </button>
-      </li>
-    </ul>
+  <div class="flex h-full flex-col gap-6 p-6">
+    <LmtPageHeader
+      :eyebrow="t('home.eyebrow')"
+      :title="t('home.title')"
+      :description="t('home.description')"
+    >
+      <template #actions>
+        <Button variant="outline" @click="openExisting">
+          <LmtIcon name="folder-open" :size="15" />
+          {{ t("home.open_existing") }}
+        </Button>
+        <Button variant="default" @click="createExample('curved-flat')">
+          <LmtIcon name="plus" :size="15" />
+          {{ t("home.create_curved_flat") }}
+        </Button>
+      </template>
+    </LmtPageHeader>
 
-    <div class="mt-8 flex flex-wrap gap-3">
-      <button class="rounded bg-primary px-4 py-2 text-primary-foreground" @click="createExample('curved-flat')">
-        {{ t("home.create_curved_flat") }}
-      </button>
-      <button class="rounded bg-primary px-4 py-2 text-primary-foreground" @click="createExample('curved-arc')">
-        {{ t("home.create_curved_arc") }}
-      </button>
-      <button class="rounded border px-4 py-2" @click="openExisting">
-        {{ t("home.open_existing") }}
-      </button>
-    </div>
+    <section class="flex flex-1 flex-col gap-3 overflow-hidden">
+      <div class="flex items-center justify-between">
+        <p class="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+          {{ t("home.recent") }}
+        </p>
+        <p class="font-mono text-[11px] text-muted-foreground">
+          {{ projects.recent.length }} {{ projects.recent.length === 1 ? "project" : "projects" }}
+        </p>
+      </div>
+
+      <div
+        v-if="projects.recent.length === 0"
+        class="flex flex-1 flex-col items-center justify-center gap-3 rounded-lg border bg-hatched py-12 text-center"
+      >
+        <LmtIcon name="folder-plus" :size="28" class="text-muted-foreground" />
+        <p class="max-w-sm text-sm text-muted-foreground">{{ t("home.empty") }}</p>
+        <div class="mt-2 flex flex-wrap items-center justify-center gap-2">
+          <Button variant="default" size="sm" @click="createExample('curved-flat')">
+            <LmtIcon name="plus" :size="14" />
+            {{ t("home.create_curved_flat") }}
+          </Button>
+          <Button variant="default" size="sm" @click="createExample('curved-arc')">
+            <LmtIcon name="plus" :size="14" />
+            {{ t("home.create_curved_arc") }}
+          </Button>
+          <Button variant="outline" size="sm" @click="openExisting">
+            <LmtIcon name="folder-open" :size="14" />
+            {{ t("home.open_existing") }}
+          </Button>
+        </div>
+      </div>
+
+      <ul v-else class="grid auto-rows-min grid-cols-1 gap-3 overflow-auto xl:grid-cols-2">
+        <li
+          v-for="p in projects.recent"
+          :key="p.id"
+          class="group flex items-center gap-3 rounded-lg border bg-card p-4 transition-colors hover:border-primary/40 hover:bg-accent/40"
+        >
+          <RouterLink
+            :to="`/projects/${p.id}/design`"
+            class="flex min-w-0 flex-1 flex-col gap-1"
+          >
+            <span class="flex items-center gap-2 truncate font-display text-sm font-bold text-foreground group-hover:text-primary">
+              <LmtIcon name="folder" :size="14" />
+              {{ p.display_name }}
+            </span>
+            <span class="truncate font-mono text-[11px] text-muted-foreground">
+              {{ p.abs_path }}
+            </span>
+            <span class="font-mono text-[11px] text-muted-foreground">
+              {{ fmtDate(p.last_opened_at) }}
+            </span>
+          </RouterLink>
+          <button
+            type="button"
+            class="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-transparent text-muted-foreground transition-colors hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
+            :aria-label="t('home.remove')"
+            :title="t('home.remove')"
+            @click.stop.prevent="projects.remove(p.id)"
+          >
+            <LmtIcon name="trash-2" :size="14" />
+          </button>
+        </li>
+      </ul>
+    </section>
+
+    <section class="rounded-lg border bg-card p-4">
+      <div class="flex items-start gap-3">
+        <div class="mt-0.5 flex size-8 items-center justify-center rounded-md border bg-secondary text-secondary-foreground">
+          <LmtIcon name="sparkles" :size="14" />
+        </div>
+        <div class="min-w-0 flex-1">
+          <p class="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+            {{ t("home.actionsTitle") }}
+          </p>
+          <p class="mt-1 text-sm text-muted-foreground">{{ t("home.actionsDesc") }}</p>
+        </div>
+        <div class="flex shrink-0 gap-2">
+          <Button variant="outline" size="sm" @click="createExample('curved-flat')">
+            {{ t("home.create_curved_flat") }}
+          </Button>
+          <Button variant="outline" size="sm" @click="createExample('curved-arc')">
+            {{ t("home.create_curved_arc") }}
+          </Button>
+        </div>
+      </div>
+    </section>
   </div>
 </template>

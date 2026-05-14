@@ -1,35 +1,72 @@
 {
   "app": {
-    "title": "LED Mesh Toolkit"
+    "title": "LED Mesh Toolkit",
+    "tagline": "Geometry reconstruction · LED mesh modeling · Export"
   },
   "shell": {
     "activityLog": "Activity Log",
-    "noActivity": "No activity yet."
+    "noActivity": "No activity",
+    "toggleLog": "Toggle activity log",
+    "closeLog": "Close activity log"
   },
   "nav": {
+    "group": {
+      "workspace": "Workspace",
+      "design": "Design",
+      "output": "Output"
+    },
     "home": "Home",
-    "design": "Design",
+    "design": "Screen Design",
     "preview": "Preview",
     "export": "Export",
     "runs": "Runs",
     "import": "Import",
-    "instruct": "Instruct (M1)",
-    "charuco": "ChArUco (M2)",
-    "photoplan": "Photo Plan (M2)"
+    "instruct": "Instruct",
+    "charuco": "ChArUco",
+    "photoplan": "Photo Plan"
+  },
+  "common": {
+    "open": "Open",
+    "save": "Save",
+    "cancel": "Cancel",
+    "loading": "Loading",
+    "noData": "No data",
+    "status": "Status",
+    "path": "Path",
+    "remove": "Remove"
   },
   "home": {
+    "eyebrow": "Workspace",
+    "title": "Projects",
+    "description": "Pick a recent project to continue, or seed a new mesh geometry project from an example.",
     "recent": "Recent Projects",
-    "empty": "No recent projects. Click below to seed one from an example.",
-    "create_curved_flat": "Create Curved-Flat (8x4)",
-    "create_curved_arc": "Create Curved-Arc (16x6)",
-    "open_existing": "Open Existing Folder…",
-    "remove": "Remove from list"
+    "empty": "No recent projects. Seed one from an example below, or open an existing folder.",
+    "create_curved_flat": "Curved-Flat (8×4)",
+    "create_curved_arc": "Curved-Arc (16×6)",
+    "open_existing": "Open Existing Folder",
+    "remove": "Remove",
+    "actionsTitle": "New project",
+    "actionsDesc": "Examples ship with complete measurement sets and config — design / preview / export flow ready out of the box."
   },
   "design": {
+    "eyebrow": "Design",
+    "title": "Screen Design",
+    "description": "Switch modes to edit mask, reference points, baseline. Edits push to the undo stack; Save writes project.yaml.",
+    "screen": "Screen",
+    "mode": "Mode",
+    "refRole": "Ref Role",
+    "undo": "Undo",
+    "redo": "Redo",
+    "save": "Save",
     "toolbar": {
       "mask": "Mask",
       "refs": "Refs",
       "baseline": "Baseline"
+    },
+    "ref": {
+      "origin": "Origin",
+      "x_axis": "X-axis",
+      "xy_plane": "XY-plane"
     },
     "legend": {
       "present": "Present",
@@ -38,5 +75,78 @@
       "x_axis": "X-axis",
       "xy_plane": "XY-plane"
     }
+  },
+  "preview": {
+    "eyebrow": "Output",
+    "title": "3D Preview",
+    "description": "Reconstruct mesh from current measurements and preview it. Export to Disguise / Unreal / Neutral coordinate systems.",
+    "reconstruct": "Reconstruct",
+    "reconstructing": "Reconstructing…",
+    "status": "Status",
+    "exportDisguise": "Disguise",
+    "exportUnreal": "Unreal",
+    "exportNeutral": "Neutral"
+  },
+  "import": {
+    "eyebrow": "Design",
+    "title": "Import Measurements",
+    "description": "M1 total-station CSV and M2 visual-BA image entries land in their milestone sessions. For now, load a hand-written measured.yaml.",
+    "loadMeasured": "Load measured.yaml",
+    "current": "Current",
+    "none": "(none)",
+    "loaded": "Loaded {n} measurement points"
+  },
+  "charuco": {
+    "eyebrow": "Design",
+    "title": "ChArUco Pattern",
+    "description": "M2 visual back-calculation. Implemented in the M2 (visual BA) session. M0.2 only ships the route.",
+    "pending": "M2 — pending"
+  },
+  "photoplan": {
+    "eyebrow": "Design",
+    "title": "Photo Plan",
+    "description": "M2 visual back-calculation. Implemented in the M2 (visual BA) session. M0.2 only ships the route.",
+    "pending": "M2 — pending"
+  },
+  "runs": {
+    "eyebrow": "Output",
+    "title": "Reconstruction Runs",
+    "description": "Metadata for every reconstruction run. Click a row to expand the full JSON report.",
+    "empty": "No runs yet. Trigger one from the Preview view.",
+    "col": {
+      "created": "Created",
+      "screen": "Screen",
+      "method": "Method",
+      "rms": "RMS (mm)",
+      "vertices": "Vertices",
+      "target": "Target",
+      "obj": "OBJ Path"
+    }
+  },
+  "export": {
+    "eyebrow": "Output",
+    "title": "Export",
+    "description": "OBJ export is triggered from the Preview toolbar. Three coordinate-system targets follow distinct axis conventions.",
+    "goPreview": "Go to Preview",
+    "tile": {
+      "disguise": {
+        "title": "Disguise",
+        "desc": "Right-handed, Y-up. For d3 / VFX pipelines."
+      },
+      "unreal": {
+        "title": "Unreal",
+        "desc": "Left-handed, Z-up. For UE5 blueprints / nDisplay."
+      },
+      "neutral": {
+        "title": "Neutral",
+        "desc": "Raw IR coordinate system. Neutral output for downstream tooling."
+      }
+    }
+  },
+  "instruct": {
+    "eyebrow": "Output",
+    "title": "Instruction Card",
+    "description": "M1 total-station only. HTML + PDF instruction card generators land in the M1 session.",
+    "pending": "M1 — pending"
   }
 }

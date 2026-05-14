@@ -128,10 +128,10 @@ export const useEditorStore = defineStore("editor", () => {
   const undoDepth = computed(() => undoStack.value.length);
   const redoDepth = computed(() => redoStack.value.length);
 
-  /** Commit current editor state back to a ScreenConfig shape (mask only;
-   *  refs + baseline are owned by the wider project config). */
-  function commitMaskToScreen(screen: ScreenConfig): ScreenConfig {
-    return {
+  /** Commit current editor state (mask + baseline) back to a ScreenConfig.
+   *  Refs are persisted separately through `updateCoordinateSystem`. */
+  function commitToScreen(screen: ScreenConfig): ScreenConfig {
+    const next: ScreenConfig = {
       ...screen,
       shape_mode: mask.value.size > 0 ? "irregular" : screen.shape_mode,
       irregular_mask: Array.from(mask.value).map((k) => {
@@ -139,6 +139,16 @@ export const useEditorStore = defineStore("editor", () => {
         return [c, r] as [number, number];
       }),
     };
+    if (baselineRow.value !== null) {
+      next.bottom_completion = {
+        ...(screen.bottom_completion ?? {
+          fallback_method: "vertical_extension",
+          assumed_height_mm: 0,
+        }),
+        lowest_measurable_row: baselineRow.value,
+      };
+    }
+    return next;
   }
 
   return {
@@ -161,6 +171,6 @@ export const useEditorStore = defineStore("editor", () => {
     undo,
     redo,
     clearStacks,
-    commitMaskToScreen,
+    commitToScreen,
   };
 });

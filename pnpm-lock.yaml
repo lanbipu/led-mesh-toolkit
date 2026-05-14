@@ -8,6 +8,12 @@ importers:
 
   .:
     dependencies:
+      '@fontsource-variable/inter':
+        specifier: ^5.2.8
+        version: 5.2.8
+      '@fontsource-variable/manrope':
+        specifier: ^5.2.8
+        version: 5.2.8
       '@tauri-apps/api':
         specifier: ^2.0.0
         version: 2.11.0
@@ -26,6 +32,9 @@ importers:
       konva:
         specifier: ^9.3.0
         version: 9.3.22
+      lucide-vue-next:
+        specifier: ^1.0.0
+        version: 1.0.0(vue@3.5.34(typescript@5.9.3))
       pinia:
         specifier: ^2.1.7
         version: 2.3.1(typescript@5.9.3)(vue@3.5.34(typescript@5.9.3))
@@ -269,6 +278,12 @@ packages:
 
   '@floating-ui/vue@1.1.11':
     resolution: {integrity: sha512-HzHKCNVxnGS35r9fCHBc3+uCnjw9IWIlCPL683cGgM9Kgj2BiAl8x1mS7vtvP6F9S/e/q4O6MApwSHj8hNLGfw==}
+
+  '@fontsource-variable/inter@5.2.8':
+    resolution: {integrity: sha512-kOfP2D+ykbcX/P3IFnokOhVRNoTozo5/JxhAIVYLpea/UBmCQ/YWPBfWIDuBImXX/15KH+eKh4xpEUyS2sQQGQ==}
+
+  '@fontsource-variable/manrope@5.2.8':
+    resolution: {integrity: sha512-nc9lOuCRz73UHnovDE2bwXUdghE2SEOc7Aii0qGe3CLyE03W1a7VnY5Z6euRiapiKbCkGS+eXbY3s/kvWeGeSw==}
 
   '@internationalized/date@3.12.1':
     resolution: {integrity: sha512-6IedsVWXyq4P9Tj+TxuU8WGWM70hYLl12nbYU8jkikVpa6WXapFazPUcHUMDMoWftIDE2ILDkFFte6W2nFCkRQ==}
@@ -1055,6 +1070,11 @@ packages:
   lru-cache@10.4.3:
     resolution: {integrity: sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ==}
 
+  lucide-vue-next@1.0.0:
+    resolution: {integrity: sha512-V6SPvx1IHTj/UY+FrIYWV5faISsPSb8BnWSFDxAtezWKvWc9ZZ40PDrdu1/Qb5vg4lHWr1hs1BAMGVGm6V1Xdg==}
+    peerDependencies:
+      vue: '>=3.0.1'
+
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
 
@@ -1666,6 +1686,10 @@ snapshots:
     transitivePeerDependencies:
       - '@vue/composition-api'
       - vue
+
+  '@fontsource-variable/inter@5.2.8': {}
+
+  '@fontsource-variable/manrope@5.2.8': {}
 
   '@internationalized/date@3.12.1':
     dependencies:
@@ -2387,6 +2411,10 @@ snapshots:
       get-func-name: 2.0.2
 
   lru-cache@10.4.3: {}
+
+  lucide-vue-next@1.0.0(vue@3.5.34(typescript@5.9.3)):
+    dependencies:
+      vue: 3.5.34(typescript@5.9.3)
 
   magic-string@0.30.21:
     dependencies:

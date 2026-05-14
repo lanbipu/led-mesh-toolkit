@@ -53,4 +53,62 @@ describe("useEditorStore", () => {
     for (let i = 0; i < 60; i++) s.toggleCell(i % 4, 0);
     expect(s.undoDepth).toBeLessThanOrEqual(50);
   });
+
+  it("commitToScreen persists baseline edits to bottom_completion", () => {
+    const s = useEditorStore();
+    s.initFromScreen({
+      cabinet_count: [4, 2],
+      cabinet_size_mm: [500, 500],
+      shape_prior: { type: "flat" },
+      shape_mode: "rectangle",
+      irregular_mask: [],
+    });
+    s.setBaseline(3);
+    const next = s.commitToScreen({
+      cabinet_count: [4, 2],
+      cabinet_size_mm: [500, 500],
+      shape_prior: { type: "flat" },
+      shape_mode: "rectangle",
+      irregular_mask: [],
+    });
+    expect(next.bottom_completion?.lowest_measurable_row).toBe(3);
+  });
+
+  it("commitToScreen preserves existing bottom_completion fallback fields", () => {
+    const s = useEditorStore();
+    const screen = {
+      cabinet_count: [4, 2] as [number, number],
+      cabinet_size_mm: [500, 500] as [number, number],
+      shape_prior: { type: "flat" as const },
+      shape_mode: "rectangle" as const,
+      irregular_mask: [],
+      bottom_completion: {
+        lowest_measurable_row: 1,
+        fallback_method: "vertical_extension",
+        assumed_height_mm: 250,
+      },
+    };
+    s.initFromScreen(screen);
+    s.setBaseline(5);
+    const next = s.commitToScreen(screen);
+    expect(next.bottom_completion).toEqual({
+      lowest_measurable_row: 5,
+      fallback_method: "vertical_extension",
+      assumed_height_mm: 250,
+    });
+  });
+
+  it("commitToScreen leaves bottom_completion untouched when baseline is null", () => {
+    const s = useEditorStore();
+    const screen = {
+      cabinet_count: [4, 2] as [number, number],
+      cabinet_size_mm: [500, 500] as [number, number],
+      shape_prior: { type: "flat" as const },
+      shape_mode: "rectangle" as const,
+      irregular_mask: [],
+    };
+    s.initFromScreen(screen);
+    const next = s.commitToScreen(screen);
+    expect(next.bottom_completion).toBeUndefined();
+  });
 });

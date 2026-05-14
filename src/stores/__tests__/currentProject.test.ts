@@ -78,4 +78,39 @@ describe("useCurrentProjectStore", () => {
     expect(tauriApi.saveProjectYaml).toHaveBeenCalled();
     expect(s.dirty).toBe(false);
   });
+
+  it("updateScreen targets named screen only — multi-screen projects stay isolated", async () => {
+    const multiScreen = {
+      ...sampleConfig,
+      screens: {
+        MAIN: sampleConfig.screens.MAIN,
+        SECONDARY: {
+          ...sampleConfig.screens.MAIN,
+          cabinet_count: [6, 3] as [number, number],
+          irregular_mask: [[1, 1]] as [number, number][],
+        },
+      },
+    };
+    (tauriApi.listRecentProjects as any).mockResolvedValueOnce([
+      { id: 7, abs_path: "/p", display_name: "P", last_opened_at: "x" },
+    ]);
+    (tauriApi.loadProjectYaml as any).mockResolvedValueOnce(multiScreen);
+    const s = useCurrentProjectStore();
+    await s.load(7);
+    s.updateScreen("SECONDARY", {
+      ...multiScreen.screens.SECONDARY,
+      irregular_mask: [
+        [0, 0],
+        [1, 1],
+      ],
+    });
+    // SECONDARY took the edit
+    expect(s.config?.screens.SECONDARY.irregular_mask).toEqual([
+      [0, 0],
+      [1, 1],
+    ]);
+    // MAIN must be untouched — guards against DesignToolbar saving to the wrong screen
+    expect(s.config?.screens.MAIN.irregular_mask).toEqual([]);
+    expect(s.config?.screens.MAIN.cabinet_count).toEqual([8, 4]);
+  });
 });

@@ -1,11 +1,44 @@
 <script setup lang="ts">
+import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { useReconstructionStore } from "@/stores/reconstruction";
 import { useCurrentProjectStore } from "@/stores/currentProject";
 import { useUiStore } from "@/stores/ui";
+import LmtIcon from "@/components/primitives/LmtIcon.vue";
+import LmtStatusBadge from "@/components/primitives/LmtStatusBadge.vue";
+import Button from "@/components/ui/Button.vue";
+import type { LmtTone } from "@/components/primitives/types";
 
+const { t } = useI18n();
 const recon = useReconstructionStore();
 const proj = useCurrentProjectStore();
 const ui = useUiStore();
+
+const statusTone = computed<LmtTone>(() => {
+  switch (recon.status) {
+    case "running":
+      return "progress";
+    case "done":
+      return "healthy";
+    case "error":
+      return "critical";
+    default:
+      return "unknown";
+  }
+});
+
+const statusIcon = computed(() => {
+  switch (recon.status) {
+    case "running":
+      return "loader-2";
+    case "done":
+      return "check-circle-2";
+    case "error":
+      return "alert-triangle";
+    default:
+      return "circle";
+  }
+});
 
 function lmtErrMsg(e: unknown): string {
   if (e && typeof e === "object") {
@@ -37,40 +70,52 @@ async function exportNow(target: string) {
     ui.toast("error", lmtErrMsg(e));
   }
 }
+
+const exportTargets: { id: string; label: string; icon: string }[] = [
+  { id: "disguise", label: t("preview.exportDisguise"), icon: "monitor-cog" },
+  { id: "unreal", label: t("preview.exportUnreal"), icon: "gamepad-2" },
+  { id: "neutral", label: t("preview.exportNeutral"), icon: "package" },
+];
 </script>
 
 <template>
-  <div class="flex items-center gap-2 border-b bg-card p-2">
-    <button
+  <div class="flex flex-wrap items-center gap-3 border-b bg-background px-6 py-2.5">
+    <Button
+      variant="default"
+      size="sm"
       :disabled="!recon.canReconstruct || recon.status === 'running'"
-      class="rounded bg-primary px-3 py-1 text-sm text-primary-foreground disabled:opacity-50"
       @click="reconstructNow"
     >
-      {{ recon.status === "running" ? "Running…" : "Reconstruct" }}
-    </button>
-    <span class="ml-2 text-xs text-muted-foreground">Status: {{ recon.status }}</span>
-    <div class="ml-auto flex gap-2">
-      <button
+      <LmtIcon
+        :name="recon.status === 'running' ? 'loader-2' : 'play'"
+        :size="13"
+        :class="{ 'animate-spin': recon.status === 'running' }"
+      />
+      {{ recon.status === "running" ? t("preview.reconstructing") : t("preview.reconstruct") }}
+    </Button>
+
+    <div class="flex items-center gap-2">
+      <p class="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+        {{ t("preview.status") }}
+      </p>
+      <LmtStatusBadge :tone="statusTone" :label="recon.status" :icon="statusIcon" size="sm" />
+    </div>
+
+    <div class="ml-auto flex items-center gap-2">
+      <p class="hidden text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground md:block">
+        EXPORT OBJ
+      </p>
+      <Button
+        v-for="tgt in exportTargets"
+        :key="tgt.id"
+        variant="outline"
+        size="sm"
         :disabled="!recon.currentRunId"
-        class="rounded border px-3 py-1 text-sm disabled:opacity-50"
-        @click="exportNow('disguise')"
+        @click="exportNow(tgt.id)"
       >
-        Export Disguise
-      </button>
-      <button
-        :disabled="!recon.currentRunId"
-        class="rounded border px-3 py-1 text-sm disabled:opacity-50"
-        @click="exportNow('unreal')"
-      >
-        Export Unreal
-      </button>
-      <button
-        :disabled="!recon.currentRunId"
-        class="rounded border px-3 py-1 text-sm disabled:opacity-50"
-        @click="exportNow('neutral')"
-      >
-        Export Neutral
-      </button>
+        <LmtIcon :name="tgt.icon" :size="13" />
+        {{ tgt.label }}
+      </Button>
     </div>
   </div>
 </template>

@@ -13,12 +13,15 @@
     "typecheck": "vue-tsc -b --noEmit"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
+    "@fontsource-variable/manrope": "^5.2.8",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@vueuse/core": "^14.3.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "konva": "^9.3.0",
+    "lucide-vue-next": "^1.0.0",
     "pinia": "^2.1.7",
     "reka-ui": "^2.9.6",
     "tailwind-merge": "^3.5.0",

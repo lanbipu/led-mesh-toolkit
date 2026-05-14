@@ -1,11 +1,37 @@
 <script setup lang="ts">
-withDefaults(defineProps<{ name: string; size?: number | string; stroke?: number | string }>(), {
-  size: 16,
-  stroke: 1.5,
+import { computed } from "vue";
+import * as Lucide from "lucide-vue-next";
+
+defineOptions({ inheritAttrs: true });
+
+const props = withDefaults(
+  defineProps<{ name: string; size?: number | string; stroke?: number | string }>(),
+  {
+    size: 16,
+    stroke: 1.5,
+  },
+);
+
+function toPascal(kebab: string): string {
+  return kebab
+    .split("-")
+    .filter(Boolean)
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join("");
+}
+
+const Comp = computed(() => {
+  const key = toPascal(props.name) as keyof typeof Lucide;
+  return (Lucide as Record<string, unknown>)[key] ?? Lucide.HelpCircle;
 });
 </script>
 
 <template>
-  <!-- placeholder: real icons wired in Phase 5 -->
-  <span class="inline-flex shrink-0 items-center justify-center align-middle" aria-hidden="true" />
+  <component
+    :is="Comp"
+    :size="Number(size)"
+    :stroke-width="Number(stroke)"
+    class="inline-flex shrink-0 align-middle"
+    aria-hidden="true"
+  />
 </template>

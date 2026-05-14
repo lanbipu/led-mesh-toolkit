@@ -1,12 +1,36 @@
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
+import LmtPageHeader from "@/components/primitives/LmtPageHeader.vue";
+import LmtIcon from "@/components/primitives/LmtIcon.vue";
+import LmtStatusBadge from "@/components/primitives/LmtStatusBadge.vue";
+
+const { t } = useI18n();
+
 defineProps<{ id?: string }>();
 </script>
 
 <template>
-  <div class="p-8">
-    <h1 class="text-2xl font-bold">Instruct (M1) — pending</h1>
-    <p class="mt-2 text-sm text-muted-foreground">
-      This view will be implemented by the M1 (total-station) session. M0.2 only provides the route.
-    </p>
+  <div class="flex h-full flex-col gap-6 p-6">
+    <LmtPageHeader
+      :eyebrow="t('instruct.eyebrow')"
+      :title="t('instruct.title')"
+      :description="t('instruct.description')"
+    >
+      <template #actions>
+        <LmtStatusBadge tone="info" label="M1" icon="circle-dot" size="md" />
+      </template>
+    </LmtPageHeader>
+
+    <section
+      class="flex flex-1 flex-col items-center justify-center gap-3 rounded-lg border bg-hatched py-16 text-center"
+    >
+      <LmtIcon name="printer" :size="40" class="text-muted-foreground" />
+      <p class="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+        {{ t("instruct.pending") }}
+      </p>
+      <p class="max-w-md text-sm text-muted-foreground">
+        {{ t("instruct.description") }}
+      </p>
+    </section>
   </div>
 </template>

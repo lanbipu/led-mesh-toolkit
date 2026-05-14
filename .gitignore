@@ -33,6 +33,7 @@ vitest.config.js
 # 临时输出
 /tmp-output/
 *.log
+.playwright-mcp/
 .claude/knowledge.json
 .claude/knowledge/_INDEX.md
 .claude/knowledge/help-disguise-one

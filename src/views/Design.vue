@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { useCurrentProjectStore } from "@/stores/currentProject";
 import { useEditorStore } from "@/stores/editor";
 import { useUiStore } from "@/stores/ui";
+import LmtPageHeader from "@/components/primitives/LmtPageHeader.vue";
 import CabinetGrid from "@/components/design/CabinetGrid.vue";
 import CabinetGridLegend from "@/components/design/CabinetGridLegend.vue";
 import DesignToolbar from "@/components/design/DesignToolbar.vue";
 import ScreenPicker from "@/components/design/ScreenPicker.vue";
 
+const { t } = useI18n();
 const route = useRoute();
 const proj = useCurrentProjectStore();
 const editor = useEditorStore();
@@ -64,14 +67,30 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 
 <template>
   <div class="flex h-full flex-col">
-    <DesignToolbar />
-    <div class="flex items-center gap-3 border-b bg-card px-4 py-2 text-sm">
-      <span>Screen:</span>
-      <ScreenPicker v-model="currentScreenId" />
+    <div class="px-6 pb-2 pt-5">
+      <LmtPageHeader
+        :eyebrow="t('design.eyebrow')"
+        :title="t('design.title')"
+        :description="t('design.description')"
+      />
+    </div>
+
+    <DesignToolbar :screen-id="currentScreenId" />
+
+    <div class="flex flex-wrap items-center gap-3 border-b bg-card px-6 py-2">
+      <div class="flex items-center gap-2">
+        <p class="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+          {{ t("design.screen") }}
+        </p>
+        <ScreenPicker v-model="currentScreenId" />
+      </div>
       <CabinetGridLegend class="ml-auto" />
     </div>
-    <div class="min-h-0 flex-1 overflow-auto p-4">
-      <CabinetGrid />
+
+    <div class="min-h-0 flex-1 overflow-auto p-6">
+      <div class="rounded-lg border bg-card p-4">
+        <CabinetGrid />
+      </div>
     </div>
   </div>
 </template>

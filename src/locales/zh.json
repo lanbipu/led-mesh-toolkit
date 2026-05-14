@@ -1,35 +1,72 @@
 {
   "app": {
-    "title": "LED Mesh 工具集"
+    "title": "LED Mesh 工具集",
+    "tagline": "几何重建 · 屏体建模 · 输出"
   },
   "shell": {
     "activityLog": "活动日志",
-    "noActivity": "暂无活动。"
+    "noActivity": "暂无活动",
+    "toggleLog": "切换活动日志",
+    "closeLog": "关闭活动日志"
   },
   "nav": {
+    "group": {
+      "workspace": "工作区",
+      "design": "设计阶段",
+      "output": "输出"
+    },
     "home": "首页",
-    "design": "设计",
+    "design": "屏体设计",
     "preview": "预览",
     "export": "导出",
     "runs": "运行历史",
-    "import": "导入",
-    "instruct": "指令生成 (M1)",
-    "charuco": "ChArUco (M2)",
-    "photoplan": "拍摄规划 (M2)"
+    "import": "导入测量",
+    "instruct": "施工指令",
+    "charuco": "ChArUco 码",
+    "photoplan": "拍摄规划"
+  },
+  "common": {
+    "open": "打开",
+    "save": "保存",
+    "cancel": "取消",
+    "loading": "加载中",
+    "noData": "暂无数据",
+    "status": "状态",
+    "path": "路径",
+    "remove": "移除"
   },
   "home": {
+    "eyebrow": "工作区",
+    "title": "项目",
+    "description": "选择最近项目继续工作，或从示例新建一个屏体几何工程。",
     "recent": "最近项目",
-    "empty": "无最近项目。点下方按钮从示例创建一个。",
-    "create_curved_flat": "创建 Curved-Flat (8x4)",
-    "create_curved_arc": "创建 Curved-Arc (16x6)",
-    "open_existing": "打开已有文件夹…",
-    "remove": "移出列表"
+    "empty": "暂无最近项目。从下方示例创建一个，或打开已有项目文件夹。",
+    "create_curved_flat": "Curved-Flat (8×4)",
+    "create_curved_arc": "Curved-Arc (16×6)",
+    "open_existing": "打开已有文件夹",
+    "remove": "移出列表",
+    "actionsTitle": "新建项目",
+    "actionsDesc": "示例工程内置完整测量集与配置，可直接进入设计 / 预览 / 导出全流程。"
   },
   "design": {
+    "eyebrow": "设计阶段",
+    "title": "屏体设计",
+    "description": "切换模式编辑遮罩、参考点、基线。改动会进入撤销栈，保存写回 project.yaml。",
+    "screen": "屏幕",
+    "mode": "模式",
+    "refRole": "参考点",
+    "undo": "撤销",
+    "redo": "重做",
+    "save": "保存",
     "toolbar": {
       "mask": "遮罩",
       "refs": "参考点",
       "baseline": "基线"
+    },
+    "ref": {
+      "origin": "原点",
+      "x_axis": "X 轴",
+      "xy_plane": "XY 平面"
     },
     "legend": {
       "present": "存在",
@@ -38,5 +75,78 @@
       "x_axis": "X 轴",
       "xy_plane": "XY 平面"
     }
+  },
+  "preview": {
+    "eyebrow": "输出",
+    "title": "三维预览",
+    "description": "对当前测量集做几何重建并预览 mesh。导出三种坐标系：Disguise / Unreal / Neutral。",
+    "reconstruct": "重建",
+    "reconstructing": "重建中…",
+    "status": "状态",
+    "exportDisguise": "Disguise",
+    "exportUnreal": "Unreal",
+    "exportNeutral": "Neutral"
+  },
+  "import": {
+    "eyebrow": "设计阶段",
+    "title": "导入测量",
+    "description": "M1 全站仪 CSV 与 M2 视觉反算图像入口将在对应里程碑接入。当前支持手写 measured.yaml。",
+    "loadMeasured": "加载 measured.yaml",
+    "current": "当前文件",
+    "none": "（未选择）",
+    "loaded": "已加载 {n} 个测量点"
+  },
+  "charuco": {
+    "eyebrow": "设计阶段",
+    "title": "ChArUco 码",
+    "description": "M2 视觉反算专用。该视图将由 M2（visual BA）会话实现，M0.2 仅提供路由。",
+    "pending": "M2 待实现"
+  },
+  "photoplan": {
+    "eyebrow": "设计阶段",
+    "title": "拍摄规划",
+    "description": "M2 视觉反算专用。该视图将由 M2（visual BA）会话实现，M0.2 仅提供路由。",
+    "pending": "M2 待实现"
+  },
+  "runs": {
+    "eyebrow": "输出",
+    "title": "运行历史",
+    "description": "所有重建运行的元数据。点击行展开完整 JSON 报告。",
+    "empty": "暂无运行记录。在预览页执行一次重建后回看。",
+    "col": {
+      "created": "时间",
+      "screen": "屏幕",
+      "method": "方法",
+      "rms": "RMS (mm)",
+      "vertices": "顶点数",
+      "target": "目标",
+      "obj": "OBJ 输出"
+    }
+  },
+  "export": {
+    "eyebrow": "输出",
+    "title": "导出",
+    "description": "OBJ 导出在预览页工具栏完成。三个坐标系目标对应不同的轴向约定。",
+    "goPreview": "前往预览页",
+    "tile": {
+      "disguise": {
+        "title": "Disguise",
+        "desc": "右手系，Y-up。供 d3 / VFX 流水线。"
+      },
+      "unreal": {
+        "title": "Unreal",
+        "desc": "左手系，Z-up。供 UE5 蓝图与 nDisplay。"
+      },
+      "neutral": {
+        "title": "Neutral",
+        "desc": "原始 IR 坐标系。中性输出，便于二次加工。"
+      }
+    }
+  },
+  "instruct": {
+    "eyebrow": "输出",
+    "title": "施工指令",
+    "description": "M1 全站仪专用。HTML + PDF 作业卡生成入口将在 M1 会话完成。",
+    "pending": "M1 待实现"
   }
 }
