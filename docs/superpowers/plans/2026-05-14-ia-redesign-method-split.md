@@ -2376,7 +2376,8 @@ In the running dev app, verify each item below. Tick the boxes inline. If any ch
 - [ ] (ii) Home sidebar has `Recent Projects` group with up to 5 entries; most-recent has the `◆` icon.
 - [ ] (iii) With zero projects on disk, sidebar shows only `Workspace / Home`.
 - [ ] (iv) Open a fresh `curved-flat` example: sidebar shows `Design + Method (◆)` but **no** Survey group; `Output` group is dimmed (`opacity-50`).
-- [ ] (v) Design page shows the `methodPending` info banner at top; dismiss closes it; reload re-shows it.
+- [ ] (v) Design page shows the `methodPending` info banner at top; dismiss closes it; reload re-shows it.  
+      **Known issue (2026-05-14):** dismiss works; "reload re-shows" verified in Chromium (Vite dev server) but NOT in Tauri WKWebView — Cmd+R there is a soft refresh that preserves the Pinia store, so the dismissed key sticks. Tried a `pageshow + e.persisted` reset in `main.ts`; the event never fires under WKWebView's reload path. Accepted as-is — users almost never reload a desktop app, and a session-scoped permanent dismiss is reasonable UX.
 - [ ] (vi) Open `/method` → two cards, both `AVAILABLE`. Click `Use M1` → toast, sidebar instantly grows `Survey > Import`, Output un-dims, Design banner disappears.
 - [ ] (vii) In `/method`, click `Switch to M2` → confirm dialog appears; cancel keeps M1; confirm switches to M2; sidebar swaps to `Survey > ChArUco / Photo Plan`.
 - [ ] (viii) `measurements/measured.yaml` (if it existed pre-switch) is still on disk after switching to M2.
