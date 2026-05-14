@@ -47,6 +47,7 @@ pub fn run() {
             commands::reconstruct::get_run_report,
             commands::total_station::import_total_station_csv,
             commands::total_station::generate_instruction_card,
+            commands::total_station::save_instruction_pdf,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

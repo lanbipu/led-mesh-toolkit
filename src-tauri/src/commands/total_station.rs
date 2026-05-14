@@ -140,78 +140,70 @@ pub fn import_total_station_csv(
     )
 }
 
-/// Reject screen IDs that would be unsafe to interpolate into a filename
-/// (path separators, parent-dir traversal, control chars, empty).
-fn validate_screen_id_filename_safe(screen_id: &str) -> LmtResult<()> {
-    if screen_id.is_empty() {
-        return Err(LmtError::InvalidInput("screen_id must not be empty".into()));
-    }
-    if screen_id == "." || screen_id == ".." || screen_id.contains("..") {
-        return Err(LmtError::InvalidInput(format!(
-            "screen_id {screen_id:?} must not contain '..'"
-        )));
-    }
-    if !screen_id
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
-        return Err(LmtError::InvalidInput(format!(
-            "screen_id {screen_id:?} contains disallowed characters; \
-             only ASCII [A-Za-z0-9_-] are accepted in screen IDs"
-        )));
-    }
-    Ok(())
-}
-
-/// Generate an instruction card (HTML + PDF) for one screen, derived from the
-/// GUI project.yaml. HTML is returned inline (for iframe srcdoc preview);
-/// PDF is written under `{project}/output/instruction-{screen_id}.pdf`.
-pub fn run_generate_card(
-    project_abs_path: &Path,
-    screen_id: &str,
-) -> LmtResult<InstructionCardResult> {
-    // Filename safety: screen_id is used as a path component for the PDF.
-    validate_screen_id_filename_safe(screen_id)?;
-
+/// Build the `InstructionCard` payload from a GUI project.yaml.
+/// Shared by HTML-render and PDF-save paths.
+fn build_card(project_abs_path: &Path, screen_id: &str) -> LmtResult<InstructionCard> {
     let gui_cfg = load_project_yaml_from_path(project_abs_path)?;
     let m1_cfg = map_to_adapter(&gui_cfg)?;
     let screen_cfg = m1_cfg
         .screens
         .get(screen_id)
-        .ok_or_else(|| LmtError::NotFound(format!("screen '{screen_id}' not in project")))?;
+        .ok_or_else(|| LmtError::NotFound(format!("screen '{screen_id}' not in project")))?
+        .clone();
 
-    let card = InstructionCard {
+    Ok(InstructionCard {
         project_name: m1_cfg.project.name.clone(),
         screen_id: screen_id.to_string(),
-        cfg: screen_cfg.clone(),
+        cfg: screen_cfg,
         origin_grid_name: m1_cfg.coordinate_system.origin_grid_name.clone(),
         x_axis_grid_name: m1_cfg.coordinate_system.x_axis_grid_name.clone(),
         xy_plane_grid_name: m1_cfg.coordinate_system.xy_plane_grid_name.clone(),
-    };
-
-    let html_content = generate_html(&card);
-
-    let output_dir = project_abs_path.join("output");
-    std::fs::create_dir_all(&output_dir)?;
-    let pdf_filename = format!("instruction-{screen_id}.pdf");
-    let pdf_abs = output_dir.join(&pdf_filename);
-
-    // Atomic write: render to .tmp, then rename. Failure removes the .tmp
-    // and leaves any existing PDF untouched.
-    let pdf_tmp = output_dir.join(format!("{pdf_filename}.tmp"));
-    if let Err(e) = generate_pdf(&card, &pdf_tmp) {
-        let _ = std::fs::remove_file(&pdf_tmp);
-        return Err(e.into());
-    }
-    if let Err(e) = std::fs::rename(&pdf_tmp, &pdf_abs) {
-        let _ = std::fs::remove_file(&pdf_tmp);
-        return Err(e.into());
-    }
-
-    Ok(InstructionCardResult {
-        html_content,
-        pdf_path: format!("output/{pdf_filename}"),
     })
+}
+
+/// Render the instruction card HTML (for iframe preview). Does NOT write a PDF.
+/// PDF is written separately via [`run_save_pdf`] at a user-chosen path.
+pub fn run_generate_card(
+    project_abs_path: &Path,
+    screen_id: &str,
+) -> LmtResult<InstructionCardResult> {
+    let card = build_card(project_abs_path, screen_id)?;
+    Ok(InstructionCardResult {
+        html_content: generate_html(&card),
+    })
+}
+
+/// Render the instruction card PDF to a user-chosen absolute path.
+/// Atomic: writes to `<dst>.tmp` first, then renames; cleans up the tmp on failure.
+/// Returns the destination path string on success.
+pub fn run_save_pdf(
+    project_abs_path: &Path,
+    screen_id: &str,
+    dst_pdf_path: &Path,
+) -> LmtResult<String> {
+    if dst_pdf_path.as_os_str().is_empty() {
+        return Err(LmtError::InvalidInput(
+            "destination PDF path must not be empty".into(),
+        ));
+    }
+    if let Some(parent) = dst_pdf_path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.is_dir() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+
+    let card = build_card(project_abs_path, screen_id)?;
+
+    let tmp = dst_pdf_path.with_extension("pdf.tmp");
+    if let Err(e) = generate_pdf(&card, &tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
+    if let Err(e) = std::fs::rename(&tmp, dst_pdf_path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
+    Ok(dst_pdf_path.display().to_string())
 }
 
 #[tauri::command]
@@ -220,6 +212,19 @@ pub fn generate_instruction_card(
     screen_id: String,
 ) -> LmtResult<InstructionCardResult> {
     run_generate_card(Path::new(&project_abs_path), &screen_id)
+}
+
+#[tauri::command]
+pub fn save_instruction_pdf(
+    project_abs_path: String,
+    screen_id: String,
+    dst_pdf_path: String,
+) -> LmtResult<String> {
+    run_save_pdf(
+        Path::new(&project_abs_path),
+        &screen_id,
+        Path::new(&dst_pdf_path),
+    )
 }
 
 #[cfg(test)]
@@ -392,7 +397,7 @@ name,x,y,z,note
     }
 
     #[test]
-    fn generate_card_returns_html_and_writes_pdf() {
+    fn generate_card_returns_html_no_pdf_side_effect() {
         let dir = tempdir().unwrap();
         let project = dir.path();
         seed_project(project);
@@ -404,10 +409,16 @@ name,x,y,z,note
             result.html_content
         );
         assert!(result.html_content.contains("MAIN"));
-        assert_eq!(result.pdf_path, "output/instruction-MAIN.pdf");
 
-        let pdf_bytes = fs::read(project.join("output/instruction-MAIN.pdf")).unwrap();
-        assert!(pdf_bytes.starts_with(b"%PDF-"), "missing PDF magic header");
+        // No PDF / output dir side-effect — that's save_instruction_pdf's job.
+        let output = project.join("output");
+        if output.exists() {
+            let entries: Vec<_> = fs::read_dir(&output).unwrap().flatten().collect();
+            assert!(
+                entries.is_empty(),
+                "generate_card must not write output/ artifacts; found {entries:?}"
+            );
+        }
     }
 
     #[test]
@@ -420,57 +431,72 @@ name,x,y,z,note
     }
 
     #[test]
-    fn generate_card_rejects_unsafe_screen_id() {
+    fn save_pdf_writes_to_chosen_path() {
         let dir = tempdir().unwrap();
         let project = dir.path();
         seed_project(project);
 
-        for bad in [
-            "../escape",
-            "MAIN/sub",
-            "..",
-            "",
-            "screen with space",
-            "MAIN;rm",
-        ] {
-            let err = run_generate_card(project, bad).unwrap_err();
-            let msg = format!("{err}").to_lowercase();
-            assert!(
-                msg.contains("screen_id"),
-                "rejecting {bad:?} should mention screen_id; got: {err}"
-            );
-        }
-        // Existing output dir should be free of any leaked instruction-*.pdf
-        // (no PDF should have been written for any of the rejected IDs).
-        if let Ok(read) = fs::read_dir(project.join("output")) {
-            for entry in read.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                assert!(
-                    !name.contains("escape") && !name.contains("rm"),
-                    "leaked file: {name}"
-                );
-            }
-        }
+        let dst = dir.path().join("custom-name.pdf");
+        let out = run_save_pdf(project, "MAIN", &dst).unwrap();
+        assert_eq!(out, dst.display().to_string());
+
+        let pdf = fs::read(&dst).unwrap();
+        assert!(pdf.starts_with(b"%PDF-"), "missing PDF magic header");
+        let tmp = dst.with_extension("pdf.tmp");
+        assert!(!tmp.exists(), "leftover .tmp file");
     }
 
     #[test]
-    fn generate_card_overwrites_pdf_atomically() {
+    fn save_pdf_creates_missing_parent_dir() {
         let dir = tempdir().unwrap();
         let project = dir.path();
         seed_project(project);
 
-        // First generation seeds the PDF.
-        let first = run_generate_card(project, "MAIN").unwrap();
-        let pdf_abs = project.join(&first.pdf_path);
-        let first_size = fs::metadata(&pdf_abs).unwrap().len();
-        assert!(first_size > 0);
+        let dst = dir.path().join("deeply/nested/output/card.pdf");
+        run_save_pdf(project, "MAIN", &dst).unwrap();
+        assert!(dst.is_file());
+    }
 
-        // Second generation overwrites in place, no .tmp leftover.
-        let second = run_generate_card(project, "MAIN").unwrap();
-        assert_eq!(second.pdf_path, first.pdf_path);
-        assert!(pdf_abs.is_file());
-        let tmp = project.join("output").join("instruction-MAIN.pdf.tmp");
-        assert!(!tmp.exists(), "leftover .tmp file");
+    #[test]
+    fn save_pdf_fails_for_unknown_screen() {
+        let dir = tempdir().unwrap();
+        let project = dir.path();
+        seed_project(project);
+
+        let dst = dir.path().join("x.pdf");
+        let err = run_save_pdf(project, "FLOOR", &dst).unwrap_err();
+        assert!(format!("{err}").contains("FLOOR"), "got: {err}");
+        assert!(!dst.exists(), "no PDF should be written on failure");
+    }
+
+    #[test]
+    fn save_pdf_rejects_empty_dst() {
+        let dir = tempdir().unwrap();
+        let project = dir.path();
+        seed_project(project);
+
+        let dst = std::path::PathBuf::new();
+        let err = run_save_pdf(project, "MAIN", &dst).unwrap_err();
+        assert!(
+            format!("{err}").to_lowercase().contains("empty"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn save_pdf_overwrites_existing_atomically() {
+        let dir = tempdir().unwrap();
+        let project = dir.path();
+        seed_project(project);
+
+        let dst = dir.path().join("out.pdf");
+        run_save_pdf(project, "MAIN", &dst).unwrap();
+        assert!(dst.is_file());
+
+        run_save_pdf(project, "MAIN", &dst).unwrap();
+        assert!(dst.is_file());
+        let tmp = dst.with_extension("pdf.tmp");
+        assert!(!tmp.exists(), "leftover .tmp");
     }
 
     #[test]

@@ -85,7 +85,8 @@
     "status": "Status",
     "exportDisguise": "Disguise",
     "exportUnreal": "Unreal",
-    "exportNeutral": "Neutral"
+    "exportNeutral": "Neutral",
+    "exportPickPath": "Choose OBJ save location"
   },
   "import": {
     "eyebrow": "Design",
@@ -154,10 +155,12 @@
     "eyebrow": "Output",
     "title": "Instruction Card",
     "description": "Field instruction card: screen layout + reference points + target labels.",
-    "generate": "Generate card",
+    "generate": "Generate preview",
+    "exportPdf": "Export PDF…",
     "openPdf": "Open PDF",
-    "generated": "Instruction card generated",
-    "empty": "Click above to generate the instruction card (HTML + PDF).",
+    "generated": "Preview generated",
+    "exportedTo": "Saved to {path}",
+    "empty": "Click above to generate the preview.",
     "pending": "M1 — pending"
   }
 }

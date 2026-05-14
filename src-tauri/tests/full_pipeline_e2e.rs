@@ -183,7 +183,7 @@ fn full_user_journey_curved_flat() {
     // ── 8. Export 3 targets ──────────────────────────────────────────────────
     println!("[Step 8] run_export × 3 targets (disguise / unreal / neutral)");
     for target in &["disguise", "unreal", "neutral"] {
-        let obj_abs = run_export(db.clone(), run_id, target)
+        let obj_abs = run_export(db.clone(), run_id, target, None)
             .unwrap_or_else(|e| panic!("run_export({target}) failed: {e}"));
         let obj_path = std::path::Path::new(&obj_abs);
         assert!(
@@ -225,7 +225,7 @@ fn full_user_journey_curved_flat() {
 
     // ── 9. Re-export disguise (same run) ─────────────────────────────────────
     println!("[Step 9] re-export disguise on same run (overwrite same target allowed)");
-    let re_export_path = run_export(db.clone(), run_id, "disguise")
+    let re_export_path = run_export(db.clone(), run_id, "disguise", None)
         .expect("re-export disguise on same run should succeed");
     assert!(
         std::path::Path::new(&re_export_path).is_file(),
@@ -288,7 +288,8 @@ fn full_user_journey_curved_flat() {
     let run_id_2 = result2.run_id;
     assert_ne!(run_id_2, run_id, "second run must have a different run_id");
 
-    let obj2_abs = run_export(db.clone(), run_id_2, "disguise").expect("export run 2 disguise");
+    let obj2_abs =
+        run_export(db.clone(), run_id_2, "disguise", None).expect("export run 2 disguise");
 
     // Both OBJ files must exist (no cross-run overwrite)
     let obj1_expected = project_path

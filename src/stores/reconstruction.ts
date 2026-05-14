@@ -62,9 +62,9 @@ export const useReconstructionStore = defineStore("reconstruction", () => {
     }
   }
 
-  async function exportObj(target: string) {
+  async function exportObj(target: string, dstAbsPath?: string) {
     if (!currentRunId.value) throw new Error("no run");
-    return await tauriApi.exportObj(currentRunId.value, target);
+    return await tauriApi.exportObj(currentRunId.value, target, dstAbsPath);
   }
 
   async function loadRuns(projectPath: string, screenId?: string) {

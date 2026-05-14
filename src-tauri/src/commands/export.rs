@@ -32,7 +32,12 @@ pub fn build_cabinet_array(screen_cfg: &crate::dto::ScreenConfig) -> LmtResult<C
     }
 }
 
-pub fn run_export(db: Db, run_id: i64, target: &str) -> LmtResult<String> {
+pub fn run_export(
+    db: Db,
+    run_id: i64,
+    target: &str,
+    dst_abs_path: Option<&std::path::Path>,
+) -> LmtResult<String> {
     let target_enum = parse_target(target)?;
 
     let (project_path, report_rel) = {
@@ -48,21 +53,48 @@ pub fn run_export(db: Db, run_id: i64, target: &str) -> LmtResult<String> {
     let weld_m = report.weld_tolerance_mm / 1000.0;
     let mesh = surface_to_mesh_output(&report.surface, &report.cabinet_array, target_enum, weld_m)?;
 
-    let out_rel =
-        PathBuf::from("output").join(format!("{}_{target}_run{run_id}.obj", report.screen_id));
-    let out_abs = project_root.join(&out_rel);
-    std::fs::create_dir_all(out_abs.parent().unwrap())?;
+    // Caller-chosen destination (from a save dialog) takes precedence; otherwise
+    // fall back to the legacy `{project}/output/<screen>_<target>_run<id>.obj`.
+    // For DB bookkeeping we record a project-relative path when possible.
+    let (out_abs, out_rel_for_db) = match dst_abs_path {
+        Some(p) => {
+            let abs = p.to_path_buf();
+            let rel_for_db = abs
+                .strip_prefix(&project_root)
+                .ok()
+                .map(|r| r.display().to_string())
+                .unwrap_or_else(|| abs.display().to_string());
+            (abs, rel_for_db)
+        }
+        None => {
+            let rel = PathBuf::from("output")
+                .join(format!("{}_{target}_run{run_id}.obj", report.screen_id));
+            let abs = project_root.join(&rel);
+            (abs, rel.display().to_string())
+        }
+    };
+    if let Some(parent) = out_abs.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
     write_obj(&mesh, &out_abs)?;
 
     {
         let conn = db.lock().unwrap();
-        runs::update_export(&conn, run_id, target, &out_rel.display().to_string())?;
+        runs::update_export(&conn, run_id, target, &out_rel_for_db)?;
     }
 
     Ok(out_abs.display().to_string())
 }
 
 #[tauri::command]
-pub fn export_obj(state: tauri::State<'_, Db>, run_id: i64, target: String) -> LmtResult<String> {
-    run_export(state.inner().clone(), run_id, &target)
+pub fn export_obj(
+    state: tauri::State<'_, Db>,
+    run_id: i64,
+    target: String,
+    dst_abs_path: Option<String>,
+) -> LmtResult<String> {
+    let dst = dst_abs_path.as_deref().map(std::path::Path::new);
+    run_export(state.inner().clone(), run_id, &target, dst)
 }

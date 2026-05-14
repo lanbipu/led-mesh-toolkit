@@ -4,7 +4,7 @@
 
 use lmt_core::reconstruct::auto_reconstruct;
 use lmt_tauri_lib::commands::measurements::load_measurements_from_path;
-use lmt_tauri_lib::commands::total_station::{run_generate_card, run_import};
+use lmt_tauri_lib::commands::total_station::{run_generate_card, run_import, run_save_pdf};
 use std::fs;
 use tempfile::tempdir;
 
@@ -76,7 +76,7 @@ fn import_then_load_measured_yaml_then_reconstruct() {
 }
 
 #[test]
-fn generate_card_writes_pdf_under_project() {
+fn generate_card_html_then_save_pdf_to_user_path() {
     let dir = tempdir().unwrap();
     let project = dir.path();
     seed(project);
@@ -84,7 +84,11 @@ fn generate_card_writes_pdf_under_project() {
     let card = run_generate_card(project, "MAIN").unwrap();
     assert!(card.html_content.contains("E2E"));
     assert!(card.html_content.contains("MAIN"));
-    let pdf = fs::read(project.join(&card.pdf_path)).unwrap();
+
+    let dst = dir.path().join("my-export.pdf");
+    let out = run_save_pdf(project, "MAIN", &dst).unwrap();
+    assert_eq!(out, dst.display().to_string());
+    let pdf = fs::read(&dst).unwrap();
     assert!(pdf.starts_with(b"%PDF-"));
 }
 
@@ -128,6 +132,7 @@ fn invoke_payload_shape_matches_command_signatures() {
 fn registered_commands_are_addressable() {
     let _import_fn = lmt_tauri_lib::commands::total_station::import_total_station_csv;
     let _card_fn = lmt_tauri_lib::commands::total_station::generate_instruction_card;
+    let _save_pdf_fn = lmt_tauri_lib::commands::total_station::save_instruction_pdf;
 }
 
 /// End-to-end against the real `examples/curved-flat/` fixture: project.yaml

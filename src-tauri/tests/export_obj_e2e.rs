@@ -43,7 +43,8 @@ fn reconstruct_then_export_writes_obj() {
     )
     .expect("reconstruction should succeed");
 
-    let obj_path = run_export(db.clone(), r.run_id, "disguise").expect("export should succeed");
+    let obj_path =
+        run_export(db.clone(), r.run_id, "disguise", None).expect("export should succeed");
 
     assert!(
         std::path::Path::new(&obj_path).is_file(),
@@ -104,9 +105,9 @@ fn two_runs_same_target_no_overwrite() {
     .expect("second reconstruction should succeed");
 
     let path_1 =
-        run_export(db.clone(), r1.run_id, "disguise").expect("first export should succeed");
+        run_export(db.clone(), r1.run_id, "disguise", None).expect("first export should succeed");
     let path_2 =
-        run_export(db.clone(), r2.run_id, "disguise").expect("second export should succeed");
+        run_export(db.clone(), r2.run_id, "disguise", None).expect("second export should succeed");
 
     assert_ne!(path_1, path_2, "two runs must produce different OBJ paths");
     assert!(
@@ -189,7 +190,7 @@ fn export_uses_snapshot_after_project_yaml_changed() {
     }
 
     // Export must succeed using the snapshot (8×4), not the mutated yaml (12×6).
-    let obj_path = run_export(db.clone(), r1.run_id, "disguise")
+    let obj_path = run_export(db.clone(), r1.run_id, "disguise", None)
         .expect("export should succeed using snapshotted cabinet_array");
 
     let path = std::path::Path::new(&obj_path);

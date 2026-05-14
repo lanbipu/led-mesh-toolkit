@@ -85,7 +85,8 @@
     "status": "状态",
     "exportDisguise": "Disguise",
     "exportUnreal": "Unreal",
-    "exportNeutral": "Neutral"
+    "exportNeutral": "Neutral",
+    "exportPickPath": "选择 OBJ 保存位置"
   },
   "import": {
     "eyebrow": "设计阶段",
@@ -154,10 +155,12 @@
     "eyebrow": "输出",
     "title": "施工指令",
     "description": "为现场测量员生成指示卡：屏体方位图 + 3 个参考点 + 全部目标点编号。",
-    "generate": "生成指示卡",
+    "generate": "生成预览",
+    "exportPdf": "导出 PDF…",
     "openPdf": "打开 PDF",
-    "generated": "指示卡已生成",
-    "empty": "点上方按钮，从当前项目生成指示卡（HTML + PDF）",
+    "generated": "预览已生成",
+    "exportedTo": "已导出到 {path}",
+    "empty": "点上方按钮，从当前项目生成预览",
     "pending": "M1 待实现"
   }
 }

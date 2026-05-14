@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useCurrentProjectStore } from "@/stores/currentProject";
 import { useUiStore } from "@/stores/ui";
 import { tauriApi } from "@/services/tauri";
@@ -17,7 +18,7 @@ const ui = useUiStore();
 
 const id = computed(() => Number(route.params.id));
 const html = ref<string | null>(null);
-const pdfPath = ref<string | null>(null);
+const lastSavedPdf = ref<string | null>(null);
 
 // M1.1 single-screen scope; pick the first screen from project config.
 const screenId = computed(() => Object.keys(proj.config?.screens ?? {})[0] ?? "MAIN");
@@ -48,14 +49,49 @@ async function generate() {
   const snapshotAbsPath = proj.absPath!;
   try {
     const result = await tauriApi.generateInstructionCard(snapshotAbsPath, sid);
-    if (proj.id !== snapshotId) return; // discard stale
+    if (proj.id !== snapshotId) return;
     html.value = result.htmlContent;
-    pdfPath.value = result.pdfPath;
     ui.toast("success", t("instruct.generated"));
   } catch (e) {
     ui.toast("error", `${e}`);
   } finally {
     isGenerating.value = false;
+  }
+}
+
+const isExporting = ref(false);
+
+async function exportPdf() {
+  if (!projectReady.value || isExporting.value) return;
+  const sid = screenId.value;
+  if (!sid) {
+    ui.toast("error", "no screen in project");
+    return;
+  }
+  isExporting.value = true;
+  const snapshotId = proj.id;
+  const snapshotAbsPath = proj.absPath!;
+  try {
+    const defaultPath = `${snapshotAbsPath}/output/instruction-${sid}.pdf`;
+    const target = await saveDialog({
+      title: t("instruct.exportPdf"),
+      defaultPath,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (!target) return;
+    if (proj.id !== snapshotId) {
+      ui.toast("info", "project changed during file pick — export cancelled");
+      return;
+    }
+    const dst = String(target);
+    const written = await tauriApi.saveInstructionPdf(snapshotAbsPath, sid, dst);
+    if (proj.id !== snapshotId) return;
+    lastSavedPdf.value = written;
+    ui.toast("success", t("instruct.exportedTo", { path: written }));
+  } catch (e) {
+    ui.toast("error", `${e}`);
+  } finally {
+    isExporting.value = false;
   }
 }
 </script>
@@ -77,15 +113,23 @@ async function generate() {
         <LmtIcon name="printer" :size="14" />
         {{ t("instruct.generate") }}
       </Button>
+      <Button
+        variant="outline"
+        :disabled="!projectReady || !html || isExporting"
+        @click="exportPdf"
+      >
+        <LmtIcon name="download" :size="14" />
+        {{ t("instruct.exportPdf") }}
+      </Button>
       <span class="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
         screen
       </span>
       <span class="font-mono text-xs">{{ screenId }}</span>
       <span
-        v-if="pdfPath"
+        v-if="lastSavedPdf"
         class="ml-auto rounded bg-muted px-2 py-1 font-mono text-[11px] text-muted-foreground"
       >
-        PDF → {{ pdfPath }}
+        PDF → {{ lastSavedPdf }}
       </span>
     </section>
 

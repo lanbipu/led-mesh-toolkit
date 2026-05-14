@@ -110,7 +110,6 @@ export interface TotalStationImportResult {
 
 export interface InstructionCardResult {
   htmlContent: string;
-  pdfPath: string;
 }
 
 export const tauriApi = {
@@ -131,8 +130,8 @@ export const tauriApi = {
       screenId,
       measurementsPath,
     }),
-  exportObj: (runId: number, target: string) =>
-    invoke<string>("export_obj", { runId, target }),
+  exportObj: (runId: number, target: string, dstAbsPath?: string) =>
+    invoke<string>("export_obj", { runId, target, dstAbsPath: dstAbsPath ?? null }),
   listRuns: (projectPath: string, screenId?: string) =>
     invoke<ReconstructionRun[]>("list_runs", { projectPath, screenId }),
   getRunReport: (runId: number) => invoke<unknown>("get_run_report", { runId }),
@@ -144,4 +143,6 @@ export const tauriApi = {
     }),
   generateInstructionCard: (projectAbsPath: string, screenId: string) =>
     invoke<InstructionCardResult>("generate_instruction_card", { projectAbsPath, screenId }),
+  saveInstructionPdf: (projectAbsPath: string, screenId: string, dstPdfPath: string) =>
+    invoke<string>("save_instruction_pdf", { projectAbsPath, screenId, dstPdfPath }),
 };

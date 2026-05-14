@@ -132,8 +132,7 @@ pub struct TotalStationImportResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstructionCardResult {
-    /// HTML 字符串，前端 iframe srcdoc 渲染。
+    /// HTML 字符串，前端 iframe srcdoc 渲染。PDF 通过单独的
+    /// `save_instruction_pdf` 命令按用户选定的目标路径写盘。
     pub html_content: String,
-    /// 相对 project_abs_path 的 PDF 路径。
-    pub pdf_path: String,
 }

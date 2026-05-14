@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useReconstructionStore } from "@/stores/reconstruction";
 import { useCurrentProjectStore } from "@/stores/currentProject";
 import { useUiStore } from "@/stores/ui";
@@ -62,12 +63,32 @@ async function reconstructNow() {
   }
 }
 
+const isExporting = ref(false);
+
 async function exportNow(target: string) {
+  if (!proj.absPath || !recon.currentRunId || isExporting.value) return;
+  isExporting.value = true;
+  const snapshotId = proj.id;
+  const snapshotAbsPath = proj.absPath;
   try {
-    const path = await recon.exportObj(target);
+    const defaultPath = `${snapshotAbsPath}/output/MAIN_${target}_run${recon.currentRunId}.obj`;
+    const dst = await saveDialog({
+      title: t("preview.exportPickPath"),
+      defaultPath,
+      filters: [{ name: "OBJ", extensions: ["obj"] }],
+    });
+    if (!dst) return;
+    if (proj.id !== snapshotId) {
+      ui.toast("info", "project changed during file pick — export cancelled");
+      return;
+    }
+    const path = await recon.exportObj(target, String(dst));
+    if (proj.id !== snapshotId) return;
     ui.toast("success", `Wrote ${path}`);
   } catch (e) {
     ui.toast("error", lmtErrMsg(e));
+  } finally {
+    isExporting.value = false;
   }
 }
 
@@ -110,7 +131,7 @@ const exportTargets: { id: string; label: string; icon: string }[] = [
         :key="tgt.id"
         variant="outline"
         size="sm"
-        :disabled="!recon.currentRunId"
+        :disabled="!recon.currentRunId || isExporting"
         @click="exportNow(tgt.id)"
       >
         <LmtIcon :name="tgt.icon" :size="13" />
