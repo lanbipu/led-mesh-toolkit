@@ -39,14 +39,30 @@ pub fn run_import(
         build_screen_measured_points_with_outcome(screen_id, &raw, screen_cfg)?;
     let report = build_screen_report(screen_id, &measured, &outcome, screen_cfg);
 
-    // 4. 写文件（带 backup + rollback）
+    // 4. 写文件（带 backup + rollback + cross-screen 防御）
     let measurements_dir = project_abs_path.join("measurements");
     std::fs::create_dir_all(&measurements_dir)?;
     let measured_yaml_path = measurements_dir.join("measured.yaml");
     let report_json_path = measurements_dir.join("import_report.json");
     let backup_path = measurements_dir.join("measured.yaml.bak");
 
-    // 4a. 若已有 measured.yaml，先备份
+    // 4a. 若已有 measured.yaml，检查它的 screen_id 跟本次导入是否匹配。
+    //     M1.1 单 screen scope；多 screen 项目走同一 measured.yaml，但本次 import
+    //     若覆盖的是另一个 screen 的测量数据，拒绝（避免无声毁掉别人的工作）。
+    if measured_yaml_path.exists() {
+        if let Some(existing_screen) = read_existing_screen_id(&measured_yaml_path) {
+            if existing_screen != screen_id {
+                return Err(LmtError::InvalidInput(format!(
+                    "refusing to overwrite measured.yaml for screen {existing_screen:?} \
+                     with an import targeting screen {screen_id:?}; remove the existing \
+                     file first or import to the correct screen"
+                )));
+            }
+        }
+    }
+
+    // 4b. 若已有 measured.yaml，rename 成 .bak（覆盖上一次的 .bak）。
+    //     保留 .bak 作为上一版本快照——不在成功后删除，给用户一份 recovery copy。
     let did_backup = if measured_yaml_path.exists() {
         std::fs::rename(&measured_yaml_path, &backup_path)?;
         true
@@ -54,7 +70,7 @@ pub fn run_import(
         false
     };
 
-    // 4b. 写新文件（写失败就 restore backup）
+    // 4c. 写新文件。任一步失败：删除可能落地的新 measured.yaml，再 restore .bak。
     let write_result = (|| -> LmtResult<()> {
         let yaml = serde_yaml::to_string(&measured)?;
         let tmp = measurements_dir.join("measured.yaml.tmp");
@@ -69,16 +85,17 @@ pub fn run_import(
     })();
 
     if let Err(e) = write_result {
+        // Remove the half-written new file before restoring, otherwise rename(.bak, target)
+        // can fail on platforms where rename refuses to overwrite (Windows).
+        let _ = std::fs::remove_file(&measured_yaml_path);
         if did_backup {
             let _ = std::fs::rename(&backup_path, &measured_yaml_path);
         }
         return Err(e);
     }
-
-    // 4c. 都成功 → 清理 backup
-    if did_backup {
-        let _ = std::fs::remove_file(&backup_path);
-    }
+    // Success: leave .bak in place as a versioned snapshot. The next successful
+    // import will overwrite it with the now-current state.
+    let _ = did_backup; // suppress unused-binding warning; semantics documented above.
 
     // 5. 返回 summary
     Ok(TotalStationImportResult {
@@ -90,6 +107,23 @@ pub fn run_import(
         missing_count: report.missing.len(),
         warnings: report.warnings.clone(),
     })
+}
+
+/// Lightweight YAML scan for the top-level `screen_id:` field. Avoids deserializing
+/// the entire `MeasuredPoints` blob when all we want is the screen ID.
+/// Returns `None` if the file is unreadable or missing the field.
+fn read_existing_screen_id(path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("screen_id:") {
+            let value = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 #[tauri::command]
@@ -216,7 +250,9 @@ name,x,y,z,note
     }
 
     #[test]
-    fn second_import_cleans_up_backup_on_success() {
+    fn second_import_preserves_backup_as_versioned_snapshot() {
+        // Successful re-import keeps .bak around as the previous version,
+        // giving the user a recovery copy of whatever was overwritten.
         let dir = tempdir().unwrap();
         let project = dir.path();
         seed_project(project);
@@ -224,13 +260,67 @@ name,x,y,z,note
         write_csv(&csv);
 
         run_import(project, "MAIN", &csv).unwrap();
-        assert!(project.join("measurements/measured.yaml").is_file());
+        let first_content = fs::read_to_string(project.join("measurements/measured.yaml")).unwrap();
 
         run_import(project, "MAIN", &csv).unwrap();
         assert!(project.join("measurements/measured.yaml").is_file());
+        let bak = project.join("measurements/measured.yaml.bak");
+        assert!(bak.is_file(), "backup must survive as previous-version snapshot");
+        let bak_content = fs::read_to_string(&bak).unwrap();
+        assert_eq!(bak_content, first_content, ".bak should be the prior measured.yaml");
+    }
+
+    #[test]
+    fn import_refuses_to_overwrite_different_screens_measurements() {
+        // Seed measured.yaml as if it belongs to a different screen (FLOOR),
+        // then attempt to import for MAIN. Should error without touching the file.
+        let dir = tempdir().unwrap();
+        let project = dir.path();
+        seed_project(project);
+        let csv = project.join("measurements").join("raw.csv");
+        write_csv(&csv);
+
+        let stale = "screen_id: FLOOR\ncoordinate_frame:\n  origin_world: [0.0, 0.0, 0.0]\npoints: []\n";
+        fs::write(project.join("measurements/measured.yaml"), stale).unwrap();
+
+        let err = run_import(project, "MAIN", &csv).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("FLOOR"), "got: {err}");
+        assert!(msg.contains("MAIN"), "got: {err}");
+
+        // Existing file must be untouched (no .bak should have been created).
+        let still = fs::read_to_string(project.join("measurements/measured.yaml")).unwrap();
+        assert_eq!(still, stale, "file must not be overwritten on refusal");
         assert!(
             !project.join("measurements/measured.yaml.bak").is_file(),
-            "backup should be removed after successful re-import"
+            "no backup should have been created when import was refused"
         );
+    }
+
+    #[test]
+    fn rollback_on_write_failure_restores_previous_measured_yaml() {
+        // Simulate a mid-import write failure by pre-creating import_report.json
+        // as a directory — the rename target then collides, write_result fails,
+        // and rollback must restore the original measured.yaml from .bak.
+        let dir = tempdir().unwrap();
+        let project = dir.path();
+        seed_project(project);
+        let csv = project.join("measurements").join("raw.csv");
+        write_csv(&csv);
+
+        // First successful import to seed measured.yaml.
+        run_import(project, "MAIN", &csv).unwrap();
+        let original = fs::read_to_string(project.join("measurements/measured.yaml")).unwrap();
+
+        // Booby-trap import_report.json as a directory; rename(tmp → final) will fail.
+        fs::remove_file(project.join("measurements/import_report.json")).unwrap();
+        fs::create_dir(project.join("measurements/import_report.json")).unwrap();
+
+        let err = run_import(project, "MAIN", &csv).unwrap_err();
+        assert!(format!("{err}").len() > 0);
+
+        // measured.yaml must still match the pre-import state.
+        let restored = fs::read_to_string(project.join("measurements/measured.yaml")).unwrap();
+        assert_eq!(restored, original, "rollback must restore previous measured.yaml content");
     }
 }
