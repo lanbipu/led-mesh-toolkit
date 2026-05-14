@@ -20,7 +20,4 @@ pub enum AdapterError {
 
     #[error("core error: {0}")]
     Core(#[from] lmt_core::CoreError),
-
-    #[error("pdf generation: {0}")]
-    Pdf(String),
 }

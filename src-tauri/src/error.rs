@@ -61,7 +61,6 @@ impl From<lmt_adapter_total_station::AdapterError> for LmtError {
             A::Json(err) => Self::Yaml(format!("json: {err}")),
             A::Io(err) => Self::Io(err.to_string()),
             A::Core(err) => Self::Core(err.to_string()),
-            A::Pdf(s) => Self::Other(format!("pdf: {s}")),
             other => Self::Other(other.to_string()),
         }
     }
@@ -105,13 +104,4 @@ mod tests {
         assert!(json.contains(r#""kind":"io""#), "got: {json}");
     }
 
-    #[test]
-    fn adapter_pdf_maps_to_other_with_pdf_prefix() {
-        use lmt_adapter_total_station::AdapterError;
-        let lmt: LmtError = AdapterError::Pdf("layout failure".into()).into();
-        assert!(matches!(lmt, LmtError::Other(_)));
-        let json = serde_json::to_string(&lmt).unwrap();
-        assert!(json.contains(r#""kind":"other""#));
-        assert!(json.contains("pdf: layout failure"), "got: {json}");
-    }
 }

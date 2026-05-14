@@ -191,6 +191,7 @@
     "generate": "Generate preview",
     "exportPdf": "Export PDF…",
     "openPdf": "Open PDF",
+    "openPdfTitle": "Open PDF in default app",
     "generated": "Preview generated",
     "exportedTo": "Saved to {path}",
     "empty": "Click above to generate the preview.",

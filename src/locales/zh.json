@@ -191,6 +191,7 @@
     "generate": "生成预览",
     "exportPdf": "导出 PDF…",
     "openPdf": "打开 PDF",
+    "openPdfTitle": "点击用默认应用打开 PDF",
     "generated": "预览已生成",
     "exportedTo": "已导出到 {path}",
     "empty": "点上方按钮，从当前项目生成预览",

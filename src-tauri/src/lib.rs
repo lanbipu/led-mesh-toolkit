@@ -2,6 +2,7 @@ pub mod commands;
 pub mod data;
 pub mod dto;
 pub mod error;
+pub mod pdf_render;
 
 use std::path::PathBuf;
 use tauri::Manager;
@@ -17,6 +18,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let db_path: PathBuf = app
                 .path()

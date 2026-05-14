@@ -7,7 +7,7 @@ use std::path::Path;
 use lmt_adapter_total_station::{
     builder::build_screen_measured_points_with_outcome,
     csv_parser::parse_csv,
-    instruction_card::{html::generate_html, pdf::generate_pdf, InstructionCard},
+    instruction_card::{html::generate_html, InstructionCard},
     report_builder::build_screen_report,
 };
 
@@ -15,6 +15,7 @@ use crate::commands::projects::load_project_yaml_from_path;
 use crate::commands::total_station_mapper::map_to_adapter;
 use crate::dto::{InstructionCardResult, TotalStationImportResult};
 use crate::error::{LmtError, LmtResult};
+use crate::pdf_render::render_html_to_pdf;
 
 /// 把 `csv_path` 的 Trimble CSV 转成 `{project}/measurements/measured.yaml`，
 /// 同时写 `import_report.json`，返回 GUI 友好的 summary。
@@ -188,12 +189,18 @@ fn ensure_pdf_extension(p: &Path) -> std::path::PathBuf {
 }
 
 /// Render the instruction card PDF to a user-chosen absolute path.
+///
+/// `render` 是 HTML → PDF 文件的渲染函数，由调用方注入：
+/// - 生产路径：`pdf_render::render_html_to_pdf` 经过原生 webview
+/// - 测试路径：注入一个写假 `%PDF-...` 字节的 mock，避开主线程依赖
+///
 /// Atomic: writes to a sibling `<dst>.<pid>.tmp` first, then renames;
 /// cleans up the tmp on failure. Returns the final destination on success.
 pub fn run_save_pdf(
     project_abs_path: &Path,
     screen_id: &str,
     dst_pdf_path: &Path,
+    render: impl FnOnce(&str, &Path) -> LmtResult<()>,
 ) -> LmtResult<String> {
     if dst_pdf_path.as_os_str().is_empty() {
         return Err(LmtError::InvalidInput(
@@ -204,6 +211,7 @@ pub fn run_save_pdf(
     // Build card BEFORE touching the filesystem, so a bad project.yaml /
     // missing screen doesn't leave empty parent dirs behind.
     let card = build_card(project_abs_path, screen_id)?;
+    let html = generate_html(&card);
 
     let dst = ensure_pdf_extension(dst_pdf_path);
     if let Some(parent) = dst.parent() {
@@ -219,9 +227,9 @@ pub fn run_save_pdf(
     tmp_os.push(format!(".{}.tmp", std::process::id()));
     let tmp = std::path::PathBuf::from(tmp_os);
 
-    if let Err(e) = generate_pdf(&card, &tmp) {
+    if let Err(e) = render(&html, &tmp) {
         let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
+        return Err(e);
     }
     if let Err(e) = std::fs::rename(&tmp, &dst) {
         let _ = std::fs::remove_file(&tmp);
@@ -239,16 +247,28 @@ pub fn generate_instruction_card(
 }
 
 #[tauri::command]
-pub fn save_instruction_pdf(
+pub async fn save_instruction_pdf(
+    app: tauri::AppHandle,
     project_abs_path: String,
     screen_id: String,
     dst_pdf_path: String,
 ) -> LmtResult<String> {
-    run_save_pdf(
-        Path::new(&project_abs_path),
-        &screen_id,
-        Path::new(&dst_pdf_path),
-    )
+    // CRITICAL: the macOS PDF renderer dispatches a closure onto the AppKit
+    // main thread and then blocks on a channel waiting for the result. If
+    // this command itself runs on the main thread (which is where sync
+    // Tauri commands land on macOS), the queued closure can never execute
+    // and we'd deadlock for the full 30s timeout. Route through
+    // `spawn_blocking` so we're guaranteed to be on a worker thread.
+    tokio::task::spawn_blocking(move || {
+        run_save_pdf(
+            Path::new(&project_abs_path),
+            &screen_id,
+            Path::new(&dst_pdf_path),
+            |html, tmp| render_html_to_pdf(&app, html, tmp),
+        )
+    })
+    .await
+    .map_err(|e| LmtError::Other(format!("PDF task join: {e}")))?
 }
 
 #[cfg(test)]
@@ -256,6 +276,15 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    /// Tests bypass the platform webview (which needs the AppKit main thread)
+    /// and inject this stub so `run_save_pdf` exercises the atomic-write +
+    /// filesystem logic on its own. The byte sequence below is a minimal valid
+    /// PDF header so any "starts_with(%PDF-)" assertion still holds.
+    fn fake_render(_html: &str, dst: &Path) -> LmtResult<()> {
+        fs::write(dst, b"%PDF-1.4\n% LMT test stub\n")?;
+        Ok(())
+    }
 
     /// 写一份最小化合法 project.yaml（4×2 cabinet，flat）+ 15 点 CSV。
     /// 4×2 cabinet → 5×3 vertices = 15 个点，全测无 fabricate。
@@ -461,7 +490,7 @@ name,x,y,z,note
         seed_project(project);
 
         let dst = dir.path().join("custom-name.pdf");
-        let out = run_save_pdf(project, "MAIN", &dst).unwrap();
+        let out = run_save_pdf(project, "MAIN", &dst, fake_render).unwrap();
         assert_eq!(out, dst.display().to_string());
 
         let pdf = fs::read(&dst).unwrap();
@@ -477,7 +506,7 @@ name,x,y,z,note
         seed_project(project);
 
         let dst = dir.path().join("deeply/nested/output/card.pdf");
-        run_save_pdf(project, "MAIN", &dst).unwrap();
+        run_save_pdf(project, "MAIN", &dst, fake_render).unwrap();
         assert!(dst.is_file());
     }
 
@@ -488,7 +517,7 @@ name,x,y,z,note
         seed_project(project);
 
         let dst = dir.path().join("x.pdf");
-        let err = run_save_pdf(project, "FLOOR", &dst).unwrap_err();
+        let err = run_save_pdf(project, "FLOOR", &dst, fake_render).unwrap_err();
         assert!(format!("{err}").contains("FLOOR"), "got: {err}");
         assert!(!dst.exists(), "no PDF should be written on failure");
     }
@@ -500,7 +529,7 @@ name,x,y,z,note
         seed_project(project);
 
         let dst = std::path::PathBuf::new();
-        let err = run_save_pdf(project, "MAIN", &dst).unwrap_err();
+        let err = run_save_pdf(project, "MAIN", &dst, fake_render).unwrap_err();
         assert!(
             format!("{err}").to_lowercase().contains("empty"),
             "got: {err}"
@@ -515,7 +544,7 @@ name,x,y,z,note
 
         // User types "report" with no extension — backend should append .pdf.
         let dst_no_ext = dir.path().join("report");
-        let written = run_save_pdf(project, "MAIN", &dst_no_ext).unwrap();
+        let written = run_save_pdf(project, "MAIN", &dst_no_ext, fake_render).unwrap();
         assert!(written.ends_with(".pdf"), "got: {written}");
         let actual = dir.path().join("report.pdf");
         assert!(actual.is_file());
@@ -531,7 +560,7 @@ name,x,y,z,note
         seed_project(project);
 
         let dst = dir.path().join("would_be_created/deeper/x.pdf");
-        let err = run_save_pdf(project, "FLOOR", &dst).unwrap_err();
+        let err = run_save_pdf(project, "FLOOR", &dst, fake_render).unwrap_err();
         assert!(format!("{err}").contains("FLOOR"), "got: {err}");
         assert!(
             !dir.path().join("would_be_created").exists(),
@@ -550,7 +579,7 @@ name,x,y,z,note
         let dst = dir.path().join("out.pdf");
         fs::write(&dst, b"OLD-CONTENT-NOT-A-PDF").unwrap();
 
-        run_save_pdf(project, "MAIN", &dst).unwrap();
+        run_save_pdf(project, "MAIN", &dst, fake_render).unwrap();
         let bytes = fs::read(&dst).unwrap();
         assert!(
             bytes.starts_with(b"%PDF-"),
@@ -559,7 +588,7 @@ name,x,y,z,note
         );
 
         // Second write also goes through atomically; no .tmp left over.
-        run_save_pdf(project, "MAIN", &dst).unwrap();
+        run_save_pdf(project, "MAIN", &dst, fake_render).unwrap();
         assert!(dst.is_file());
         let pid_tmp =
             std::path::PathBuf::from(format!("{}.{}.tmp", dst.display(), std::process::id()));

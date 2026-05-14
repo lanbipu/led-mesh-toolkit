@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { useCurrentProjectStore } from "@/stores/currentProject";
 import { useUiStore } from "@/stores/ui";
 import { tauriApi } from "@/services/tauri";
@@ -61,6 +62,15 @@ async function generate() {
 }
 
 const isExporting = ref(false);
+
+async function openLastPdf() {
+  if (!lastSavedPdf.value) return;
+  try {
+    await openPath(lastSavedPdf.value);
+  } catch (e) {
+    ui.toast("error", `${e}`);
+  }
+}
 
 async function exportPdf() {
   if (!projectReady.value || isExporting.value) return;
@@ -127,16 +137,21 @@ async function exportPdf() {
         <LmtIcon name="download" :size="14" />
         {{ t("instruct.exportPdf") }}
       </Button>
-      <span class="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+      <span v-if="lastSavedPdf" class="flex items-center gap-1.5 font-mono text-xs">
+        <span class="text-muted-foreground">PDF —</span>
+        <button
+          type="button"
+          class="rounded bg-muted px-2 py-1 text-muted-foreground hover:bg-muted/70 hover:text-foreground hover:underline"
+          :title="t('instruct.openPdfTitle')"
+          @click="openLastPdf"
+        >
+          {{ lastSavedPdf }}
+        </button>
+      </span>
+      <span class="ml-auto text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
         screen
       </span>
       <span class="font-mono text-xs">{{ screenId }}</span>
-      <span
-        v-if="lastSavedPdf"
-        class="ml-auto rounded bg-muted px-2 py-1 font-mono text-[11px] text-muted-foreground"
-      >
-        PDF → {{ lastSavedPdf }}
-      </span>
     </section>
 
     <section

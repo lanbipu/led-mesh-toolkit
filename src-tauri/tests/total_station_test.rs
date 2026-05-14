@@ -5,8 +5,19 @@
 use lmt_core::reconstruct::auto_reconstruct;
 use lmt_tauri_lib::commands::measurements::load_measurements_from_path;
 use lmt_tauri_lib::commands::total_station::{run_generate_card, run_import, run_save_pdf};
+use lmt_tauri_lib::error::LmtResult;
 use std::fs;
+use std::path::Path;
 use tempfile::tempdir;
+
+/// Integration tests don't have an AppKit main thread, so we substitute the
+/// platform webview with a stub that writes a minimal valid PDF header. This
+/// keeps the orchestration logic of `run_save_pdf` (atomic write, parent dir,
+/// extension append) under test without booting Tauri/Cocoa.
+fn fake_render(_html: &str, dst: &Path) -> LmtResult<()> {
+    fs::write(dst, b"%PDF-1.4\n% LMT integration-test stub\n")?;
+    Ok(())
+}
 
 fn seed(dir: &std::path::Path) {
     let yaml = r#"
@@ -86,7 +97,7 @@ fn generate_card_html_then_save_pdf_to_user_path() {
     assert!(card.html_content.contains("MAIN"));
 
     let dst = dir.path().join("my-export.pdf");
-    let out = run_save_pdf(project, "MAIN", &dst).unwrap();
+    let out = run_save_pdf(project, "MAIN", &dst, fake_render).unwrap();
     assert_eq!(out, dst.display().to_string());
     let pdf = fs::read(&dst).unwrap();
     assert!(pdf.starts_with(b"%PDF-"));
