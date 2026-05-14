@@ -115,3 +115,98 @@ pub fn seed_example_project(
     );
     Ok(out.display().to_string())
 }
+
+#[cfg(test)]
+mod project_yaml_method_tests {
+    use super::*;
+    use crate::dto::{ProjectConfig, ProjectMeta, SurveyMethod};
+    use tempfile::tempdir;
+
+    fn minimal_config(method: Option<SurveyMethod>) -> ProjectConfig {
+        use crate::dto::{
+            CoordinateSystemConfig, OutputConfig, ScreenConfig, ShapeMode, ShapePriorConfig,
+        };
+        use std::collections::BTreeMap;
+
+        let mut screens = BTreeMap::new();
+        screens.insert(
+            "MAIN".to_string(),
+            ScreenConfig {
+                cabinet_count: [4, 2],
+                cabinet_size_mm: [500.0, 500.0],
+                pixels_per_cabinet: None,
+                shape_prior: ShapePriorConfig::Flat,
+                shape_mode: ShapeMode::Rectangle,
+                irregular_mask: vec![],
+                bottom_completion: None,
+            },
+        );
+        ProjectConfig {
+            project: ProjectMeta {
+                name: "X".into(),
+                unit: "mm".into(),
+                method,
+            },
+            screens,
+            coordinate_system: CoordinateSystemConfig {
+                origin_point: "MAIN_V001_R001".into(),
+                x_axis_point: "MAIN_V004_R001".into(),
+                xy_plane_point: "MAIN_V001_R002".into(),
+            },
+            output: OutputConfig {
+                target: "disguise".into(),
+                obj_filename: "{screen_id}.obj".into(),
+                weld_vertices_tolerance_mm: 1.0,
+                triangulate: true,
+            },
+        }
+    }
+
+    #[test]
+    fn load_save_roundtrip_with_method_m1() {
+        let dir = tempdir().unwrap();
+        let cfg = minimal_config(Some(SurveyMethod::M1));
+        save_project_yaml_to_path(dir.path(), &cfg).unwrap();
+        let loaded = load_project_yaml_from_path(dir.path()).unwrap();
+        assert_eq!(loaded.project.method, Some(SurveyMethod::M1));
+    }
+
+    #[test]
+    fn load_save_roundtrip_with_method_m2() {
+        let dir = tempdir().unwrap();
+        let cfg = minimal_config(Some(SurveyMethod::M2));
+        save_project_yaml_to_path(dir.path(), &cfg).unwrap();
+        let loaded = load_project_yaml_from_path(dir.path()).unwrap();
+        assert_eq!(loaded.project.method, Some(SurveyMethod::M2));
+    }
+
+    #[test]
+    fn load_legacy_yaml_without_method() {
+        let dir = tempdir().unwrap();
+        let legacy = r#"
+project:
+  name: Legacy
+  unit: mm
+screens:
+  MAIN:
+    cabinet_count: [4, 2]
+    cabinet_size_mm: [500, 500]
+    shape_prior:
+      type: flat
+    shape_mode: rectangle
+    irregular_mask: []
+coordinate_system:
+  origin_point: MAIN_V001_R001
+  x_axis_point: MAIN_V004_R001
+  xy_plane_point: MAIN_V001_R002
+output:
+  target: disguise
+  obj_filename: "{screen_id}.obj"
+  weld_vertices_tolerance_mm: 1.0
+  triangulate: true
+"#;
+        std::fs::write(dir.path().join("project.yaml"), legacy).unwrap();
+        let loaded = load_project_yaml_from_path(dir.path()).unwrap();
+        assert_eq!(loaded.project.method, None);
+    }
+}

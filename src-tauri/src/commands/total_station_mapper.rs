@@ -194,6 +194,7 @@ mod tests {
             project: dto::ProjectMeta {
                 name: "T".into(),
                 unit: "mm".into(),
+                method: None,
             },
             screens,
             coordinate_system: dto::CoordinateSystemConfig {

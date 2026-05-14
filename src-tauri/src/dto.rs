@@ -22,6 +22,15 @@ pub struct ProjectConfig {
 pub struct ProjectMeta {
     pub name: String,
     pub unit: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<SurveyMethod>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SurveyMethod {
+    M1,
+    M2,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,4 +144,82 @@ pub struct InstructionCardResult {
     /// HTML 字符串，前端 iframe srcdoc 渲染。PDF 通过单独的
     /// `save_instruction_pdf` 命令按用户选定的目标路径写盘。
     pub html_content: String,
+}
+
+#[cfg(test)]
+mod method_tests {
+    use super::*;
+
+    fn parse(yaml: &str) -> ProjectConfig {
+        serde_yaml::from_str(yaml).unwrap()
+    }
+
+    const BASE: &str = r#"
+project:
+  name: Test
+  unit: mm
+{method_line}
+screens:
+  MAIN:
+    cabinet_count: [4, 2]
+    cabinet_size_mm: [500, 500]
+    shape_prior:
+      type: flat
+    shape_mode: rectangle
+    irregular_mask: []
+coordinate_system:
+  origin_point: MAIN_V001_R001
+  x_axis_point: MAIN_V004_R001
+  xy_plane_point: MAIN_V001_R002
+output:
+  target: disguise
+  obj_filename: "{screen_id}.obj"
+  weld_vertices_tolerance_mm: 1.0
+  triangulate: true
+"#;
+
+    fn build(method_line: &str) -> String {
+        BASE.replace("{method_line}", method_line)
+    }
+
+    #[test]
+    fn method_missing_yaml_parses_as_none() {
+        let cfg = parse(&build(""));
+        assert_eq!(cfg.project.method, None);
+    }
+
+    #[test]
+    fn method_null_yaml_parses_as_none() {
+        let cfg = parse(&build("  method: null"));
+        assert_eq!(cfg.project.method, None);
+    }
+
+    #[test]
+    fn method_m1_yaml_roundtrips() {
+        let cfg = parse(&build("  method: m1"));
+        assert_eq!(cfg.project.method, Some(SurveyMethod::M1));
+        let s = serde_yaml::to_string(&cfg).unwrap();
+        assert!(s.contains("method: m1"), "serialized form: {}", s);
+    }
+
+    #[test]
+    fn method_m2_yaml_roundtrips() {
+        let cfg = parse(&build("  method: m2"));
+        assert_eq!(cfg.project.method, Some(SurveyMethod::M2));
+        let s = serde_yaml::to_string(&cfg).unwrap();
+        assert!(s.contains("method: m2"), "serialized form: {}", s);
+    }
+
+    #[test]
+    fn method_invalid_value_errors() {
+        let result: Result<ProjectConfig, _> = serde_yaml::from_str(&build("  method: m3"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn none_omitted_on_serialize() {
+        let cfg = parse(&build(""));
+        let s = serde_yaml::to_string(&cfg).unwrap();
+        assert!(!s.contains("method:"), "expected method field omitted, got: {}", s);
+    }
 }
