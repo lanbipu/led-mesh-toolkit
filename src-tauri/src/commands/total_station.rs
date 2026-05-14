@@ -317,7 +317,7 @@ name,x,y,z,note
         fs::create_dir(project.join("measurements/import_report.json")).unwrap();
 
         let err = run_import(project, "MAIN", &csv).unwrap_err();
-        assert!(format!("{err}").len() > 0);
+        assert!(!format!("{err}").is_empty());
 
         // measured.yaml must still match the pre-import state.
         let restored = fs::read_to_string(project.join("measurements/measured.yaml")).unwrap();
