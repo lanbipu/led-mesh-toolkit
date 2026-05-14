@@ -39,3 +39,8 @@ vitest.config.js
 .claude/knowledge/help-disguise-one
 .claude/knowledge/trimble-sx-docs
 .claude/knowledge/ue57-docs
+
+# Codex companion auto-generates AGENTS.md mirror of CLAUDE.md
+# with .claude → .Codex paths; those dirs don't exist in this repo,
+# keep it out of version control.
+AGENTS.md
