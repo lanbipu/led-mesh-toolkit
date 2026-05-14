@@ -32,22 +32,32 @@ onMounted(async () => {
 });
 
 async function loadMeasured() {
-  if (!proj.absPath) return;
+  if (!proj.absPath || isImporting.value) return;
+  isImporting.value = true;
+  const snapshotId = proj.id;
+  const snapshotAbsPath = proj.absPath;
   try {
     const file = await open({
       title: "Select measured.yaml",
       filters: [{ name: "YAML", extensions: ["yaml", "yml"] }],
-      defaultPath: `${proj.absPath}/measurements`,
+      defaultPath: `${snapshotAbsPath}/measurements`,
     });
     if (!file) return;
+    if (proj.id !== snapshotId) {
+      ui.toast("info", "project changed during file pick — load cancelled");
+      return;
+    }
     const mp = await tauriApi.loadMeasurementsYaml(String(file));
-    const rel = String(file).startsWith(proj.absPath)
-      ? String(file).slice(proj.absPath.length).replace(/^[\\/]+/, "")
+    if (proj.id !== snapshotId) return;
+    const rel = String(file).startsWith(snapshotAbsPath)
+      ? String(file).slice(snapshotAbsPath.length).replace(/^[\\/]+/, "")
       : String(file);
     recon.setMeasurementsPath(rel);
     ui.toast("success", t("import.loaded", { n: mp.points.length }));
   } catch (e) {
     ui.toast("error", `${e}`);
+  } finally {
+    isImporting.value = false;
   }
 }
 

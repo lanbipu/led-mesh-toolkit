@@ -53,19 +53,55 @@ pub fn map_to_adapter(cfg: &dto::ProjectConfig) -> LmtResult<m1::ProjectConfig> 
 }
 
 fn check_grid_name_prefix(label: &str, name: &str, screen_ids: &[&str]) -> LmtResult<()> {
-    if !screen_ids.iter().any(|sid| {
-        name.starts_with(sid)
-            && name.len() > sid.len()
-            && name.as_bytes()[sid.len()] == b'_'
-            && name.contains("_V")
-            && name.contains("_R")
-    }) {
-        return Err(LmtError::InvalidInput(format!(
-            "coordinate_system.{label} = {name:?} does not look like \
-             '<screen_id>_V###_R###' for any screen in this project (known: {screen_ids:?})"
-        )));
+    // Longest-prefix-first so e.g. {"MAIN", "MAIN_AUX"} both with "MAIN_AUX_V001_R001"
+    // resolves to MAIN_AUX, not MAIN. After matching a screen prefix, the suffix
+    // must be exactly `_V<digits>_R<digits>` — no other shape is a valid grid name.
+    let mut candidates: Vec<&&str> = screen_ids.iter().collect();
+    candidates.sort_by_key(|sid| std::cmp::Reverse(sid.len()));
+
+    for sid in candidates {
+        let Some(rest) = name.strip_prefix(sid) else {
+            continue;
+        };
+        let Some(rest) = rest.strip_prefix('_') else {
+            continue;
+        };
+        if grid_suffix_valid(rest) {
+            return Ok(());
+        }
     }
-    Ok(())
+    Err(LmtError::InvalidInput(format!(
+        "coordinate_system.{label} = {name:?} does not look like \
+         '<screen_id>_V###_R###' for any screen in this project (known: {screen_ids:?})"
+    )))
+}
+
+/// Validate the part after `<screen>_`: must be exactly `V<digits>_R<digits>`.
+fn grid_suffix_valid(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix('V') else {
+        return false;
+    };
+    let Some((v_digits, after_v)) = split_digits(rest) else {
+        return false;
+    };
+    if v_digits.is_empty() {
+        return false;
+    }
+    let Some(rest) = after_v.strip_prefix("_R") else {
+        return false;
+    };
+    let Some((r_digits, tail)) = split_digits(rest) else {
+        return false;
+    };
+    !r_digits.is_empty() && tail.is_empty()
+}
+
+fn split_digits(s: &str) -> Option<(&str, &str)> {
+    let split = s
+        .bytes()
+        .position(|b| !b.is_ascii_digit())
+        .unwrap_or(s.len());
+    Some((&s[..split], &s[split..]))
 }
 
 fn map_screen(s: &dto::ScreenConfig) -> LmtResult<m1::ScreenConfig> {
@@ -338,5 +374,41 @@ mod tests {
         cfg.coordinate_system.x_axis_point = "MAIN_garbage".into();
         let err = map_to_adapter(&cfg).unwrap_err();
         assert!(format!("{err}").contains("x_axis_point"), "got: {err}");
+    }
+
+    #[test]
+    fn coord_prefix_picks_longest_screen_id_match() {
+        // Two screens MAIN and MAIN_AUX both exist. A ref like MAIN_AUX_V001_R001
+        // must validate as belonging to MAIN_AUX (longest prefix), not MAIN.
+        // We can't have two screens in the dto until multi-screen lands, so simulate
+        // by extending the test config directly.
+        let mut cfg = base_cfg(flat_screen());
+        cfg.screens.insert("MAIN_AUX".into(), flat_screen());
+        cfg.coordinate_system.origin_point = "MAIN_AUX_V001_R001".into();
+        cfg.coordinate_system.x_axis_point = "MAIN_AUX_V005_R001".into();
+        cfg.coordinate_system.xy_plane_point = "MAIN_AUX_V001_R003".into();
+        // Should not fail with "does not look like ... for any screen".
+        let _ = map_to_adapter(&cfg).unwrap();
+    }
+
+    #[test]
+    fn coord_suffix_must_be_exactly_v_r_digits() {
+        let bad_suffixes = [
+            "MAIN_V_R001",          // empty V digits
+            "MAIN_V001_R",          // empty R digits
+            "MAIN_V01a_R001",       // non-digit in V
+            "MAIN_V001_R001_extra", // trailing junk
+            "MAIN_W001_R001",       // wrong letter
+            "MAIN_V001",            // no R part
+        ];
+        for bad in bad_suffixes {
+            let mut cfg = base_cfg(flat_screen());
+            cfg.coordinate_system.origin_point = bad.into();
+            let err = map_to_adapter(&cfg).unwrap_err();
+            assert!(
+                format!("{err}").contains("origin_point"),
+                "rejecting {bad:?} should mention origin_point; got: {err}"
+            );
+        }
     }
 }

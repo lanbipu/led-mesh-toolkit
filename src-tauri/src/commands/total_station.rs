@@ -97,7 +97,6 @@ pub fn run_import(
     }
     // Success: leave .bak in place as a versioned snapshot. The next successful
     // import will overwrite it with the now-current state.
-    let _ = did_backup; // suppress unused-binding warning; semantics documented above.
 
     // 5. 返回 summary
     Ok(TotalStationImportResult {
