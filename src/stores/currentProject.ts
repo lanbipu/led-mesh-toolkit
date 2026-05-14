@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { tauriApi, type ProjectConfig, type ScreenConfig } from "@/services/tauri";
+import { tauriApi, type ProjectConfig, type ScreenConfig, type SurveyMethod } from "@/services/tauri";
 
 export const useCurrentProjectStore = defineStore("currentProject", () => {
   const id = ref<number | null>(null);
@@ -54,6 +54,16 @@ export const useCurrentProjectStore = defineStore("currentProject", () => {
     dirty.value = false;
   }
 
+  async function setMethod(method: SurveyMethod) {
+    if (!config.value || !absPath.value) return;
+    config.value = {
+      ...config.value,
+      project: { ...config.value.project, method },
+    };
+    dirty.value = true;
+    await save();
+  }
+
   return {
     id,
     absPath,
@@ -65,5 +75,6 @@ export const useCurrentProjectStore = defineStore("currentProject", () => {
     updateCoordinateSystem,
     updateOutputTarget,
     save,
+    setMethod,
   };
 });

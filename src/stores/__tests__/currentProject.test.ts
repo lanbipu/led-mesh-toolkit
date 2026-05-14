@@ -79,6 +79,27 @@ describe("useCurrentProjectStore", () => {
     expect(s.dirty).toBe(false);
   });
 
+  it("setMethod writes project.method and saves", async () => {
+    (tauriApi.listRecentProjects as any).mockResolvedValueOnce([
+      { id: 9, abs_path: "/p", display_name: "P", last_opened_at: "x" },
+    ]);
+    (tauriApi.loadProjectYaml as any).mockResolvedValueOnce(sampleConfig);
+    (tauriApi.saveProjectYaml as any).mockResolvedValueOnce(undefined);
+    const s = useCurrentProjectStore();
+    await s.load(9);
+    expect(s.config?.project.method).toBeUndefined();
+    await s.setMethod("m1");
+    expect(s.config?.project.method).toBe("m1");
+    expect(tauriApi.saveProjectYaml).toHaveBeenCalled();
+    expect(s.dirty).toBe(false);
+  });
+
+  it("setMethod is a no-op when no project loaded", async () => {
+    const s = useCurrentProjectStore();
+    await s.setMethod("m2");
+    expect(tauriApi.saveProjectYaml).not.toHaveBeenCalled();
+  });
+
   it("updateScreen targets named screen only — multi-screen projects stay isolated", async () => {
     const multiScreen = {
       ...sampleConfig,

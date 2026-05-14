@@ -7,9 +7,12 @@ export interface RecentProject {
   last_opened_at: string;
 }
 
+export type SurveyMethod = "m1" | "m2";
+
 export interface ProjectMeta {
   name: string;
   unit: string;
+  method?: SurveyMethod;
 }
 export type ShapePriorConfig =
   | { type: "flat" }
