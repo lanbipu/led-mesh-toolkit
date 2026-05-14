@@ -118,3 +118,26 @@ pub struct ReconstructionReport {
     /// Weld tolerance (mm) snapshot captured at reconstruction time.
     pub weld_tolerance_mm: f64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TotalStationImportResult {
+    /// 相对 project_abs_path 的路径，e.g. "measurements/measured.yaml"
+    pub measurements_yaml_path: String,
+    /// 相对 project_abs_path 的路径
+    pub report_json_path: String,
+    pub measured_count: usize,
+    pub fabricated_count: usize,
+    pub outlier_count: usize,
+    pub missing_count: usize,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstructionCardResult {
+    /// HTML 字符串，前端 iframe srcdoc 渲染。
+    pub html_content: String,
+    /// 相对 project_abs_path 的 PDF 路径。
+    pub pdf_path: String,
+}
