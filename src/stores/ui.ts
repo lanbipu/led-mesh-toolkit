@@ -1,21 +1,16 @@
 import { defineStore } from "pinia";
 import { ref, watch } from "vue";
 
+// Theme is owned by `composables/useColorMode.ts` (key: lmt-theme).
+// This store intentionally does not touch theme; an earlier copy here
+// was dead code that fought useColorMode's html class on init.
+
 export const useUiStore = defineStore("ui", () => {
   const logOpen = ref(false);
-  const theme = ref<"light" | "dark">((localStorage.getItem("lmt.theme") as any) ?? "dark");
   const lang = ref<"en" | "zh">((localStorage.getItem("lmt.lang") as any) ?? "en");
   const toasts = ref<Array<{ id: number; kind: "info" | "error" | "success"; msg: string }>>([]);
   let toastSeq = 0;
 
-  watch(
-    theme,
-    (v) => {
-      localStorage.setItem("lmt.theme", v);
-      document.documentElement.classList.toggle("dark", v === "dark");
-    },
-    { immediate: true },
-  );
   watch(lang, (v) => localStorage.setItem("lmt.lang", v));
 
   function toast(kind: "info" | "error" | "success", msg: string) {
@@ -26,5 +21,5 @@ export const useUiStore = defineStore("ui", () => {
     }, 5000);
   }
 
-  return { logOpen, theme, lang, toasts, toast };
+  return { logOpen, lang, toasts, toast };
 });

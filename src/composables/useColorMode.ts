@@ -17,7 +17,9 @@ function applyHtmlClass(value: "light" | "dark") {
 export function useColorMode() {
   const storage = getStorage();
   const stored = storage?.getItem("lmt-theme") as ThemeMode | null;
-  const mode = ref<ThemeMode>(stored === "light" || stored === "dark" || stored === "system" ? stored : "dark");
+  // First-launch default: follow OS preference. Users who explicitly picked
+  // dark/light keep that choice via localStorage.
+  const mode = ref<ThemeMode>(stored === "light" || stored === "dark" || stored === "system" ? stored : "system");
   const preferredDark = usePreferredDark();
 
   const resolved = computed<"light" | "dark">(() => {
