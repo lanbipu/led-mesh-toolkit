@@ -129,3 +129,49 @@ fn registered_commands_are_addressable() {
     let _import_fn = lmt_tauri_lib::commands::total_station::import_total_station_csv;
     let _card_fn = lmt_tauri_lib::commands::total_station::generate_instruction_card;
 }
+
+/// End-to-end against the real `examples/curved-flat/` fixture: project.yaml
+/// + raw.csv with 45 vertex points → import → reconstruct → direct_link mesh.
+#[test]
+fn import_real_example_curved_flat() {
+    use std::path::PathBuf;
+
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let example = workspace.join("examples/curved-flat");
+    assert!(example.is_dir(), "fixture dir missing: {}", example.display());
+
+    let dir = tempdir().unwrap();
+    let project = dir.path().join("curved-flat");
+    copy_dir(&example, &project);
+
+    let csv = project.join("measurements/raw.csv");
+    let result = run_import(&project, "MAIN", &csv).unwrap();
+    assert_eq!(result.measured_count, 45, "9×5 vertices for 8×4 cabinet grid");
+    assert_eq!(result.outlier_count, 0);
+    assert_eq!(result.missing_count, 0);
+
+    let mp = lmt_tauri_lib::commands::measurements::load_measurements_from_path(
+        &project.join(&result.measurements_yaml_path),
+    )
+    .unwrap();
+    let surface = auto_reconstruct(&mp).unwrap();
+    assert_eq!(surface.quality_metrics.method, "direct_link");
+    assert_eq!(surface.vertices.len(), 45);
+}
+
+fn copy_dir(src: &std::path::Path, dst: &std::path::Path) {
+    fs::create_dir_all(dst).unwrap();
+    for entry in fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir(&from, &to);
+        } else {
+            fs::copy(&from, &to).unwrap();
+        }
+    }
+}
