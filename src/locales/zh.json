@@ -90,11 +90,18 @@
   "import": {
     "eyebrow": "设计阶段",
     "title": "导入测量",
-    "description": "M1 全站仪 CSV 与 M2 视觉反算图像入口将在对应里程碑接入。当前支持手写 measured.yaml。",
+    "description": "从全站仪 CSV 或手写 measured.yaml 加载测量数据。",
+    "loadCsv": "导入全站仪 CSV",
     "loadMeasured": "加载 measured.yaml",
     "current": "当前文件",
     "none": "（未选择）",
-    "loaded": "已加载 {n} 个测量点"
+    "loaded": "已加载 {n} 个测量点",
+    "csvSummary": "已导入 {m} 个点（fabricate {f} · outlier {o} · missing {x}）",
+    "reportHeader": "导入报告",
+    "measured": "已测",
+    "fabricated": "补出",
+    "outliers": "离群",
+    "missing": "缺失"
   },
   "charuco": {
     "eyebrow": "设计阶段",
@@ -146,7 +153,11 @@
   "instruct": {
     "eyebrow": "输出",
     "title": "施工指令",
-    "description": "M1 全站仪专用。HTML + PDF 作业卡生成入口将在 M1 会话完成。",
+    "description": "为现场测量员生成指示卡：屏体方位图 + 3 个参考点 + 全部目标点编号。",
+    "generate": "生成指示卡",
+    "openPdf": "打开 PDF",
+    "generated": "指示卡已生成",
+    "empty": "点上方按钮，从当前项目生成指示卡（HTML + PDF）",
     "pending": "M1 待实现"
   }
 }

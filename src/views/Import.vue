@@ -49,6 +49,37 @@ async function loadMeasured() {
     ui.toast("error", `${e}`);
   }
 }
+
+async function loadCsv() {
+  if (!proj.absPath) return;
+  try {
+    const file = await open({
+      title: "Select total-station CSV",
+      filters: [{ name: "CSV", extensions: ["csv"] }],
+      defaultPath: `${proj.absPath}/measurements`,
+    });
+    if (!file) return;
+    // M1.1 single-screen scope: pick the first screen from project config.
+    const screenIds = Object.keys(proj.config?.screens ?? {});
+    const screenId = screenIds[0] ?? "MAIN";
+    const result = await tauriApi.importTotalStationCsv(proj.absPath, String(file), screenId);
+    recon.setImportReport(result);
+    recon.setMeasurementsPath(result.measurementsYamlPath);
+    const summary = t("import.csvSummary", {
+      m: result.measuredCount,
+      f: result.fabricatedCount,
+      o: result.outlierCount,
+      x: result.missingCount,
+    });
+    if (result.warnings.length > 0) {
+      ui.toast("info", `${summary} · ${result.warnings.length} warning(s)`);
+    } else {
+      ui.toast("success", summary);
+    }
+  } catch (e) {
+    ui.toast("error", `${e}`);
+  }
+}
 </script>
 
 <template>
@@ -81,12 +112,34 @@ async function loadMeasured() {
         </div>
 
         <div class="flex flex-wrap gap-2">
-          <Button variant="default" :disabled="!proj.absPath" @click="loadMeasured">
+          <Button variant="default" :disabled="!proj.absPath" @click="loadCsv">
+            <LmtIcon name="upload" :size="14" />
+            {{ t("import.loadCsv") }}
+          </Button>
+          <Button variant="outline" :disabled="!proj.absPath" @click="loadMeasured">
             <LmtIcon name="upload" :size="14" />
             {{ t("import.loadMeasured") }}
           </Button>
         </div>
       </div>
+
+      <section
+        v-if="recon.importReport"
+        class="rounded-lg border bg-card p-5"
+      >
+        <p class="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground mb-3">
+          {{ t("import.reportHeader") }}
+        </p>
+        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <LmtKV :label="t('import.measured')" :value="String(recon.importReport.measuredCount)" />
+          <LmtKV :label="t('import.fabricated')" :value="String(recon.importReport.fabricatedCount)" />
+          <LmtKV :label="t('import.outliers')" :value="String(recon.importReport.outlierCount)" />
+          <LmtKV :label="t('import.missing')" :value="String(recon.importReport.missingCount)" />
+        </div>
+        <ul v-if="recon.importReport.warnings.length > 0" class="mt-3 space-y-1 text-xs text-amber-500">
+          <li v-for="(w, i) in recon.importReport.warnings" :key="i">⚠ {{ w }}</li>
+        </ul>
+      </section>
 
       <aside class="flex flex-col gap-3 rounded-lg border bg-card p-5">
         <p class="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
@@ -98,7 +151,7 @@ async function loadMeasured() {
             <span><span class="font-bold text-foreground">M0.2</span> — manual measured.yaml</span>
           </li>
           <li class="flex items-start gap-2">
-            <LmtIcon name="circle-dot" :size="13" class="mt-0.5 text-status-info" />
+            <LmtIcon name="check-circle-2" :size="13" class="mt-0.5 text-status-healthy" />
             <span><span class="font-bold text-foreground">M1</span> — total-station CSV adapter</span>
           </li>
           <li class="flex items-start gap-2">
