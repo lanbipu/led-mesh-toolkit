@@ -29,7 +29,11 @@ const title = computed(() => {
   return "";
 });
 
-const key = computed(() => `mismatch-${id.value}-${route.name?.toString()}`);
+// Include method.value in key so the banner re-appears whenever the user
+// re-enters a mismatching state (e.g. m1 → m2 → m1 on the same M1-only view).
+const key = computed(
+  () => `mismatch-${id.value}-${route.name?.toString()}-${method.value ?? "null"}`,
+);
 
 function goPick() {
   router.push(`/projects/${id.value}/method`);

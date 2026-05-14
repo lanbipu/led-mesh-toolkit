@@ -4,17 +4,27 @@ import { defineComponent, h } from "vue";
 import LmtConfirmDialog from "../LmtConfirmDialog.vue";
 
 // reka-ui Dialog uses Teleport which is brittle under happy-dom.
-// Stub the four reka-ui dialog parts as inline passthrough so we can test
-// the OK/Cancel emit behavior of LmtConfirmDialog itself.
-const passthrough = defineComponent({
+// Stub the reka-ui parts; DialogRoot forwards its `open` prop to a data attribute
+// AND gates child rendering so tests can detect actual open/close transitions.
+const dialogRoot = defineComponent({
   props: ["open"],
+  setup(props, { slots }) {
+    return () =>
+      h(
+        "div",
+        { "data-dialog-root": true, "data-dialog-open": String(!!props.open) },
+        props.open ? slots.default?.() : [],
+      );
+  },
+});
+const passthrough = defineComponent({
   setup(_, { slots }) {
     return () => h("div", { "data-stub": true }, slots.default?.());
   },
 });
 
 const stubs = {
-  DialogRoot: passthrough,
+  DialogRoot: dialogRoot,
   DialogPortal: passthrough,
   DialogOverlay: passthrough,
   DialogContent: passthrough,
@@ -39,8 +49,15 @@ function mountDlg(props: Record<string, unknown>) {
 describe("LmtConfirmDialog", () => {
   it("renders title and body when open=true", () => {
     const w = mountDlg({ title: "Switch?", body: "Are you sure?" });
+    expect(w.find("[data-dialog-root]").attributes("data-dialog-open")).toBe("true");
     expect(w.text()).toContain("Switch?");
     expect(w.text()).toContain("Are you sure?");
+  });
+
+  it("does not render children when open=false", () => {
+    const w = mountDlg({ open: false });
+    expect(w.find("[data-dialog-root]").attributes("data-dialog-open")).toBe("false");
+    expect(w.find("button[data-confirm-ok]").exists()).toBe(false);
   });
 
   it("emits confirm + update:open(false) when ok clicked", async () => {

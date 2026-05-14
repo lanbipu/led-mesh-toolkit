@@ -44,8 +44,8 @@ function dismiss() {
     class="flex items-center gap-3 rounded-md border px-4 py-2"
     :class="toneClass"
   >
-    <LmtIcon :name="iconName" :size="15" />
-    <span class="flex-1 truncate text-sm">{{ title }}</span>
+    <LmtIcon :name="iconName" :size="15" class="shrink-0" />
+    <span class="flex-1 text-sm leading-snug">{{ title }}</span>
     <button
       v-if="actionLabel"
       type="button"

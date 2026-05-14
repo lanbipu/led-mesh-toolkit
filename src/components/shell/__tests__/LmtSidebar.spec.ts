@@ -109,6 +109,27 @@ describe("LmtSidebar — home state", () => {
     const w = await mountSidebar("/", { recent });
     expect(w.findAll("[data-recent-project]")).toHaveLength(5);
   });
+
+  it("first recent project is pinned (diamond icon + primary color) and others are not", async () => {
+    const w = await mountSidebar("/", {
+      recent: [
+        { id: 11, abs_path: "/a", display_name: "alpha", last_opened_at: "2026-03-01" },
+        { id: 12, abs_path: "/b", display_name: "beta", last_opened_at: "2026-02-01" },
+        { id: 13, abs_path: "/c", display_name: "gamma", last_opened_at: "2026-01-01" },
+      ],
+    });
+    const items = w.findAll("[data-recent-project]");
+    expect(items).toHaveLength(3);
+    // The pinned (first) item shows the diamond lucide icon + primary color + bold name
+    const firstHtml = items[0].html();
+    expect(firstHtml).toContain("lucide-diamond");
+    expect(firstHtml).toContain("text-primary");
+    expect(firstHtml).toContain("font-bold");
+    // Subsequent items render the plain folder icon, no pinned styling
+    const secondHtml = items[1].html();
+    expect(secondHtml).toContain("lucide-folder");
+    expect(secondHtml).not.toContain("text-primary");
+  });
 });
 
 describe("LmtSidebar — project-internal state", () => {

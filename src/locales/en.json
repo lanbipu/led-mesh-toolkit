@@ -113,6 +113,8 @@
     "continueM2": "Continue with M2",
     "switchToM1": "Switch to M1",
     "switchToM2": "Switch to M2",
+    "toastSet": "Measurement method set",
+    "toastSwitched": "Measurement method switched",
     "coexistNote": "Switching preserves existing data — measurements/ and aruco/ directories coexist, swap any time.",
     "confirmSwitch": {
       "title": "Switch method",

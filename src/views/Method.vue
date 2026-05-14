@@ -49,7 +49,7 @@ async function onCardAction(m: SurveyMethod) {
   if (method.value === m) return;
   if (method.value === null) {
     await proj.setMethod(m);
-    ui.toast("success", "Method set");
+    ui.toast("success", t("method.toastSet"));
     return;
   }
   pendingTarget.value = m;
@@ -59,7 +59,7 @@ async function onCardAction(m: SurveyMethod) {
 async function doSwitch() {
   if (!pendingTarget.value) return;
   await proj.setMethod(pendingTarget.value);
-  ui.toast("success", "Method switched");
+  ui.toast("success", t("method.toastSwitched"));
   pendingTarget.value = null;
 }
 

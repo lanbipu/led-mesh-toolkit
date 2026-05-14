@@ -113,6 +113,8 @@
     "continueM2": "继续使用 M2",
     "switchToM1": "切换到 M1",
     "switchToM2": "切换到 M2",
+    "toastSet": "已设置测量方式",
+    "toastSwitched": "已切换测量方式",
     "coexistNote": "切换 method 不会删除已有产物；measurements/ 与 aruco/ 目录共存，可随时切回。",
     "confirmSwitch": {
       "title": "切换测量方式",

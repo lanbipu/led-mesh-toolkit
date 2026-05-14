@@ -33,14 +33,25 @@ import Method from "../Method.vue";
 import { useCurrentProjectStore } from "@/stores/currentProject";
 
 // Stub reka-ui dialog parts (Teleport is unreliable under happy-dom).
-const passthrough = defineComponent({
+// DialogRoot forwards `open` prop to `data-dialog-open` and gates children.
+const dialogRoot = defineComponent({
   props: ["open"],
+  setup(props, { slots }) {
+    return () =>
+      h(
+        "div",
+        { "data-dialog-root": true, "data-dialog-open": String(!!props.open) },
+        props.open ? slots.default?.() : [],
+      );
+  },
+});
+const passthrough = defineComponent({
   setup(_, { slots }) {
     return () => h("div", { "data-stub": true }, slots.default?.());
   },
 });
 const stubs = {
-  DialogRoot: passthrough,
+  DialogRoot: dialogRoot,
   DialogPortal: passthrough,
   DialogOverlay: passthrough,
   DialogContent: passthrough,
@@ -117,9 +128,13 @@ describe("Method.vue", () => {
 
   it("clicking 'Switch to M2' opens confirm dialog (no save yet)", async () => {
     const w = await mountWith("m1");
+    // Dialog should start closed
+    expect(w.find("[data-dialog-root]").attributes("data-dialog-open")).toBe("false");
     const btns = w.findAll("button");
     const switchM2 = btns.find((b) => b.text().includes("Switch to M2"));
     await switchM2!.trigger("click");
+    // After click, dialog should be open and rendering switch-method content
+    expect(w.find("[data-dialog-root]").attributes("data-dialog-open")).toBe("true");
     expect(w.text()).toContain("Switch method");
     expect(tauriApi.saveProjectYaml).not.toHaveBeenCalled();
   });

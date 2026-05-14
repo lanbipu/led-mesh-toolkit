@@ -3,14 +3,13 @@ import { computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useProjectsStore } from "@/stores/projects";
-import { useCurrentProjectStore } from "@/stores/currentProject";
 import { useSurveyMethod } from "@/composables/useSurveyMethod";
 import LmtIcon from "@/components/primitives/LmtIcon.vue";
 
 const route = useRoute();
 const { t } = useI18n();
 const projects = useProjectsStore();
-useCurrentProjectStore();
+// currentProject subscription happens via useSurveyMethod (composable owns the race-safe read).
 const { method } = useSurveyMethod();
 
 onMounted(() => {
