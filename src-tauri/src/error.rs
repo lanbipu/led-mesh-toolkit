@@ -15,6 +15,8 @@ pub enum LmtError {
     NotFound(String),
     #[error("invalid_input: {0}")]
     InvalidInput(String),
+    #[error("{0}")]
+    Other(String),
 }
 
 pub type LmtResult<T> = Result<T, LmtError>;
@@ -49,6 +51,12 @@ impl From<lmt_core::CoreError> for LmtError {
     }
 }
 
+impl From<lmt_adapter_total_station::AdapterError> for LmtError {
+    fn from(e: lmt_adapter_total_station::AdapterError) -> Self {
+        Self::Other(format!("{e}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,5 +73,15 @@ mod tests {
         let io = std::io::Error::new(std::io::ErrorKind::NotFound, "x");
         let lmt: LmtError = io.into();
         assert!(matches!(lmt, LmtError::Io(_)));
+    }
+
+    #[test]
+    fn adapter_error_converts_to_lmt_error() {
+        use lmt_adapter_total_station::AdapterError;
+        let adapter_err = AdapterError::InvalidInput("bad csv row".into());
+        let lmt_err: LmtError = adapter_err.into();
+        let s = format!("{lmt_err}");
+        assert!(s.contains("bad csv row"), "got: {s}");
+        assert!(matches!(lmt_err, LmtError::Other(_)));
     }
 }

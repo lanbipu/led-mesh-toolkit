@@ -2036,6 +2036,7 @@ name = "lmt-tauri"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "lmt-adapter-total-station",
  "lmt-core",
  "rusqlite",
  "serde",
