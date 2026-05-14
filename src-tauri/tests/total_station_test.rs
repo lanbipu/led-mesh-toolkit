@@ -1,0 +1,89 @@
+//! Tauri-layer 集成测试：直接调 pure helpers（不起 Tauri runtime），
+//! 验证 GUI ProjectConfig → CSV → measured.yaml → reconstruct → OBJ
+//! 全管线在 Tauri 入口处也能跑通。
+
+use lmt_core::reconstruct::auto_reconstruct;
+use lmt_tauri_lib::commands::measurements::load_measurements_from_path;
+use lmt_tauri_lib::commands::total_station::{run_generate_card, run_import};
+use std::fs;
+use tempfile::tempdir;
+
+fn seed(dir: &std::path::Path) {
+    let yaml = r#"
+project:
+  name: E2E
+  unit: mm
+screens:
+  MAIN:
+    cabinet_count: [4, 2]
+    cabinet_size_mm: [500.0, 500.0]
+    pixels_per_cabinet: [256, 256]
+    shape_prior:
+      type: flat
+    shape_mode: rectangle
+    irregular_mask: []
+coordinate_system:
+  origin_point: MAIN_V001_R001
+  x_axis_point: MAIN_V005_R001
+  xy_plane_point: MAIN_V001_R003
+output:
+  target: neutral
+  obj_filename: "{screen_id}.obj"
+  weld_vertices_tolerance_mm: 1.0
+  triangulate: true
+"#;
+    fs::write(dir.join("project.yaml"), yaml).unwrap();
+    fs::create_dir_all(dir.join("measurements")).unwrap();
+
+    let csv = "\
+name,x,y,z,note
+1,0,0,0,
+2,2000,0,0,
+3,0,0,1000,
+4,500,0,0,
+5,1000,0,0,
+6,1500,0,0,
+7,0,0,500,
+8,500,0,500,
+9,1000,0,500,
+10,1500,0,500,
+11,2000,0,500,
+12,500,0,1000,
+13,1000,0,1000,
+14,1500,0,1000,
+15,2000,0,1000,
+";
+    fs::write(dir.join("measurements/raw.csv"), csv).unwrap();
+}
+
+#[test]
+fn import_then_load_measured_yaml_then_reconstruct() {
+    let dir = tempdir().unwrap();
+    let project = dir.path();
+    seed(project);
+    let csv = project.join("measurements/raw.csv");
+
+    let imp = run_import(project, "MAIN", &csv).unwrap();
+    assert_eq!(imp.measured_count, 15);
+
+    let mp_path = project.join(&imp.measurements_yaml_path);
+    let mp = load_measurements_from_path(&mp_path).unwrap();
+    assert_eq!(mp.points.len(), 15);
+
+    let surface = auto_reconstruct(&mp).unwrap();
+    assert_eq!(surface.quality_metrics.method, "direct_link");
+    assert_eq!(surface.vertices.len(), 15);
+}
+
+#[test]
+fn generate_card_writes_pdf_under_project() {
+    let dir = tempdir().unwrap();
+    let project = dir.path();
+    seed(project);
+
+    let card = run_generate_card(project, "MAIN").unwrap();
+    assert!(card.html_content.contains("E2E"));
+    assert!(card.html_content.contains("MAIN"));
+    let pdf = fs::read(project.join(&card.pdf_path)).unwrap();
+    assert!(pdf.starts_with(b"%PDF-"));
+}
