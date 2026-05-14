@@ -137,6 +137,29 @@ pub fn import_total_station_csv(
     run_import(Path::new(&project_abs_path), &screen_id, Path::new(&csv_path))
 }
 
+/// Reject screen IDs that would be unsafe to interpolate into a filename
+/// (path separators, parent-dir traversal, control chars, empty).
+fn validate_screen_id_filename_safe(screen_id: &str) -> LmtResult<()> {
+    if screen_id.is_empty() {
+        return Err(LmtError::InvalidInput("screen_id must not be empty".into()));
+    }
+    if screen_id == "." || screen_id == ".." || screen_id.contains("..") {
+        return Err(LmtError::InvalidInput(format!(
+            "screen_id {screen_id:?} must not contain '..'"
+        )));
+    }
+    if !screen_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(LmtError::InvalidInput(format!(
+            "screen_id {screen_id:?} contains disallowed characters; \
+             only ASCII [A-Za-z0-9_-] are accepted in screen IDs"
+        )));
+    }
+    Ok(())
+}
+
 /// Generate an instruction card (HTML + PDF) for one screen, derived from the
 /// GUI project.yaml. HTML is returned inline (for iframe srcdoc preview);
 /// PDF is written under `{project}/output/instruction-{screen_id}.pdf`.
@@ -144,6 +167,9 @@ pub fn run_generate_card(
     project_abs_path: &Path,
     screen_id: &str,
 ) -> LmtResult<InstructionCardResult> {
+    // Filename safety: screen_id is used as a path component for the PDF.
+    validate_screen_id_filename_safe(screen_id)?;
+
     let gui_cfg = load_project_yaml_from_path(project_abs_path)?;
     let m1_cfg = map_to_adapter(&gui_cfg)?;
     let screen_cfg = m1_cfg
@@ -166,7 +192,18 @@ pub fn run_generate_card(
     std::fs::create_dir_all(&output_dir)?;
     let pdf_filename = format!("instruction-{screen_id}.pdf");
     let pdf_abs = output_dir.join(&pdf_filename);
-    generate_pdf(&card, &pdf_abs)?;
+
+    // Atomic write: render to .tmp, then rename. Failure removes the .tmp
+    // and leaves any existing PDF untouched.
+    let pdf_tmp = output_dir.join(format!("{pdf_filename}.tmp"));
+    if let Err(e) = generate_pdf(&card, &pdf_tmp) {
+        let _ = std::fs::remove_file(&pdf_tmp);
+        return Err(e.into());
+    }
+    if let Err(e) = std::fs::rename(&pdf_tmp, &pdf_abs) {
+        let _ = std::fs::remove_file(&pdf_tmp);
+        return Err(e.into());
+    }
 
     Ok(InstructionCardResult {
         html_content,
@@ -366,6 +403,53 @@ name,x,y,z,note
         seed_project(project);
         let err = run_generate_card(project, "FLOOR").unwrap_err();
         assert!(format!("{err}").contains("FLOOR"), "got: {err}");
+    }
+
+    #[test]
+    fn generate_card_rejects_unsafe_screen_id() {
+        let dir = tempdir().unwrap();
+        let project = dir.path();
+        seed_project(project);
+
+        for bad in ["../escape", "MAIN/sub", "..", "", "screen with space", "MAIN;rm"] {
+            let err = run_generate_card(project, bad).unwrap_err();
+            let msg = format!("{err}").to_lowercase();
+            assert!(
+                msg.contains("screen_id"),
+                "rejecting {bad:?} should mention screen_id; got: {err}"
+            );
+        }
+        // Existing output dir should be free of any leaked instruction-*.pdf
+        // (no PDF should have been written for any of the rejected IDs).
+        if let Ok(read) = fs::read_dir(project.join("output")) {
+            for entry in read.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                assert!(
+                    !name.contains("escape") && !name.contains("rm"),
+                    "leaked file: {name}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn generate_card_overwrites_pdf_atomically() {
+        let dir = tempdir().unwrap();
+        let project = dir.path();
+        seed_project(project);
+
+        // First generation seeds the PDF.
+        let first = run_generate_card(project, "MAIN").unwrap();
+        let pdf_abs = project.join(&first.pdf_path);
+        let first_size = fs::metadata(&pdf_abs).unwrap().len();
+        assert!(first_size > 0);
+
+        // Second generation overwrites in place, no .tmp leftover.
+        let second = run_generate_card(project, "MAIN").unwrap();
+        assert_eq!(second.pdf_path, first.pdf_path);
+        assert!(pdf_abs.is_file());
+        let tmp = project.join("output").join("instruction-MAIN.pdf.tmp");
+        assert!(!tmp.exists(), "leftover .tmp file");
     }
 
     #[test]
