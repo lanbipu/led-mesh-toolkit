@@ -1,11 +1,12 @@
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import {
   tauriApi,
   type ReconstructedSurface,
   type ReconstructionRun,
   type TotalStationImportResult,
 } from "@/services/tauri";
+import { useCurrentProjectStore } from "./currentProject";
 
 export const useReconstructionStore = defineStore("reconstruction", () => {
   const measurementsPath = ref<string | null>(null);
@@ -14,6 +15,27 @@ export const useReconstructionStore = defineStore("reconstruction", () => {
   const status = ref<"idle" | "running" | "done" | "error">("idle");
   const recentRuns = ref<ReconstructionRun[]>([]);
   const importReport = ref<TotalStationImportResult | null>(null);
+
+  /** Drop all per-project derived state. Called automatically when the
+   *  active project switches; can also be invoked manually. */
+  function resetForProjectSwitch() {
+    measurementsPath.value = null;
+    currentSurface.value = null;
+    currentRunId.value = null;
+    status.value = "idle";
+    importReport.value = null;
+    recentRuns.value = [];
+  }
+
+  // Reactively wipe state whenever the active project changes — prevents
+  // stale measurements / surfaces / import reports from leaking into a
+  // freshly opened project.
+  watch(
+    () => useCurrentProjectStore().id,
+    (id, prev) => {
+      if (id !== prev) resetForProjectSwitch();
+    },
+  );
 
   const canReconstruct = computed(() => measurementsPath.value !== null);
 
@@ -59,6 +81,7 @@ export const useReconstructionStore = defineStore("reconstruction", () => {
     canReconstruct,
     setMeasurementsPath,
     setImportReport,
+    resetForProjectSwitch,
     reconstruct,
     exportObj,
     loadRuns,
