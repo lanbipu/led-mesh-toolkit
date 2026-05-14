@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -21,6 +21,7 @@ const ui = useUiStore();
 const id = computed(() => Number(route.params.id));
 
 const hasMeasurements = computed(() => recon.measurementsPath != null);
+const isImporting = ref(false);
 
 onMounted(async () => {
   try {
@@ -51,18 +52,31 @@ async function loadMeasured() {
 }
 
 async function loadCsv() {
-  if (!proj.absPath) return;
+  if (!proj.absPath || isImporting.value) return;
+  isImporting.value = true;
+  // Snapshot the project identity *before* the file picker opens so a
+  // mid-flight project switch can't redirect the import to the wrong project.
+  const snapshotId = proj.id;
+  const snapshotAbsPath = proj.absPath;
+  const screenIds = Object.keys(proj.config?.screens ?? {});
+  const screenId = screenIds[0] ?? "MAIN";
   try {
     const file = await open({
       title: "Select total-station CSV",
       filters: [{ name: "CSV", extensions: ["csv"] }],
-      defaultPath: `${proj.absPath}/measurements`,
+      defaultPath: `${snapshotAbsPath}/measurements`,
     });
     if (!file) return;
-    // M1.1 single-screen scope: pick the first screen from project config.
-    const screenIds = Object.keys(proj.config?.screens ?? {});
-    const screenId = screenIds[0] ?? "MAIN";
-    const result = await tauriApi.importTotalStationCsv(proj.absPath, String(file), screenId);
+    if (proj.id !== snapshotId) {
+      ui.toast("info", "project changed during file pick — import cancelled");
+      return;
+    }
+    const result = await tauriApi.importTotalStationCsv(
+      snapshotAbsPath,
+      String(file),
+      screenId,
+    );
+    if (proj.id !== snapshotId) return; // user switched away while waiting on backend
     recon.setImportReport(result);
     recon.setMeasurementsPath(result.measurementsYamlPath);
     const summary = t("import.csvSummary", {
@@ -78,6 +92,8 @@ async function loadCsv() {
     }
   } catch (e) {
     ui.toast("error", `${e}`);
+  } finally {
+    isImporting.value = false;
   }
 }
 </script>
@@ -112,11 +128,11 @@ async function loadCsv() {
         </div>
 
         <div class="flex flex-wrap gap-2">
-          <Button variant="default" :disabled="!proj.absPath" @click="loadCsv">
+          <Button variant="default" :disabled="!proj.absPath || isImporting" @click="loadCsv">
             <LmtIcon name="upload" :size="14" />
             {{ t("import.loadCsv") }}
           </Button>
-          <Button variant="outline" :disabled="!proj.absPath" @click="loadMeasured">
+          <Button variant="outline" :disabled="!proj.absPath || isImporting" @click="loadMeasured">
             <LmtIcon name="upload" :size="14" />
             {{ t("import.loadMeasured") }}
           </Button>

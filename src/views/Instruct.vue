@@ -30,15 +30,32 @@ onMounted(async () => {
   }
 });
 
+const isGenerating = ref(false);
+
+const projectReady = computed(
+  () => proj.absPath != null && proj.id === id.value && !proj.loading,
+);
+
 async function generate() {
-  if (!proj.absPath) return;
+  if (!projectReady.value || isGenerating.value) return;
+  const sid = screenId.value;
+  if (!sid) {
+    ui.toast("error", "no screen in project");
+    return;
+  }
+  isGenerating.value = true;
+  const snapshotId = proj.id;
+  const snapshotAbsPath = proj.absPath!;
   try {
-    const result = await tauriApi.generateInstructionCard(proj.absPath, screenId.value);
+    const result = await tauriApi.generateInstructionCard(snapshotAbsPath, sid);
+    if (proj.id !== snapshotId) return; // discard stale
     html.value = result.htmlContent;
     pdfPath.value = result.pdfPath;
     ui.toast("success", t("instruct.generated"));
   } catch (e) {
     ui.toast("error", `${e}`);
+  } finally {
+    isGenerating.value = false;
   }
 }
 </script>
@@ -56,7 +73,7 @@ async function generate() {
     </LmtPageHeader>
 
     <section class="flex flex-wrap items-center gap-3 rounded-lg border bg-card p-4">
-      <Button variant="default" :disabled="!proj.absPath" @click="generate">
+      <Button variant="default" :disabled="!projectReady || isGenerating" @click="generate">
         <LmtIcon name="printer" :size="14" />
         {{ t("instruct.generate") }}
       </Button>
