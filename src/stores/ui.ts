@@ -21,5 +21,26 @@ export const useUiStore = defineStore("ui", () => {
     }, 5000);
   }
 
-  return { logOpen, lang, toasts, toast };
+  const dismissedBanners = ref<Set<string>>(new Set());
+
+  function isBannerDismissed(key: string): boolean {
+    return dismissedBanners.value.has(key);
+  }
+
+  function dismissBanner(key: string) {
+    if (dismissedBanners.value.has(key)) return;
+    const next = new Set(dismissedBanners.value);
+    next.add(key);
+    dismissedBanners.value = next;
+  }
+
+  return {
+    logOpen,
+    lang,
+    toasts,
+    toast,
+    dismissedBanners,
+    isBannerDismissed,
+    dismissBanner,
+  };
 });
