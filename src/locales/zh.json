@@ -13,12 +13,13 @@
     "group": {
       "workspace": "工作区",
       "design": "设计阶段",
+      "survey": "测量",
       "output": "输出"
     },
     "home": "首页",
     "design": "屏体设计",
+    "method": "测量方式",
     "preview": "预览",
-    "export": "导出",
     "runs": "运行历史",
     "import": "导入测量",
     "instruct": "施工指令",
@@ -40,6 +41,8 @@
     "title": "项目",
     "description": "选择最近项目继续工作，或从示例新建一个屏体几何工程。",
     "recent": "最近项目",
+    "recentProjects": "最近项目",
+    "pinned": "已置顶",
     "empty": "暂无最近项目。从下方示例创建一个，或打开已有项目文件夹。",
     "create_curved_flat": "Curved-Flat (8×4)",
     "create_curved_arc": "Curved-Arc (16×6)",
@@ -74,6 +77,54 @@
       "origin": "原点",
       "x_axis": "X 轴",
       "xy_plane": "XY 平面"
+    },
+    "banner": {
+      "methodPending": "平体设计就绪，下一步去选择测量方式",
+      "go": "去选择 →"
+    }
+  },
+  "method": {
+    "eyebrow": "MEASUREMENT METHOD",
+    "title": "测量方式选择",
+    "description": "选择本项目所用的测量方式。",
+    "m1": {
+      "title": "M1 · 全站仪",
+      "desc": "用全站仪测量顶点坐标，导入 CSV。",
+      "bullets": [
+        "导入 CSV",
+        "毫米级精度",
+        "需要专业设备"
+      ]
+    },
+    "m2": {
+      "title": "M2 · 视觉反算",
+      "desc": "用 ArUco/Charuco 标记拍照，反算出顶点空间位置。",
+      "bullets": [
+        "ArUco / Charuco 标记",
+        "手机或相机即可",
+        "设备门槛低"
+      ]
+    },
+    "current": "CURRENT",
+    "available": "AVAILABLE",
+    "useM1": "使用 M1",
+    "useM2": "使用 M2",
+    "continueM1": "继续使用 M1",
+    "continueM2": "继续使用 M2",
+    "switchToM1": "切换到 M1",
+    "switchToM2": "切换到 M2",
+    "coexistNote": "切换 method 不会删除已有产物；measurements/ 与 aruco/ 目录共存，可随时切回。",
+    "confirmSwitch": {
+      "title": "切换测量方式",
+      "body": "切换到 {target}。已有数据将保留，可随时切回。",
+      "ok": "确认切换",
+      "cancel": "取消"
+    },
+    "mismatch": {
+      "m1Only": "本页仅用于 M1，当前 method：{current}。",
+      "m2Only": "本页仅用于 M2，当前 method：{current}。",
+      "unset": "尚未选择测量方式。",
+      "goPick": "去选择 →"
     }
   },
   "preview": {
@@ -129,26 +180,6 @@
       "vertices": "顶点数",
       "target": "目标",
       "obj": "OBJ 输出"
-    }
-  },
-  "export": {
-    "eyebrow": "输出",
-    "title": "导出",
-    "description": "OBJ 导出在预览页工具栏完成。三个坐标系目标对应不同的轴向约定。",
-    "goPreview": "前往预览页",
-    "tile": {
-      "disguise": {
-        "title": "Disguise",
-        "desc": "右手系，Y-up。供 d3 / VFX 流水线。"
-      },
-      "unreal": {
-        "title": "Unreal",
-        "desc": "左手系，Z-up。供 UE5 蓝图与 nDisplay。"
-      },
-      "neutral": {
-        "title": "Neutral",
-        "desc": "原始 IR 坐标系。中性输出，便于二次加工。"
-      }
     }
   },
   "instruct": {

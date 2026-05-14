@@ -13,12 +13,13 @@
     "group": {
       "workspace": "Workspace",
       "design": "Design",
+      "survey": "Survey",
       "output": "Output"
     },
     "home": "Home",
     "design": "Screen Design",
+    "method": "Method",
     "preview": "Preview",
-    "export": "Export",
     "runs": "Runs",
     "import": "Import",
     "instruct": "Instruct",
@@ -40,6 +41,8 @@
     "title": "Projects",
     "description": "Pick a recent project to continue, or seed a new mesh geometry project from an example.",
     "recent": "Recent Projects",
+    "recentProjects": "Recent Projects",
+    "pinned": "PINNED",
     "empty": "No recent projects. Seed one from an example below, or open an existing folder.",
     "create_curved_flat": "Curved-Flat (8×4)",
     "create_curved_arc": "Curved-Arc (16×6)",
@@ -74,6 +77,54 @@
       "origin": "Origin",
       "x_axis": "X-axis",
       "xy_plane": "XY-plane"
+    },
+    "banner": {
+      "methodPending": "Design ready · pick your measurement method",
+      "go": "Choose →"
+    }
+  },
+  "method": {
+    "eyebrow": "MEASUREMENT METHOD",
+    "title": "Method",
+    "description": "Pick how you'll measure cabinet vertices for this project.",
+    "m1": {
+      "title": "M1 · Total Station",
+      "desc": "Use a total station to capture vertex coordinates as CSV.",
+      "bullets": [
+        "CSV import",
+        "Millimeter-level precision",
+        "Requires pro hardware"
+      ]
+    },
+    "m2": {
+      "title": "M2 · Visual Back-Calc",
+      "desc": "Recover surface from ArUco/Charuco photos taken with any camera.",
+      "bullets": [
+        "ArUco / Charuco markers",
+        "Any phone or camera",
+        "Low equipment cost"
+      ]
+    },
+    "current": "CURRENT",
+    "available": "AVAILABLE",
+    "useM1": "Use M1",
+    "useM2": "Use M2",
+    "continueM1": "Continue with M1",
+    "continueM2": "Continue with M2",
+    "switchToM1": "Switch to M1",
+    "switchToM2": "Switch to M2",
+    "coexistNote": "Switching preserves existing data — measurements/ and aruco/ directories coexist, swap any time.",
+    "confirmSwitch": {
+      "title": "Switch method",
+      "body": "Switching to {target}. Existing data is preserved and you can switch back any time.",
+      "ok": "Confirm switch",
+      "cancel": "Cancel"
+    },
+    "mismatch": {
+      "m1Only": "This page is M1-only. Current method: {current}.",
+      "m2Only": "This page is M2-only. Current method: {current}.",
+      "unset": "Measurement method not selected yet.",
+      "goPick": "Go to Method →"
     }
   },
   "preview": {
@@ -129,26 +180,6 @@
       "vertices": "Vertices",
       "target": "Target",
       "obj": "OBJ Path"
-    }
-  },
-  "export": {
-    "eyebrow": "Output",
-    "title": "Export",
-    "description": "OBJ export is triggered from the Preview toolbar. Three coordinate-system targets follow distinct axis conventions.",
-    "goPreview": "Go to Preview",
-    "tile": {
-      "disguise": {
-        "title": "Disguise",
-        "desc": "Right-handed, Y-up. For d3 / VFX pipelines."
-      },
-      "unreal": {
-        "title": "Unreal",
-        "desc": "Left-handed, Z-up. For UE5 blueprints / nDisplay."
-      },
-      "neutral": {
-        "title": "Neutral",
-        "desc": "Raw IR coordinate system. Neutral output for downstream tooling."
-      }
     }
   },
   "instruct": {
