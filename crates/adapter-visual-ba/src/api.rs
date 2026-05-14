@@ -41,20 +41,22 @@ fn ipc_to_ir_cabinet(c: &IpcCabinetArray) -> VbaResult<lmt_core::shape::CabinetA
         "cabinet_size_mm": c.cabinet_size_mm,
         "absent_cells": c.absent_cells,
     });
-    serde_json::from_value(json).map_err(|e| {
-        VbaError::InvalidInput(format!("cabinet_array failed core validation: {e}"))
-    })
+    serde_json::from_value(json)
+        .map_err(|e| VbaError::InvalidInput(format!("cabinet_array failed core validation: {e}")))
 }
 
 fn ipc_to_ir_shape(s: &IpcShapePrior) -> VbaResult<lmt_core::shape::ShapePrior> {
     let json = match s {
         IpcShapePrior::Flat(_) => serde_json::json!("flat"),
-        IpcShapePrior::Curved { curved } => serde_json::json!({"curved": {"radius_mm": curved.radius_mm}}),
-        IpcShapePrior::Folded { folded } => serde_json::json!({"folded": {"fold_seam_columns": folded.fold_seam_columns}}),
+        IpcShapePrior::Curved { curved } => {
+            serde_json::json!({"curved": {"radius_mm": curved.radius_mm}})
+        }
+        IpcShapePrior::Folded { folded } => {
+            serde_json::json!({"folded": {"fold_seam_columns": folded.fold_seam_columns}})
+        }
     };
-    serde_json::from_value(json).map_err(|e| {
-        VbaError::InvalidInput(format!("shape_prior failed core validation: {e}"))
-    })
+    serde_json::from_value(json)
+        .map_err(|e| VbaError::InvalidInput(format!("shape_prior failed core validation: {e}")))
 }
 
 /// Pre-validate the project against the core IR's stricter rules so we fail

@@ -141,7 +141,11 @@ fn import_real_example_curved_flat() {
         .unwrap()
         .to_path_buf();
     let example = workspace.join("examples/curved-flat");
-    assert!(example.is_dir(), "fixture dir missing: {}", example.display());
+    assert!(
+        example.is_dir(),
+        "fixture dir missing: {}",
+        example.display()
+    );
 
     let dir = tempdir().unwrap();
     let project = dir.path().join("curved-flat");
@@ -149,7 +153,10 @@ fn import_real_example_curved_flat() {
 
     let csv = project.join("measurements/raw.csv");
     let result = run_import(&project, "MAIN", &csv).unwrap();
-    assert_eq!(result.measured_count, 45, "9×5 vertices for 8×4 cabinet grid");
+    assert_eq!(
+        result.measured_count, 45,
+        "9×5 vertices for 8×4 cabinet grid"
+    );
     assert_eq!(result.outlier_count, 0);
     assert_eq!(result.missing_count, 0);
 

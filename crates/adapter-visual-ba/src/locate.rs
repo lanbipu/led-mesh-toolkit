@@ -38,7 +38,11 @@ fn platform_dir() -> &'static str {
 }
 
 fn binary_filename() -> &'static str {
-    if cfg!(windows) { "lmt-vba-sidecar.exe" } else { "lmt-vba-sidecar" }
+    if cfg!(windows) {
+        "lmt-vba-sidecar.exe"
+    } else {
+        "lmt-vba-sidecar"
+    }
 }
 
 /// Compile-time workspace target dir resolution. `env!` is evaluated when
@@ -60,8 +64,15 @@ fn workspace_target_from_compile_time() -> Option<PathBuf> {
 fn sidecar_next_to_exe() -> Option<PathBuf> {
     let exe = env::current_exe().ok()?;
     let dir = exe.parent()?;
-    let candidate = dir.join("sidecar-vendor").join(platform_dir()).join(binary_filename());
-    if candidate.is_file() { Some(candidate) } else { None }
+    let candidate = dir
+        .join("sidecar-vendor")
+        .join(platform_dir())
+        .join(binary_filename());
+    if candidate.is_file() {
+        Some(candidate)
+    } else {
+        None
+    }
 }
 
 fn search_path(name: &str) -> Option<PathBuf> {
@@ -100,15 +111,20 @@ pub fn locate_sidecar() -> VbaResult<PathBuf> {
     if let Some(p) = sidecar_next_to_exe() {
         return Ok(p);
     }
-    tried.push(format!("current_exe-relative sidecar-vendor/{}/{}",
-        platform_dir(), binary_filename()));
+    tried.push(format!(
+        "current_exe-relative sidecar-vendor/{}/{}",
+        platform_dir(),
+        binary_filename()
+    ));
 
     // PATH fallback is off by default — opt-in for dev / system-installed sidecars.
     if env::var(ENV_ALLOW_PATH).map(|v| v == "1").unwrap_or(false) {
         if let Some(p) = search_path(binary_filename()) {
             return Ok(p);
         }
-        tried.push(format!("PATH:{BINARY_NAME} (LMT_VBA_ALLOW_PATH=1, not found)"));
+        tried.push(format!(
+            "PATH:{BINARY_NAME} (LMT_VBA_ALLOW_PATH=1, not found)"
+        ));
     } else {
         tried.push(format!(
             "PATH lookup disabled (set {ENV_ALLOW_PATH}=1 to enable)"

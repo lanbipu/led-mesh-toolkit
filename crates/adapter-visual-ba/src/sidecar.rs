@@ -101,7 +101,11 @@ fn spawn_stderr_drain(child: &mut Child) -> Option<Arc<Mutex<Vec<u8>>>> {
 
 fn stderr_tail(buf: &Option<Arc<Mutex<Vec<u8>>>>) -> String {
     buf.as_ref()
-        .and_then(|b| b.lock().ok().map(|g| String::from_utf8_lossy(&g).into_owned()))
+        .and_then(|b| {
+            b.lock()
+                .ok()
+                .map(|g| String::from_utf8_lossy(&g).into_owned())
+        })
         .unwrap_or_default()
 }
 

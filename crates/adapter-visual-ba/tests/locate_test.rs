@@ -56,7 +56,11 @@ fn missing_sidecar_returns_error_when_path_disabled() {
 fn path_fallback_opt_in_finds_binary() {
     let _guard = ENV_LOCK.lock().unwrap();
     let tmp = tempdir().unwrap();
-    let fake = tmp.path().join(if cfg!(windows) { "lmt-vba-sidecar.exe" } else { "lmt-vba-sidecar" });
+    let fake = tmp.path().join(if cfg!(windows) {
+        "lmt-vba-sidecar.exe"
+    } else {
+        "lmt-vba-sidecar"
+    });
     make_executable_fake(&fake);
 
     env::remove_var("LMT_VBA_SIDECAR_PATH");

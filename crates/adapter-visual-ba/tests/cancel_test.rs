@@ -12,7 +12,9 @@ use tokio::sync::oneshot;
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn fixture(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
 }
 
 #[tokio::test]
@@ -37,7 +39,10 @@ async fn cancel_kills_child_within_5_seconds() {
     let result = task.await.unwrap();
     let elapsed = start.elapsed();
 
-    assert!(matches!(result, Err(lmt_adapter_visual_ba::VbaError::Cancelled)));
+    assert!(matches!(
+        result,
+        Err(lmt_adapter_visual_ba::VbaError::Cancelled)
+    ));
     assert!(elapsed < Duration::from_secs(5), "cancel took {elapsed:?}");
 
     env::remove_var("LMT_VBA_SIDECAR_PATH");

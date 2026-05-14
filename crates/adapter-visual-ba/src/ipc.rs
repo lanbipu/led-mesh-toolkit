@@ -207,13 +207,17 @@ impl MeasuredPointDto {
             Uncertainty::Covariance(m) => {
                 // m² → mm² (1 m² = 1e6 mm²)
                 let scale = 1.0e6;
-                lmt_core::uncertainty::Uncertainty::Covariance3x3(
-                    Matrix3::new(
-                        m[0][0] * scale, m[0][1] * scale, m[0][2] * scale,
-                        m[1][0] * scale, m[1][1] * scale, m[1][2] * scale,
-                        m[2][0] * scale, m[2][1] * scale, m[2][2] * scale,
-                    ),
-                )
+                lmt_core::uncertainty::Uncertainty::Covariance3x3(Matrix3::new(
+                    m[0][0] * scale,
+                    m[0][1] * scale,
+                    m[0][2] * scale,
+                    m[1][0] * scale,
+                    m[1][1] * scale,
+                    m[1][2] * scale,
+                    m[2][0] * scale,
+                    m[2][1] * scale,
+                    m[2][2] * scale,
+                ))
             }
         };
         lmt_core::point::MeasuredPoint {

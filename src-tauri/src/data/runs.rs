@@ -53,9 +53,7 @@ pub fn update_export(
         params![target, output_obj_path, run_id],
     )?;
     if n == 0 {
-        return Err(crate::error::LmtError::NotFound(format!(
-            "run id {run_id}"
-        )));
+        return Err(crate::error::LmtError::NotFound(format!("run id {run_id}")));
     }
     Ok(())
 }

@@ -22,7 +22,9 @@ pub fn map_to_adapter(cfg: &dto::ProjectConfig) -> LmtResult<m1::ProjectConfig> 
     }
 
     let m1_cfg = m1::ProjectConfig {
-        project: m1::ProjectMeta { name: cfg.project.name.clone() },
+        project: m1::ProjectMeta {
+            name: cfg.project.name.clone(),
+        },
         screens,
         coordinate_system: m1::CoordinateSystemConfig {
             origin_grid_name: cfg.coordinate_system.origin_point.clone(),
@@ -69,25 +71,33 @@ fn check_grid_name_prefix(label: &str, name: &str, screen_ids: &[&str]) -> LmtRe
 fn map_screen(s: &dto::ScreenConfig) -> LmtResult<m1::ScreenConfig> {
     let shape_prior = match &s.shape_prior {
         dto::ShapePriorConfig::Flat => m1::ShapePriorConfig::Flat,
-        dto::ShapePriorConfig::Curved { radius_mm, fold_seams_at_columns } => {
+        dto::ShapePriorConfig::Curved {
+            radius_mm,
+            fold_seams_at_columns,
+        } => {
             if fold_seams_at_columns.is_empty() {
-                m1::ShapePriorConfig::Curved { radius_mm: *radius_mm }
+                m1::ShapePriorConfig::Curved {
+                    radius_mm: *radius_mm,
+                }
             } else {
                 return Err(LmtError::InvalidInput(
                     "shape_prior Curved with non-empty fold_seams_at_columns is not supported \
                      by M1 adapter (radius would be lost); pick pure Curved (drop seams) or \
-                     switch to Folded".to_string(),
+                     switch to Folded"
+                        .to_string(),
                 ));
             }
         }
-        dto::ShapePriorConfig::Folded { fold_seams_at_columns } => {
-            m1::ShapePriorConfig::Folded {
-                fold_seam_columns: fold_seams_at_columns.clone(),
-            }
-        }
+        dto::ShapePriorConfig::Folded {
+            fold_seams_at_columns,
+        } => m1::ShapePriorConfig::Folded {
+            fold_seam_columns: fold_seams_at_columns.clone(),
+        },
     };
 
-    let bottom_completion = s.bottom_completion.as_ref()
+    let bottom_completion = s
+        .bottom_completion
+        .as_ref()
         .map(|bc| -> LmtResult<m1::BottomCompletion> {
             let fallback_method = match bc.fallback_method.as_str() {
                 "vertical" | "vertical_extension" => m1::FallbackMethod::Vertical,
@@ -145,7 +155,10 @@ mod tests {
         let mut screens = BTreeMap::new();
         screens.insert("MAIN".into(), screen);
         dto::ProjectConfig {
-            project: dto::ProjectMeta { name: "T".into(), unit: "mm".into() },
+            project: dto::ProjectMeta {
+                name: "T".into(),
+                unit: "mm".into(),
+            },
             screens,
             coordinate_system: dto::CoordinateSystemConfig {
                 origin_point: "MAIN_V001_R001".into(),
@@ -208,7 +221,9 @@ mod tests {
     #[test]
     fn folded_renames_seam_field() {
         let mut s = flat_screen();
-        s.shape_prior = dto::ShapePriorConfig::Folded { fold_seams_at_columns: vec![2, 4] };
+        s.shape_prior = dto::ShapePriorConfig::Folded {
+            fold_seams_at_columns: vec![2, 4],
+        };
         let cfg = base_cfg(s);
         let m = map_to_adapter(&cfg).unwrap();
         match &m.screens.get("MAIN").unwrap().shape_prior {

@@ -34,7 +34,9 @@ fn parse_args() -> Result<Args, String> {
             "--frame-strategy" => fs = iter.next(),
             "--anchor-ids" => {
                 if let Some(v) = iter.next() {
-                    for id in v.split(',') { anchors.insert(id.trim().to_string()); }
+                    for id in v.split(',') {
+                        anchors.insert(id.trim().to_string());
+                    }
                 }
             }
             "--allow-partial" => allow_partial = true,
@@ -51,14 +53,18 @@ fn parse_args() -> Result<Args, String> {
 }
 
 fn percentile(values: &mut Vec<f64>, p: f64) -> f64 {
-    if values.is_empty() { return 0.0; }
+    if values.is_empty() {
+        return 0.0;
+    }
     values.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let idx = ((values.len() as f64 - 1.0) * p).round() as usize;
     values[idx.min(values.len() - 1)]
 }
 
 fn rms(values: &[f64]) -> f64 {
-    if values.is_empty() { return 0.0; }
+    if values.is_empty() {
+        return 0.0;
+    }
     (values.iter().map(|v| v * v).sum::<f64>() / values.len() as f64).sqrt()
 }
 
@@ -80,7 +86,10 @@ fn die(msg: String) -> Box<dyn std::error::Error> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = parse_args().map_err(|e| { eprintln!("{e}"); e })?;
+    let args = parse_args().map_err(|e| {
+        eprintln!("{e}");
+        e
+    })?;
 
     let gt: MeasuredPoints = serde_json::from_str(&std::fs::read_to_string(&args.ground_truth)?)?;
     let me: MeasuredPoints = serde_json::from_str(&std::fs::read_to_string(&args.measured)?)?;
@@ -102,7 +111,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(die(format!(
             "no MeasuredPoint names matched between ground truth ({}) and measured ({}); \
              check name format — expected full IR names like MAIN_V000_R000, not numeric ArUco IDs",
-            gt.points.len(), me.points.len(),
+            gt.points.len(),
+            me.points.len(),
         )));
     }
 
@@ -115,12 +125,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let preview: Vec<&String> = unmatched_gt_names.iter().take(10).collect();
         let more = if unmatched_gt_names.len() > 10 {
             format!(" (+ {} more)", unmatched_gt_names.len() - 10)
-        } else { String::new() };
+        } else {
+            String::new()
+        };
         return Err(die(format!(
             "coverage {:.0}% ({}/{}) below {:.0}% threshold — gate metric not trustworthy. \
              Unmatched GT names: {:?}{}. Pass --allow-partial to override.",
-            coverage * 100.0, per_point.len(), gt.points.len(),
-            min_coverage * 100.0, preview, more,
+            coverage * 100.0,
+            per_point.len(),
+            gt.points.len(),
+            min_coverage * 100.0,
+            preview,
+            more,
         )));
     }
 
@@ -137,14 +153,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let names_in_measured: std::collections::HashSet<&str> =
             per_point.iter().map(|(n, _)| n.as_str()).collect();
-        let unmatched: Vec<&String> = args.anchor_ids.iter()
+        let unmatched: Vec<&String> = args
+            .anchor_ids
+            .iter()
             .filter(|a| !names_in_measured.contains(a.as_str()))
             .collect();
         if !unmatched.is_empty() {
             return Err(die(format!(
                 "{}/3 anchor name(s) not found in measured points: {:?}. \
                  Use full IR names (e.g. MAIN_V000_R000), not numeric ArUco IDs.",
-                unmatched.len(), unmatched,
+                unmatched.len(),
+                unmatched,
             )));
         }
 

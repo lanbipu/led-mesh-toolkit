@@ -44,12 +44,8 @@ fn list_after_two_runs() {
     )
     .expect("second reconstruction ok");
 
-    let listed = list_runs_for(
-        db.clone(),
-        &proj.path().display().to_string(),
-        Some("MAIN"),
-    )
-    .expect("list_runs_for ok");
+    let listed = list_runs_for(db.clone(), &proj.path().display().to_string(), Some("MAIN"))
+        .expect("list_runs_for ok");
 
     assert_eq!(listed.len(), 2, "expected 2 runs, got {}", listed.len());
 

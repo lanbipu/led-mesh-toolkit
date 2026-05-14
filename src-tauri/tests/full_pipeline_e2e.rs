@@ -30,9 +30,8 @@ fn full_user_journey_curved_flat() {
     let projects_dir = tmp.path().join("projects");
     std::fs::create_dir_all(&projects_dir).unwrap();
 
-    let project_path =
-        seed_example_to_dir(&examples_root, "curved-flat", &projects_dir)
-            .expect("seed_example_to_dir");
+    let project_path = seed_example_to_dir(&examples_root, "curved-flat", &projects_dir)
+        .expect("seed_example_to_dir");
     assert!(
         project_path.is_dir(),
         "seeded project dir should exist: {project_path:?}"
@@ -59,15 +58,18 @@ fn full_user_journey_curved_flat() {
         recent_projects::upsert(&conn, &project_path_str, "Curved Flat Demo")
             .expect("upsert recent project")
     };
-    assert!(recent.id > 0, "upserted row must have id > 0, got {}", recent.id);
+    assert!(
+        recent.id > 0,
+        "upserted row must have id > 0, got {}",
+        recent.id
+    );
     assert_eq!(recent.abs_path, project_path_str);
     assert_eq!(recent.display_name, "Curved Flat Demo");
     println!("  recent.id = {}", recent.id);
 
     // ── 4. Load project YAML ─────────────────────────────────────────────────
     println!("[Step 4] load_project_yaml_from_path");
-    let config =
-        load_project_yaml_from_path(&project_path).expect("load_project_yaml_from_path");
+    let config = load_project_yaml_from_path(&project_path).expect("load_project_yaml_from_path");
     assert_eq!(
         config.project.name, "Curved-Flat-Demo",
         "project name mismatch: {}",
@@ -233,8 +235,7 @@ fn full_user_journey_curved_flat() {
 
     // ── 10. List runs ────────────────────────────────────────────────────────
     println!("[Step 10] list_runs_for (1 run expected, last export = disguise)");
-    let runs = list_runs_for(db.clone(), &project_path_str, Some("MAIN"))
-        .expect("list_runs_for");
+    let runs = list_runs_for(db.clone(), &project_path_str, Some("MAIN")).expect("list_runs_for");
     assert_eq!(runs.len(), 1, "expected 1 run, got {}", runs.len());
     let row = &runs[0];
     assert_eq!(row.id, run_id, "row id mismatch");
@@ -287,8 +288,7 @@ fn full_user_journey_curved_flat() {
     let run_id_2 = result2.run_id;
     assert_ne!(run_id_2, run_id, "second run must have a different run_id");
 
-    let obj2_abs = run_export(db.clone(), run_id_2, "disguise")
-        .expect("export run 2 disguise");
+    let obj2_abs = run_export(db.clone(), run_id_2, "disguise").expect("export run 2 disguise");
 
     // Both OBJ files must exist (no cross-run overwrite)
     let obj1_expected = project_path
@@ -330,9 +330,7 @@ fn full_user_journey_curved_flat() {
         "run 2 (id={run_id_2}) should appear in listing"
     );
 
-    println!(
-        "  run1 id={run_id} obj ok, run2 id={run_id_2} obj ok"
-    );
+    println!("  run1 id={run_id} obj ok, run2 id={run_id_2} obj ok");
     println!("  obj2_abs = {obj2_abs}");
 
     println!("\n[PASS] All 12 steps completed — {} asserts verified.", 30);

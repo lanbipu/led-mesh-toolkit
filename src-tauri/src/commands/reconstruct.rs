@@ -15,8 +15,8 @@ pub fn run_reconstruction(
 ) -> LmtResult<ReconstructionResult> {
     // Load project.yaml to snapshot cabinet_array and weld_tolerance at this moment.
     let yaml = std::fs::read_to_string(project_path.join("project.yaml"))?;
-    let cfg: crate::dto::ProjectConfig = serde_yaml::from_str(&yaml)
-        .map_err(|e| LmtError::Yaml(format!("project.yaml: {e}")))?;
+    let cfg: crate::dto::ProjectConfig =
+        serde_yaml::from_str(&yaml).map_err(|e| LmtError::Yaml(format!("project.yaml: {e}")))?;
     let screen_cfg = cfg
         .screens
         .get(screen_id)
@@ -67,8 +67,8 @@ pub fn run_reconstruction(
         cabinet_array,
         weld_tolerance_mm,
     };
-    let json =
-        serde_json::to_vec_pretty(&report).map_err(|e| crate::error::LmtError::Yaml(format!("json: {e}")))?;
+    let json = serde_json::to_vec_pretty(&report)
+        .map_err(|e| crate::error::LmtError::Yaml(format!("json: {e}")))?;
     std::fs::write(&report_abs, json)?;
 
     let warnings_json = serde_json::to_string(&metrics.warnings)
@@ -132,8 +132,7 @@ pub fn read_run_report(db: Db, run_id: i64) -> LmtResult<serde_json::Value> {
     };
     let report_abs = PathBuf::from(&project_path).join(&report_rel);
     let bytes = std::fs::read(&report_abs)?;
-    serde_json::from_slice(&bytes)
-        .map_err(|e| crate::error::LmtError::Yaml(format!("json: {e}")))
+    serde_json::from_slice(&bytes).map_err(|e| crate::error::LmtError::Yaml(format!("json: {e}")))
 }
 
 #[tauri::command]
@@ -142,17 +141,10 @@ pub fn list_runs(
     project_path: String,
     screen_id: Option<String>,
 ) -> LmtResult<Vec<crate::dto::ReconstructionRun>> {
-    list_runs_for(
-        state.inner().clone(),
-        &project_path,
-        screen_id.as_deref(),
-    )
+    list_runs_for(state.inner().clone(), &project_path, screen_id.as_deref())
 }
 
 #[tauri::command]
-pub fn get_run_report(
-    state: tauri::State<'_, Db>,
-    run_id: i64,
-) -> LmtResult<serde_json::Value> {
+pub fn get_run_report(state: tauri::State<'_, Db>, run_id: i64) -> LmtResult<serde_json::Value> {
     read_run_report(state.inner().clone(), run_id)
 }

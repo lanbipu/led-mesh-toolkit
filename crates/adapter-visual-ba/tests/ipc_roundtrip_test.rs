@@ -64,12 +64,16 @@ fn serialize_reconstruct_input_round_trip() {
 
 #[test]
 fn measured_point_dto_into_ir_preserves_camera_count() {
-    use lmt_adapter_visual_ba::ipc::{MeasuredPointDto, PointSource, PointSourceVisualBa, Uncertainty};
+    use lmt_adapter_visual_ba::ipc::{
+        MeasuredPointDto, PointSource, PointSourceVisualBa, Uncertainty,
+    };
     let dto = MeasuredPointDto {
         name: "MAIN_V001_R002".into(),
         position: [1.0, 2.0, 3.0],
         uncertainty: Uncertainty::Isotropic(0.005),
-        source: PointSource { visual_ba: PointSourceVisualBa { camera_count: 7 } },
+        source: PointSource {
+            visual_ba: PointSourceVisualBa { camera_count: 7 },
+        },
     };
     let ir = dto.into_ir();
     assert_eq!(ir.name, "MAIN_V001_R002");
@@ -82,12 +86,16 @@ fn measured_point_dto_into_ir_preserves_camera_count() {
 
 #[test]
 fn isotropic_uncertainty_meters_to_millimeters() {
-    use lmt_adapter_visual_ba::ipc::{MeasuredPointDto, PointSource, PointSourceVisualBa, Uncertainty};
+    use lmt_adapter_visual_ba::ipc::{
+        MeasuredPointDto, PointSource, PointSourceVisualBa, Uncertainty,
+    };
     let dto = MeasuredPointDto {
         name: "x".into(),
         position: [0.0, 0.0, 0.0],
         uncertainty: Uncertainty::Isotropic(0.005), // 5mm sidecar output
-        source: PointSource { visual_ba: PointSourceVisualBa { camera_count: 1 } },
+        source: PointSource {
+            visual_ba: PointSourceVisualBa { camera_count: 1 },
+        },
     };
     let ir = dto.into_ir();
     match ir.uncertainty {
@@ -100,7 +108,9 @@ fn isotropic_uncertainty_meters_to_millimeters() {
 
 #[test]
 fn covariance_uncertainty_m2_to_mm2() {
-    use lmt_adapter_visual_ba::ipc::{MeasuredPointDto, PointSource, PointSourceVisualBa, Uncertainty};
+    use lmt_adapter_visual_ba::ipc::{
+        MeasuredPointDto, PointSource, PointSourceVisualBa, Uncertainty,
+    };
     // 1mm sigma in each axis → variance 1e-6 m² → expect 1.0 mm² after conversion
     let dto = MeasuredPointDto {
         name: "x".into(),
@@ -110,12 +120,18 @@ fn covariance_uncertainty_m2_to_mm2() {
             [0.0, 1.0e-6, 0.0],
             [0.0, 0.0, 1.0e-6],
         ]),
-        source: PointSource { visual_ba: PointSourceVisualBa { camera_count: 1 } },
+        source: PointSource {
+            visual_ba: PointSourceVisualBa { camera_count: 1 },
+        },
     };
     let ir = dto.into_ir();
     match ir.uncertainty {
         lmt_core::uncertainty::Uncertainty::Covariance3x3(m) => {
-            assert!((m[(0, 0)] - 1.0).abs() < 1e-9, "diag should be 1 mm², got {}", m[(0, 0)]);
+            assert!(
+                (m[(0, 0)] - 1.0).abs() < 1e-9,
+                "diag should be 1 mm², got {}",
+                m[(0, 0)]
+            );
             assert!((m[(1, 1)] - 1.0).abs() < 1e-9);
             assert!((m[(2, 2)] - 1.0).abs() < 1e-9);
         }

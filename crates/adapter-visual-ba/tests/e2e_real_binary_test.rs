@@ -82,8 +82,10 @@ async fn real_sidecar_generate_pattern_exercises_cv2_and_submodules() {
         Ok(_) => {
             // generate_pattern returns an empty result envelope on success.
             // The proof is the produced files.
-            assert!(out_dir.join("full_screen.png").exists(),
-                "full_screen.png not produced — cv2 likely missing from build");
+            assert!(
+                out_dir.join("full_screen.png").exists(),
+                "full_screen.png not produced — cv2 likely missing from build"
+            );
             assert!(out_dir.join("pattern_meta.json").exists());
             assert!(out_dir.join("cabinets/V000_R000.png").exists());
         }

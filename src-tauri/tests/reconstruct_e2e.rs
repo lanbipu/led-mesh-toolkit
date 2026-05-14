@@ -51,7 +51,10 @@ fn end_to_end_yaml_to_report() {
 
     assert!(result.run_id > 0);
     let report_path = proj.path().join(&result.report_json_path);
-    assert!(report_path.is_file(), "report json missing at {report_path:?}");
+    assert!(
+        report_path.is_file(),
+        "report json missing at {report_path:?}"
+    );
     let json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&report_path).unwrap()).unwrap();
     assert!(
@@ -66,7 +69,10 @@ fn end_to_end_yaml_to_report() {
     println!("run_id: {}", result.run_id);
     println!("report: {}", result.report_json_path);
     println!("method: {}", json["quality_metrics"]["method"]);
-    println!("vertices: {}", json["surface"]["vertices"].as_array().unwrap().len());
+    println!(
+        "vertices: {}",
+        json["surface"]["vertices"].as_array().unwrap().len()
+    );
 }
 
 #[test]
@@ -90,10 +96,17 @@ fn end_to_end_yaml_to_report_curved_arc() {
     )
     .expect("curved-arc reconstruct ok");
 
-    assert!(result.run_id > 0, "run_id must be > 0, got {}", result.run_id);
+    assert!(
+        result.run_id > 0,
+        "run_id must be > 0, got {}",
+        result.run_id
+    );
 
     let report_path = proj.path().join(&result.report_json_path);
-    assert!(report_path.is_file(), "report json missing at {report_path:?}");
+    assert!(
+        report_path.is_file(),
+        "report json missing at {report_path:?}"
+    );
 
     let json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&report_path).unwrap()).unwrap();

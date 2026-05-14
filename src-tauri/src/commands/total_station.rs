@@ -134,7 +134,11 @@ pub fn import_total_station_csv(
     csv_path: String,
     screen_id: String,
 ) -> LmtResult<TotalStationImportResult> {
-    run_import(Path::new(&project_abs_path), &screen_id, Path::new(&csv_path))
+    run_import(
+        Path::new(&project_abs_path),
+        &screen_id,
+        Path::new(&csv_path),
+    )
 }
 
 /// Reject screen IDs that would be unsafe to interpolate into a filename
@@ -349,9 +353,15 @@ name,x,y,z,note
         run_import(project, "MAIN", &csv).unwrap();
         assert!(project.join("measurements/measured.yaml").is_file());
         let bak = project.join("measurements/measured.yaml.bak");
-        assert!(bak.is_file(), "backup must survive as previous-version snapshot");
+        assert!(
+            bak.is_file(),
+            "backup must survive as previous-version snapshot"
+        );
         let bak_content = fs::read_to_string(&bak).unwrap();
-        assert_eq!(bak_content, first_content, ".bak should be the prior measured.yaml");
+        assert_eq!(
+            bak_content, first_content,
+            ".bak should be the prior measured.yaml"
+        );
     }
 
     #[test]
@@ -364,7 +374,8 @@ name,x,y,z,note
         let csv = project.join("measurements").join("raw.csv");
         write_csv(&csv);
 
-        let stale = "screen_id: FLOOR\ncoordinate_frame:\n  origin_world: [0.0, 0.0, 0.0]\npoints: []\n";
+        let stale =
+            "screen_id: FLOOR\ncoordinate_frame:\n  origin_world: [0.0, 0.0, 0.0]\npoints: []\n";
         fs::write(project.join("measurements/measured.yaml"), stale).unwrap();
 
         let err = run_import(project, "MAIN", &csv).unwrap_err();
@@ -388,7 +399,11 @@ name,x,y,z,note
         seed_project(project);
 
         let result = run_generate_card(project, "MAIN").unwrap();
-        assert!(result.html_content.contains("TS_Test"), "html: {}", result.html_content);
+        assert!(
+            result.html_content.contains("TS_Test"),
+            "html: {}",
+            result.html_content
+        );
         assert!(result.html_content.contains("MAIN"));
         assert_eq!(result.pdf_path, "output/instruction-MAIN.pdf");
 
@@ -411,7 +426,14 @@ name,x,y,z,note
         let project = dir.path();
         seed_project(project);
 
-        for bad in ["../escape", "MAIN/sub", "..", "", "screen with space", "MAIN;rm"] {
+        for bad in [
+            "../escape",
+            "MAIN/sub",
+            "..",
+            "",
+            "screen with space",
+            "MAIN;rm",
+        ] {
             let err = run_generate_card(project, bad).unwrap_err();
             let msg = format!("{err}").to_lowercase();
             assert!(
@@ -476,6 +498,9 @@ name,x,y,z,note
 
         // measured.yaml must still match the pre-import state.
         let restored = fs::read_to_string(project.join("measurements/measured.yaml")).unwrap();
-        assert_eq!(restored, original, "rollback must restore previous measured.yaml content");
+        assert_eq!(
+            restored, original,
+            "rollback must restore previous measured.yaml content"
+        );
     }
 }

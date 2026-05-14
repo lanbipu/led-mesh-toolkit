@@ -48,7 +48,8 @@ pub fn run_export(db: Db, run_id: i64, target: &str) -> LmtResult<String> {
     let weld_m = report.weld_tolerance_mm / 1000.0;
     let mesh = surface_to_mesh_output(&report.surface, &report.cabinet_array, target_enum, weld_m)?;
 
-    let out_rel = PathBuf::from("output").join(format!("{}_{target}_run{run_id}.obj", report.screen_id));
+    let out_rel =
+        PathBuf::from("output").join(format!("{}_{target}_run{run_id}.obj", report.screen_id));
     let out_abs = project_root.join(&out_rel);
     std::fs::create_dir_all(out_abs.parent().unwrap())?;
     write_obj(&mesh, &out_abs)?;
@@ -62,10 +63,6 @@ pub fn run_export(db: Db, run_id: i64, target: &str) -> LmtResult<String> {
 }
 
 #[tauri::command]
-pub fn export_obj(
-    state: tauri::State<'_, Db>,
-    run_id: i64,
-    target: String,
-) -> LmtResult<String> {
+pub fn export_obj(state: tauri::State<'_, Db>, run_id: i64, target: String) -> LmtResult<String> {
     run_export(state.inner().clone(), run_id, &target)
 }

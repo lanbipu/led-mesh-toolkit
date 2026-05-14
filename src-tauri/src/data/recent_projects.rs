@@ -5,11 +5,7 @@ use rusqlite::Connection;
 /// Insert or update a recent project entry.
 /// On conflict (same abs_path), updates display_name and last_opened_at.
 /// Returns the full row after the upsert.
-pub fn upsert(
-    conn: &Connection,
-    abs_path: &str,
-    display_name: &str,
-) -> LmtResult<RecentProject> {
+pub fn upsert(conn: &Connection, abs_path: &str, display_name: &str) -> LmtResult<RecentProject> {
     let now = chrono::Utc::now().to_rfc3339();
     conn.execute(
         r#"

@@ -1,8 +1,4 @@
-use lmt_core::{
-    shape::CabinetArray,
-    surface::QualityMetrics,
-    surface::ReconstructedSurface,
-};
+use lmt_core::{shape::CabinetArray, surface::QualityMetrics, surface::ReconstructedSurface};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

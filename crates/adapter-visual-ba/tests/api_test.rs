@@ -18,7 +18,10 @@ fn mock_path_with_result() -> PathBuf {
 #[tokio::test]
 async fn reconstruct_returns_ir_measured_points() {
     let _guard = ENV_LOCK.lock().unwrap();
-    env::set_var("LMT_VBA_SIDECAR_PATH", mock_path_with_result().to_str().unwrap());
+    env::set_var(
+        "LMT_VBA_SIDECAR_PATH",
+        mock_path_with_result().to_str().unwrap(),
+    );
     let project = ReconstructProject {
         screen_id: "MAIN".into(),
         coordinate_frame: CoordinateFrame {
@@ -26,7 +29,10 @@ async fn reconstruct_returns_ir_measured_points() {
             basis: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         },
         cabinet_array: CabinetArray {
-            cols: 1, rows: 1, cabinet_size_mm: [500.0, 500.0], absent_cells: vec![],
+            cols: 1,
+            rows: 1,
+            cabinet_size_mm: [500.0, 500.0],
+            absent_cells: vec![],
         },
         shape_prior: ShapePrior::Flat(FlatTag::Flat),
         frame_strategy: FrameStrategy::NominalAnchoring,
@@ -64,12 +70,14 @@ async fn reconstruct_returns_ir_measured_points() {
     env::remove_var("LMT_VBA_SIDECAR_PATH");
 }
 
-
 #[tokio::test]
 async fn invalid_basis_returns_error_not_panic() {
     use lmt_adapter_visual_ba::error::VbaError;
     let _guard = ENV_LOCK.lock().unwrap();
-    env::set_var("LMT_VBA_SIDECAR_PATH", mock_path_with_result().to_str().unwrap());
+    env::set_var(
+        "LMT_VBA_SIDECAR_PATH",
+        mock_path_with_result().to_str().unwrap(),
+    );
     let project = ReconstructProject {
         screen_id: "MAIN".into(),
         // Non-orthonormal basis: core IR validator must reject.
@@ -78,7 +86,10 @@ async fn invalid_basis_returns_error_not_panic() {
             basis: [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
         },
         cabinet_array: CabinetArray {
-            cols: 1, rows: 1, cabinet_size_mm: [500.0, 500.0], absent_cells: vec![],
+            cols: 1,
+            rows: 1,
+            cabinet_size_mm: [500.0, 500.0],
+            absent_cells: vec![],
         },
         shape_prior: ShapePrior::Flat(FlatTag::Flat),
         frame_strategy: FrameStrategy::NominalAnchoring,
@@ -91,12 +102,17 @@ async fn invalid_basis_returns_error_not_panic() {
     };
     let pattern_meta = PatternMeta {
         aruco_dict: "DICT_6X6_1000".into(),
-        markers_per_cabinet: 64, checkerboard_inner_corners: 8, cabinets: vec![],
+        markers_per_cabinet: 64,
+        checkerboard_inner_corners: 8,
+        cabinets: vec![],
     };
     let args = ReconstructArgs {
-        project, images: vec!["a.jpg".into()],
-        intrinsics, pattern_meta,
-        progress_tx: None, cancel: None,
+        project,
+        images: vec!["a.jpg".into()],
+        intrinsics,
+        pattern_meta,
+        progress_tx: None,
+        cancel: None,
     };
     let result = reconstruct(args).await;
     env::remove_var("LMT_VBA_SIDECAR_PATH");

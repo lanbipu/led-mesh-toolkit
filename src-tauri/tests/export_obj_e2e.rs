@@ -1,8 +1,8 @@
 use lmt_tauri_lib::commands::export::run_export;
 use lmt_tauri_lib::commands::reconstruct::{list_runs_for, run_reconstruction};
 use lmt_tauri_lib::data::{open_in_memory, schema};
-use std::path::PathBuf;
 use std::io::Write;
+use std::path::PathBuf;
 use tempfile::TempDir;
 
 fn copy_example(name: &str, dst: &std::path::Path) {
@@ -43,8 +43,7 @@ fn reconstruct_then_export_writes_obj() {
     )
     .expect("reconstruction should succeed");
 
-    let obj_path = run_export(db.clone(), r.run_id, "disguise")
-        .expect("export should succeed");
+    let obj_path = run_export(db.clone(), r.run_id, "disguise").expect("export should succeed");
 
     assert!(
         std::path::Path::new(&obj_path).is_file(),
@@ -104,10 +103,10 @@ fn two_runs_same_target_no_overwrite() {
     )
     .expect("second reconstruction should succeed");
 
-    let path_1 = run_export(db.clone(), r1.run_id, "disguise")
-        .expect("first export should succeed");
-    let path_2 = run_export(db.clone(), r2.run_id, "disguise")
-        .expect("second export should succeed");
+    let path_1 =
+        run_export(db.clone(), r1.run_id, "disguise").expect("first export should succeed");
+    let path_2 =
+        run_export(db.clone(), r2.run_id, "disguise").expect("second export should succeed");
 
     assert_ne!(path_1, path_2, "two runs must produce different OBJ paths");
     assert!(
@@ -120,12 +119,8 @@ fn two_runs_same_target_no_overwrite() {
     );
 
     // Verify DB rows point to their respective paths
-    let runs = list_runs_for(
-        db.clone(),
-        proj.path().to_str().unwrap(),
-        Some("MAIN"),
-    )
-    .expect("list_runs_for should succeed");
+    let runs = list_runs_for(db.clone(), proj.path().to_str().unwrap(), Some("MAIN"))
+        .expect("list_runs_for should succeed");
 
     let row_1 = runs
         .iter()
@@ -137,12 +132,20 @@ fn two_runs_same_target_no_overwrite() {
         .expect("run 2 should appear in listing");
 
     assert!(
-        row_1.output_obj_path.as_deref().map(|p| path_1.ends_with(p)).unwrap_or(false),
+        row_1
+            .output_obj_path
+            .as_deref()
+            .map(|p| path_1.ends_with(p))
+            .unwrap_or(false),
         "DB row for run1 should point to path_1, got: {:?}",
         row_1.output_obj_path
     );
     assert!(
-        row_2.output_obj_path.as_deref().map(|p| path_2.ends_with(p)).unwrap_or(false),
+        row_2
+            .output_obj_path
+            .as_deref()
+            .map(|p| path_2.ends_with(p))
+            .unwrap_or(false),
         "DB row for run2 should point to path_2, got: {:?}",
         row_2.output_obj_path
     );
@@ -172,7 +175,10 @@ fn export_uses_snapshot_after_project_yaml_changed() {
     let yaml_path = proj.path().join("project.yaml");
     let original_yaml = std::fs::read_to_string(&yaml_path).unwrap();
     let mutated_yaml = original_yaml.replace("cabinet_count: [8, 4]", "cabinet_count: [12, 6]");
-    assert_ne!(original_yaml, mutated_yaml, "yaml mutation must have taken effect");
+    assert_ne!(
+        original_yaml, mutated_yaml,
+        "yaml mutation must have taken effect"
+    );
     {
         let mut f = std::fs::OpenOptions::new()
             .write(true)
