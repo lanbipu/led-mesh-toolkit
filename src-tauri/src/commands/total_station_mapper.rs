@@ -2,6 +2,11 @@
 //!
 //! 两边各自的 schema 独立演进（GUI 偏面向 UI，adapter 偏面向算法）。
 //! 这个模块是唯一的桥。
+//!
+//! Pre-existing inconsistency（不在本 task 范围）：GUI `CabinetGrid.vue` 用 1-based
+//! cell coords 存 `irregular_mask`，但 `core::shape::CabinetArray::absent_cells` 注释
+//! 是 0-based。`src-tauri/src/commands/export.rs` 也照 0-based 直传。本 mapper 保持
+//! 跟 export.rs 同步（pass-through 当 0-based），等 M0.3 统一修。
 
 use lmt_adapter_total_station::project as m1;
 
@@ -26,8 +31,39 @@ pub fn map_to_adapter(cfg: &dto::ProjectConfig) -> LmtResult<m1::ProjectConfig> 
         },
     };
 
+    // M1 validate first — catches no-screens, bad cabinet dims, distinct refs,
+    // etc. with adapter-authored messages.
     m1_cfg.validate().map_err(LmtError::from)?;
+
+    // Then the GUI-side extra check: grid names must use a known screen ID
+    // as prefix. M1 validate doesn't parse names, so this catches typos /
+    // wrong-screen refs that would otherwise blow up later in builder.
+    let screen_ids: Vec<&str> = cfg.screens.keys().map(String::as_str).collect();
+    for (label, name) in [
+        ("origin_point", &cfg.coordinate_system.origin_point),
+        ("x_axis_point", &cfg.coordinate_system.x_axis_point),
+        ("xy_plane_point", &cfg.coordinate_system.xy_plane_point),
+    ] {
+        check_grid_name_prefix(label, name, &screen_ids)?;
+    }
+
     Ok(m1_cfg)
+}
+
+fn check_grid_name_prefix(label: &str, name: &str, screen_ids: &[&str]) -> LmtResult<()> {
+    if !screen_ids.iter().any(|sid| {
+        name.starts_with(sid)
+            && name.len() > sid.len()
+            && name.as_bytes()[sid.len()] == b'_'
+            && name.contains("_V")
+            && name.contains("_R")
+    }) {
+        return Err(LmtError::InvalidInput(format!(
+            "coordinate_system.{label} = {name:?} does not look like \
+             '<screen_id>_V###_R###' for any screen in this project (known: {screen_ids:?})"
+        )));
+    }
+    Ok(())
 }
 
 fn map_screen(s: &dto::ScreenConfig) -> LmtResult<m1::ScreenConfig> {
@@ -51,16 +87,33 @@ fn map_screen(s: &dto::ScreenConfig) -> LmtResult<m1::ScreenConfig> {
         }
     };
 
-    let bottom_completion = s.bottom_completion.as_ref().map(|bc| m1::BottomCompletion {
-        lowest_measurable_row: bc.lowest_measurable_row,
-        fallback_method: m1::FallbackMethod::Vertical,
-    });
+    let bottom_completion = s.bottom_completion.as_ref()
+        .map(|bc| -> LmtResult<m1::BottomCompletion> {
+            let fallback_method = match bc.fallback_method.as_str() {
+                "vertical" | "vertical_extension" => m1::FallbackMethod::Vertical,
+                other => {
+                    return Err(LmtError::InvalidInput(format!(
+                        "bottom_completion.fallback_method {other:?} is not supported; \
+                         M1 currently accepts vertical / vertical_extension"
+                    )));
+                }
+            };
+            Ok(m1::BottomCompletion {
+                lowest_measurable_row: bc.lowest_measurable_row,
+                fallback_method,
+            })
+        })
+        .transpose()?;
 
-    let absent_cells = s
-        .irregular_mask
-        .iter()
-        .map(|c| (c[0], c[1]))
-        .collect::<Vec<_>>();
+    // Mirror export.rs behavior: Rectangle ignores irregular_mask (treated as stale).
+    let absent_cells = match s.shape_mode {
+        dto::ShapeMode::Rectangle => vec![],
+        dto::ShapeMode::Irregular => s
+            .irregular_mask
+            .iter()
+            .map(|c| (c[0], c[1]))
+            .collect::<Vec<_>>(),
+    };
 
     Ok(m1::ScreenConfig {
         cabinet_count: s.cabinet_count,
@@ -207,5 +260,68 @@ mod tests {
             .as_ref()
             .unwrap();
         assert_eq!(bc.lowest_measurable_row, 2);
+    }
+
+    #[test]
+    fn bottom_completion_accepts_vertical_extension_alias() {
+        // GUI default writes "vertical_extension"; M1 only has Vertical.
+        let mut s = flat_screen();
+        s.bottom_completion = Some(dto::BottomCompletionConfig {
+            lowest_measurable_row: 2,
+            fallback_method: "vertical_extension".into(),
+            assumed_height_mm: 0.0,
+        });
+        let cfg = base_cfg(s);
+        let m = map_to_adapter(&cfg).unwrap();
+        assert!(m.screens.get("MAIN").unwrap().bottom_completion.is_some());
+    }
+
+    #[test]
+    fn bottom_completion_unknown_method_returns_error() {
+        let mut s = flat_screen();
+        s.bottom_completion = Some(dto::BottomCompletionConfig {
+            lowest_measurable_row: 2,
+            fallback_method: "telepathy".into(),
+            assumed_height_mm: 0.0,
+        });
+        let cfg = base_cfg(s);
+        let err = map_to_adapter(&cfg).unwrap_err();
+        let msg = format!("{err}").to_lowercase();
+        assert!(msg.contains("telepathy"), "got: {err}");
+        assert!(msg.contains("vertical"), "got: {err}");
+    }
+
+    #[test]
+    fn rectangle_with_stale_mask_drops_mask() {
+        // export.rs already ignores irregular_mask under Rectangle;
+        // mapper must mirror that to avoid feeding stale entries to M1.
+        let mut s = flat_screen();
+        s.shape_mode = dto::ShapeMode::Rectangle;
+        s.irregular_mask = vec![[0, 0], [3, 1]];
+        let cfg = base_cfg(s);
+        let m = map_to_adapter(&cfg).unwrap();
+        assert!(
+            m.screens.get("MAIN").unwrap().absent_cells.is_empty(),
+            "rectangle screens must not forward stale mask"
+        );
+    }
+
+    #[test]
+    fn coord_ref_must_match_known_screen_prefix() {
+        let mut cfg = base_cfg(flat_screen());
+        // Project only has MAIN; refs reference a non-existent FLOOR screen.
+        cfg.coordinate_system.origin_point = "FLOOR_V001_R001".into();
+        let err = map_to_adapter(&cfg).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("origin_point"), "got: {err}");
+        assert!(msg.contains("FLOOR"), "got: {err}");
+    }
+
+    #[test]
+    fn coord_ref_malformed_grid_name_returns_error() {
+        let mut cfg = base_cfg(flat_screen());
+        cfg.coordinate_system.x_axis_point = "MAIN_garbage".into();
+        let err = map_to_adapter(&cfg).unwrap_err();
+        assert!(format!("{err}").contains("x_axis_point"), "got: {err}");
     }
 }
