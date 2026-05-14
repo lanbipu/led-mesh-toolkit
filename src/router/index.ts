@@ -12,6 +12,7 @@ import Import from "@/views/Import.vue";
 import Instruct from "@/views/Instruct.vue";
 import Charuco from "@/views/Charuco.vue";
 import Photoplan from "@/views/Photoplan.vue";
+import Method from "@/views/Method.vue";
 
 export const routes: RouteRecordRaw[] = [
   { path: "/", name: "home", component: Home },
@@ -19,6 +20,12 @@ export const routes: RouteRecordRaw[] = [
     path: "/projects/:id/design",
     name: "design",
     component: Design,
+    props: true,
+  },
+  {
+    path: "/projects/:id/method",
+    name: "method",
+    component: Method,
     props: true,
   },
   {
