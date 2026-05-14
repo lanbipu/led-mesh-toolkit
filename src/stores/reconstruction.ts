@@ -1,6 +1,11 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { tauriApi, type ReconstructedSurface, type ReconstructionRun } from "@/services/tauri";
+import {
+  tauriApi,
+  type ReconstructedSurface,
+  type ReconstructionRun,
+  type TotalStationImportResult,
+} from "@/services/tauri";
 
 export const useReconstructionStore = defineStore("reconstruction", () => {
   const measurementsPath = ref<string | null>(null);
@@ -8,11 +13,16 @@ export const useReconstructionStore = defineStore("reconstruction", () => {
   const currentRunId = ref<number | null>(null);
   const status = ref<"idle" | "running" | "done" | "error">("idle");
   const recentRuns = ref<ReconstructionRun[]>([]);
+  const importReport = ref<TotalStationImportResult | null>(null);
 
   const canReconstruct = computed(() => measurementsPath.value !== null);
 
   function setMeasurementsPath(path: string) {
     measurementsPath.value = path;
+  }
+
+  function setImportReport(r: TotalStationImportResult | null) {
+    importReport.value = r;
   }
 
   async function reconstruct(projectPath: string, screenId: string) {
@@ -45,8 +55,10 @@ export const useReconstructionStore = defineStore("reconstruction", () => {
     currentRunId,
     status,
     recentRuns,
+    importReport,
     canReconstruct,
     setMeasurementsPath,
+    setImportReport,
     reconstruct,
     exportObj,
     loadRuns,

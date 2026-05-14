@@ -98,6 +98,21 @@ export interface MeasuredPoints {
 
 export type LmtError = { kind: string; message: string };
 
+export interface TotalStationImportResult {
+  measurementsYamlPath: string;
+  reportJsonPath: string;
+  measuredCount: number;
+  fabricatedCount: number;
+  outlierCount: number;
+  missingCount: number;
+  warnings: string[];
+}
+
+export interface InstructionCardResult {
+  htmlContent: string;
+  pdfPath: string;
+}
+
 export const tauriApi = {
   listRecentProjects: () => invoke<RecentProject[]>("list_recent_projects"),
   addRecentProject: (absPath: string, displayName: string) =>
@@ -121,4 +136,12 @@ export const tauriApi = {
   listRuns: (projectPath: string, screenId?: string) =>
     invoke<ReconstructionRun[]>("list_runs", { projectPath, screenId }),
   getRunReport: (runId: number) => invoke<unknown>("get_run_report", { runId }),
+  importTotalStationCsv: (projectAbsPath: string, csvPath: string, screenId: string) =>
+    invoke<TotalStationImportResult>("import_total_station_csv", {
+      projectAbsPath,
+      csvPath,
+      screenId,
+    }),
+  generateInstructionCard: (projectAbsPath: string, screenId: string) =>
+    invoke<InstructionCardResult>("generate_instruction_card", { projectAbsPath, screenId }),
 };
