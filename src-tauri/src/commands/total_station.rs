@@ -5,13 +5,15 @@
 use std::path::Path;
 
 use lmt_adapter_total_station::{
-    builder::build_screen_measured_points_with_outcome, csv_parser::parse_csv,
+    builder::build_screen_measured_points_with_outcome,
+    csv_parser::parse_csv,
+    instruction_card::{html::generate_html, pdf::generate_pdf, InstructionCard},
     report_builder::build_screen_report,
 };
 
 use crate::commands::projects::load_project_yaml_from_path;
 use crate::commands::total_station_mapper::map_to_adapter;
-use crate::dto::TotalStationImportResult;
+use crate::dto::{InstructionCardResult, TotalStationImportResult};
 use crate::error::{LmtError, LmtResult};
 
 /// 把 `csv_path` 的 Trimble CSV 转成 `{project}/measurements/measured.yaml`，
@@ -133,6 +135,51 @@ pub fn import_total_station_csv(
     screen_id: String,
 ) -> LmtResult<TotalStationImportResult> {
     run_import(Path::new(&project_abs_path), &screen_id, Path::new(&csv_path))
+}
+
+/// Generate an instruction card (HTML + PDF) for one screen, derived from the
+/// GUI project.yaml. HTML is returned inline (for iframe srcdoc preview);
+/// PDF is written under `{project}/output/instruction-{screen_id}.pdf`.
+pub fn run_generate_card(
+    project_abs_path: &Path,
+    screen_id: &str,
+) -> LmtResult<InstructionCardResult> {
+    let gui_cfg = load_project_yaml_from_path(project_abs_path)?;
+    let m1_cfg = map_to_adapter(&gui_cfg)?;
+    let screen_cfg = m1_cfg
+        .screens
+        .get(screen_id)
+        .ok_or_else(|| LmtError::NotFound(format!("screen '{screen_id}' not in project")))?;
+
+    let card = InstructionCard {
+        project_name: m1_cfg.project.name.clone(),
+        screen_id: screen_id.to_string(),
+        cfg: screen_cfg.clone(),
+        origin_grid_name: m1_cfg.coordinate_system.origin_grid_name.clone(),
+        x_axis_grid_name: m1_cfg.coordinate_system.x_axis_grid_name.clone(),
+        xy_plane_grid_name: m1_cfg.coordinate_system.xy_plane_grid_name.clone(),
+    };
+
+    let html_content = generate_html(&card);
+
+    let output_dir = project_abs_path.join("output");
+    std::fs::create_dir_all(&output_dir)?;
+    let pdf_filename = format!("instruction-{screen_id}.pdf");
+    let pdf_abs = output_dir.join(&pdf_filename);
+    generate_pdf(&card, &pdf_abs)?;
+
+    Ok(InstructionCardResult {
+        html_content,
+        pdf_path: format!("output/{pdf_filename}"),
+    })
+}
+
+#[tauri::command]
+pub fn generate_instruction_card(
+    project_abs_path: String,
+    screen_id: String,
+) -> LmtResult<InstructionCardResult> {
+    run_generate_card(Path::new(&project_abs_path), &screen_id)
 }
 
 #[cfg(test)]
@@ -295,6 +342,30 @@ name,x,y,z,note
             !project.join("measurements/measured.yaml.bak").is_file(),
             "no backup should have been created when import was refused"
         );
+    }
+
+    #[test]
+    fn generate_card_returns_html_and_writes_pdf() {
+        let dir = tempdir().unwrap();
+        let project = dir.path();
+        seed_project(project);
+
+        let result = run_generate_card(project, "MAIN").unwrap();
+        assert!(result.html_content.contains("TS_Test"), "html: {}", result.html_content);
+        assert!(result.html_content.contains("MAIN"));
+        assert_eq!(result.pdf_path, "output/instruction-MAIN.pdf");
+
+        let pdf_bytes = fs::read(project.join("output/instruction-MAIN.pdf")).unwrap();
+        assert!(pdf_bytes.starts_with(b"%PDF-"), "missing PDF magic header");
+    }
+
+    #[test]
+    fn generate_card_fails_for_unknown_screen() {
+        let dir = tempdir().unwrap();
+        let project = dir.path();
+        seed_project(project);
+        let err = run_generate_card(project, "FLOOR").unwrap_err();
+        assert!(format!("{err}").contains("FLOOR"), "got: {err}");
     }
 
     #[test]
