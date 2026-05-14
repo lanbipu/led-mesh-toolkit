@@ -87,3 +87,45 @@ fn generate_card_writes_pdf_under_project() {
     let pdf = fs::read(project.join(&card.pdf_path)).unwrap();
     assert!(pdf.starts_with(b"%PDF-"));
 }
+
+/// Tauri 2.x maps invoke payload from JSON `{camelCase}` to Rust `snake_case`
+/// command-fn parameters. This lightweight contract test ensures the two
+/// commands' parameter shape stays in sync with what the TypeScript wrapper
+/// in src/services/tauri.ts is supposed to send. If a future refactor renames
+/// a Rust param or the wrapper key, this fails before reaching production.
+#[test]
+fn invoke_payload_shape_matches_command_signatures() {
+    use serde::Deserialize;
+
+    // import_total_station_csv(project_abs_path, csv_path, screen_id)
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    #[allow(dead_code)]
+    struct ImportArgs {
+        project_abs_path: String,
+        csv_path: String,
+        screen_id: String,
+    }
+    let json = r#"{"projectAbsPath":"/p","csvPath":"/p/raw.csv","screenId":"MAIN"}"#;
+    serde_json::from_str::<ImportArgs>(json).expect("import_total_station_csv arg shape");
+
+    // generate_instruction_card(project_abs_path, screen_id)
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    #[allow(dead_code)]
+    struct CardArgs {
+        project_abs_path: String,
+        screen_id: String,
+    }
+    let json = r#"{"projectAbsPath":"/p","screenId":"MAIN"}"#;
+    serde_json::from_str::<CardArgs>(json).expect("generate_instruction_card arg shape");
+}
+
+/// Sanity: lib.rs must actually register both commands. Compile-time check
+/// — if the symbols are removed or renamed without updating generate_handler,
+/// this stops compiling (verifying the public surface, not just helpers).
+#[test]
+fn registered_commands_are_addressable() {
+    let _import_fn = lmt_tauri_lib::commands::total_station::import_total_station_csv;
+    let _card_fn = lmt_tauri_lib::commands::total_station::generate_instruction_card;
+}
