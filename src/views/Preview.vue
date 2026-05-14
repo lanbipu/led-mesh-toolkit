@@ -7,6 +7,7 @@ import { useReconstructionStore } from "@/stores/reconstruction";
 import { useUiStore } from "@/stores/ui";
 import LmtPageHeader from "@/components/primitives/LmtPageHeader.vue";
 import LmtIcon from "@/components/primitives/LmtIcon.vue";
+import LmtMethodMismatchBanner from "@/components/shell/LmtMethodMismatchBanner.vue";
 import PreviewToolbar from "@/components/preview/PreviewToolbar.vue";
 import MeshPreview from "@/components/preview/MeshPreview.vue";
 
@@ -32,6 +33,7 @@ onMounted(async () => {
 <template>
   <div class="flex h-full flex-col">
     <div class="px-6 pb-2 pt-5">
+      <LmtMethodMismatchBanner expects="any" />
       <LmtPageHeader
         :eyebrow="t('preview.eyebrow')"
         :title="t('preview.title')"

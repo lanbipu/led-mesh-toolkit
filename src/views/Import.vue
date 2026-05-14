@@ -11,6 +11,7 @@ import LmtPageHeader from "@/components/primitives/LmtPageHeader.vue";
 import LmtIcon from "@/components/primitives/LmtIcon.vue";
 import LmtStatusBadge from "@/components/primitives/LmtStatusBadge.vue";
 import LmtKV from "@/components/primitives/LmtKV.vue";
+import LmtMethodMismatchBanner from "@/components/shell/LmtMethodMismatchBanner.vue";
 import Button from "@/components/ui/Button.vue";
 
 const { t } = useI18n();
@@ -110,6 +111,7 @@ async function loadCsv() {
 
 <template>
   <div class="flex h-full flex-col gap-6 p-6">
+    <LmtMethodMismatchBanner expects="m1" />
     <LmtPageHeader
       :eyebrow="t('import.eyebrow')"
       :title="t('import.title')"

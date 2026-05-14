@@ -9,6 +9,7 @@ import { tauriApi } from "@/services/tauri";
 import LmtPageHeader from "@/components/primitives/LmtPageHeader.vue";
 import LmtIcon from "@/components/primitives/LmtIcon.vue";
 import LmtStatusBadge from "@/components/primitives/LmtStatusBadge.vue";
+import LmtMethodMismatchBanner from "@/components/shell/LmtMethodMismatchBanner.vue";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -62,6 +63,7 @@ onMounted(load);
 
 <template>
   <div class="flex h-full flex-col gap-6 p-6">
+    <LmtMethodMismatchBanner expects="any" />
     <LmtPageHeader
       :eyebrow="t('runs.eyebrow')"
       :title="t('runs.title')"
