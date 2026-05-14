@@ -69,9 +69,9 @@ pub struct InstructionCardResult {
 
 **路径约定：**
 - 输入 CSV：用户在 dialog 里选，任意位置
-- 输出 `measured.yaml`：`{project_abs_path}/measurements/measured.yaml`（**覆盖**已有的）
+- 输出 `measured.yaml`：`{project_abs_path}/measurements/measured.yaml`（**覆盖**已有的，但保留 `.bak`）
 - 输出 import report：`{project_abs_path}/measurements/import_report.json`
-- 输出 PDF：`{project_abs_path}/output/instruction.pdf`
+- 输出 PDF：`{project_abs_path}/output/instruction-{screen_id}.pdf`（**实施时升级为按 screen 分文件**；plan 原计划是 `instruction.pdf`，commit `839c37e` 改为含 screen_id 是为了 future-proof 多屏 + filename-safety）
 - HTML 不落盘（前端 iframe 直接渲染）
 
 ---
