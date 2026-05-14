@@ -81,7 +81,9 @@ async function mountWith(method: "m1" | "m2" | null) {
 }
 
 describe("Method.vue", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("renders both method cards with bullets", async () => {
     const w = await mountWith(null);
