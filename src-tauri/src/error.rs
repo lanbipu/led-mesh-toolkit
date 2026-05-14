@@ -53,7 +53,17 @@ impl From<lmt_core::CoreError> for LmtError {
 
 impl From<lmt_adapter_total_station::AdapterError> for LmtError {
     fn from(e: lmt_adapter_total_station::AdapterError) -> Self {
-        Self::Other(format!("{e}"))
+        use lmt_adapter_total_station::AdapterError as A;
+        match e {
+            A::InvalidInput(s) => Self::InvalidInput(s),
+            A::Csv(err) => Self::InvalidInput(format!("csv: {err}")),
+            A::Yaml(err) => Self::Yaml(err.to_string()),
+            A::Json(err) => Self::Yaml(format!("json: {err}")),
+            A::Io(err) => Self::Io(err.to_string()),
+            A::Core(err) => Self::Core(err.to_string()),
+            A::Pdf(s) => Self::Other(format!("pdf: {s}")),
+            other => Self::Other(other.to_string()),
+        }
     }
 }
 
@@ -76,12 +86,32 @@ mod tests {
     }
 
     #[test]
-    fn adapter_error_converts_to_lmt_error() {
+    fn adapter_invalid_input_maps_to_invalid_input_with_kind() {
         use lmt_adapter_total_station::AdapterError;
-        let adapter_err = AdapterError::InvalidInput("bad csv row".into());
-        let lmt_err: LmtError = adapter_err.into();
-        let s = format!("{lmt_err}");
-        assert!(s.contains("bad csv row"), "got: {s}");
-        assert!(matches!(lmt_err, LmtError::Other(_)));
+        let lmt: LmtError = AdapterError::InvalidInput("bad row".into()).into();
+        assert!(matches!(lmt, LmtError::InvalidInput(_)));
+        let json = serde_json::to_string(&lmt).unwrap();
+        assert!(json.contains(r#""kind":"invalid_input""#), "got: {json}");
+        assert!(json.contains("bad row"), "got: {json}");
+    }
+
+    #[test]
+    fn adapter_io_maps_to_io_with_kind() {
+        use lmt_adapter_total_station::AdapterError;
+        let io = std::io::Error::new(std::io::ErrorKind::NotFound, "missing.csv");
+        let lmt: LmtError = AdapterError::Io(io).into();
+        assert!(matches!(lmt, LmtError::Io(_)));
+        let json = serde_json::to_string(&lmt).unwrap();
+        assert!(json.contains(r#""kind":"io""#), "got: {json}");
+    }
+
+    #[test]
+    fn adapter_pdf_maps_to_other_with_pdf_prefix() {
+        use lmt_adapter_total_station::AdapterError;
+        let lmt: LmtError = AdapterError::Pdf("layout failure".into()).into();
+        assert!(matches!(lmt, LmtError::Other(_)));
+        let json = serde_json::to_string(&lmt).unwrap();
+        assert!(json.contains(r#""kind":"other""#));
+        assert!(json.contains("pdf: layout failure"), "got: {json}");
     }
 }
