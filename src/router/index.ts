@@ -6,7 +6,6 @@ import {
 import Home from "@/views/Home.vue";
 import Design from "@/views/Design.vue";
 import Preview from "@/views/Preview.vue";
-import Export from "@/views/Export.vue";
 import Runs from "@/views/Runs.vue";
 import Import from "@/views/Import.vue";
 import Instruct from "@/views/Instruct.vue";
@@ -32,12 +31,6 @@ export const routes: RouteRecordRaw[] = [
     path: "/projects/:id/preview",
     name: "preview",
     component: Preview,
-    props: true,
-  },
-  {
-    path: "/projects/:id/export",
-    name: "export",
-    component: Export,
     props: true,
   },
   {
@@ -70,6 +63,7 @@ export const routes: RouteRecordRaw[] = [
     component: Photoplan,
     props: true,
   },
+  { path: "/:pathMatch(.*)*", name: "not-found", redirect: "/" },
 ];
 
 export default createRouter({
