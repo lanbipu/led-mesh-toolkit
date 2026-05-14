@@ -173,9 +173,23 @@ pub fn run_generate_card(
     })
 }
 
+/// Append `.pdf` if the path doesn't already end with that extension
+/// (case-insensitive). Users who skip the dialog's filter and type
+/// `report` should still get a usable PDF file.
+fn ensure_pdf_extension(p: &Path) -> std::path::PathBuf {
+    match p.extension() {
+        Some(ext) if ext.eq_ignore_ascii_case("pdf") => p.to_path_buf(),
+        _ => {
+            let mut buf = p.as_os_str().to_os_string();
+            buf.push(".pdf");
+            std::path::PathBuf::from(buf)
+        }
+    }
+}
+
 /// Render the instruction card PDF to a user-chosen absolute path.
-/// Atomic: writes to `<dst>.tmp` first, then renames; cleans up the tmp on failure.
-/// Returns the destination path string on success.
+/// Atomic: writes to a sibling `<dst>.<pid>.tmp` first, then renames;
+/// cleans up the tmp on failure. Returns the final destination on success.
 pub fn run_save_pdf(
     project_abs_path: &Path,
     screen_id: &str,
@@ -186,24 +200,34 @@ pub fn run_save_pdf(
             "destination PDF path must not be empty".into(),
         ));
     }
-    if let Some(parent) = dst_pdf_path.parent() {
+
+    // Build card BEFORE touching the filesystem, so a bad project.yaml /
+    // missing screen doesn't leave empty parent dirs behind.
+    let card = build_card(project_abs_path, screen_id)?;
+
+    let dst = ensure_pdf_extension(dst_pdf_path);
+    if let Some(parent) = dst.parent() {
         if !parent.as_os_str().is_empty() && !parent.is_dir() {
             std::fs::create_dir_all(parent)?;
         }
     }
 
-    let card = build_card(project_abs_path, screen_id)?;
+    // Sibling tmp with PID suffix — never collides with an unrelated
+    // `*.pdf.tmp` the user might happen to have, and stays on the same
+    // filesystem so the final rename is atomic on POSIX.
+    let mut tmp_os = dst.as_os_str().to_os_string();
+    tmp_os.push(format!(".{}.tmp", std::process::id()));
+    let tmp = std::path::PathBuf::from(tmp_os);
 
-    let tmp = dst_pdf_path.with_extension("pdf.tmp");
     if let Err(e) = generate_pdf(&card, &tmp) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.into());
     }
-    if let Err(e) = std::fs::rename(&tmp, dst_pdf_path) {
+    if let Err(e) = std::fs::rename(&tmp, &dst) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.into());
     }
-    Ok(dst_pdf_path.display().to_string())
+    Ok(dst.display().to_string())
 }
 
 #[tauri::command]
@@ -484,19 +508,62 @@ name,x,y,z,note
     }
 
     #[test]
+    fn save_pdf_appends_missing_extension() {
+        let dir = tempdir().unwrap();
+        let project = dir.path();
+        seed_project(project);
+
+        // User types "report" with no extension — backend should append .pdf.
+        let dst_no_ext = dir.path().join("report");
+        let written = run_save_pdf(project, "MAIN", &dst_no_ext).unwrap();
+        assert!(written.ends_with(".pdf"), "got: {written}");
+        let actual = dir.path().join("report.pdf");
+        assert!(actual.is_file());
+        let head = fs::read(&actual).unwrap();
+        assert!(head.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn save_pdf_does_not_create_dirs_on_invalid_project() {
+        // Test that mkdir doesn't happen if build_card fails (e.g. unknown screen).
+        let dir = tempdir().unwrap();
+        let project = dir.path();
+        seed_project(project);
+
+        let dst = dir.path().join("would_be_created/deeper/x.pdf");
+        let err = run_save_pdf(project, "FLOOR", &dst).unwrap_err();
+        assert!(format!("{err}").contains("FLOOR"), "got: {err}");
+        assert!(
+            !dir.path().join("would_be_created").exists(),
+            "parent dirs must not be created when build_card fails"
+        );
+    }
+
+    #[test]
     fn save_pdf_overwrites_existing_atomically() {
         let dir = tempdir().unwrap();
         let project = dir.path();
         seed_project(project);
 
+        // Pre-populate the destination with sentinel bytes to verify the
+        // second write actually replaces them (not just no-ops).
         let dst = dir.path().join("out.pdf");
-        run_save_pdf(project, "MAIN", &dst).unwrap();
-        assert!(dst.is_file());
+        fs::write(&dst, b"OLD-CONTENT-NOT-A-PDF").unwrap();
 
         run_save_pdf(project, "MAIN", &dst).unwrap();
+        let bytes = fs::read(&dst).unwrap();
+        assert!(
+            bytes.starts_with(b"%PDF-"),
+            "stale content was kept: {:?}",
+            &bytes[..8]
+        );
+
+        // Second write also goes through atomically; no .tmp left over.
+        run_save_pdf(project, "MAIN", &dst).unwrap();
         assert!(dst.is_file());
-        let tmp = dst.with_extension("pdf.tmp");
-        assert!(!tmp.exists(), "leftover .tmp");
+        let pid_tmp =
+            std::path::PathBuf::from(format!("{}.{}.tmp", dst.display(), std::process::id()));
+        assert!(!pid_tmp.exists(), "leftover .tmp at {pid_tmp:?}");
     }
 
     #[test]

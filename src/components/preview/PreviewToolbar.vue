@@ -71,7 +71,10 @@ async function exportNow(target: string) {
   const snapshotId = proj.id;
   const snapshotAbsPath = proj.absPath;
   try {
-    const defaultPath = `${snapshotAbsPath}/output/MAIN_${target}_run${recon.currentRunId}.obj`;
+    // Pull the active screen id from project config (M1.1 single-screen → first key);
+    // matches what reconstruct/export stored, so the default filename lines up.
+    const screen = Object.keys(proj.config?.screens ?? {})[0] ?? "MAIN";
+    const defaultPath = `${snapshotAbsPath}/output/${screen}_${target}_run${recon.currentRunId}.obj`;
     const dst = await saveDialog({
       title: t("preview.exportPickPath"),
       defaultPath,

@@ -200,3 +200,103 @@ fn export_uses_snapshot_after_project_yaml_changed() {
     assert!(content.contains("v "), "OBJ should have vertex lines");
     assert!(content.contains("f "), "OBJ should have face lines");
 }
+
+#[test]
+fn export_with_explicit_dst_path_writes_to_chosen_location() {
+    // User-chosen path INSIDE project root → DB records project-relative path.
+    let proj = TempDir::new().unwrap();
+    copy_example("curved-flat", proj.path());
+
+    let db = open_in_memory().unwrap();
+    {
+        let mut c = db.lock().unwrap();
+        schema::migrate(&mut c).unwrap();
+    }
+
+    let r = run_reconstruction(
+        db.clone(),
+        proj.path(),
+        "MAIN",
+        "measurements/measured.yaml",
+    )
+    .unwrap();
+
+    let chosen = proj.path().join("custom-folder").join("my-mesh.obj");
+    let written = run_export(db.clone(), r.run_id, "disguise", Some(&chosen)).unwrap();
+    assert_eq!(written, chosen.display().to_string());
+    assert!(chosen.is_file(), "OBJ should be at chosen path");
+
+    // DB should record a project-relative path (since chosen is under project root).
+    let runs = list_runs_for(db.clone(), &proj.path().display().to_string(), Some("MAIN")).unwrap();
+    let row = runs.iter().find(|r2| r2.id == r.run_id).unwrap();
+    assert_eq!(
+        row.output_obj_path.as_deref(),
+        Some("custom-folder/my-mesh.obj"),
+        "DB should record project-relative path; got {:?}",
+        row.output_obj_path
+    );
+}
+
+#[test]
+fn export_appends_obj_extension_if_missing() {
+    let proj = TempDir::new().unwrap();
+    copy_example("curved-flat", proj.path());
+
+    let db = open_in_memory().unwrap();
+    {
+        let mut c = db.lock().unwrap();
+        schema::migrate(&mut c).unwrap();
+    }
+
+    let r = run_reconstruction(
+        db.clone(),
+        proj.path(),
+        "MAIN",
+        "measurements/measured.yaml",
+    )
+    .unwrap();
+
+    // User typed "mymesh" with no extension.
+    let chosen = proj.path().join("mymesh");
+    let written = run_export(db.clone(), r.run_id, "disguise", Some(&chosen)).unwrap();
+    assert!(written.ends_with(".obj"), "got: {written}");
+    assert!(
+        proj.path().join("mymesh.obj").is_file(),
+        "OBJ at extended path missing"
+    );
+}
+
+#[test]
+fn export_to_path_outside_project_records_absolute() {
+    // User picks a path on Desktop / external disk — DB records absolute path,
+    // which is M1.1 documented behavior (revisit when project archive ships).
+    let proj = TempDir::new().unwrap();
+    copy_example("curved-flat", proj.path());
+
+    let elsewhere = TempDir::new().unwrap();
+    let chosen = elsewhere.path().join("external.obj");
+
+    let db = open_in_memory().unwrap();
+    {
+        let mut c = db.lock().unwrap();
+        schema::migrate(&mut c).unwrap();
+    }
+    let r = run_reconstruction(
+        db.clone(),
+        proj.path(),
+        "MAIN",
+        "measurements/measured.yaml",
+    )
+    .unwrap();
+
+    run_export(db.clone(), r.run_id, "disguise", Some(&chosen)).unwrap();
+    assert!(chosen.is_file());
+
+    let runs = list_runs_for(db.clone(), &proj.path().display().to_string(), Some("MAIN")).unwrap();
+    let row = runs.iter().find(|r2| r2.id == r.run_id).unwrap();
+    let stored = row.output_obj_path.as_deref().unwrap_or("");
+    assert!(
+        std::path::Path::new(stored).is_absolute(),
+        "expected absolute DB path for out-of-project export; got {stored:?}"
+    );
+}

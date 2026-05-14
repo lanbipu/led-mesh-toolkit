@@ -109,13 +109,17 @@ async function exportPdf() {
     </LmtPageHeader>
 
     <section class="flex flex-wrap items-center gap-3 rounded-lg border bg-card p-4">
-      <Button variant="default" :disabled="!projectReady || isGenerating" @click="generate">
+      <Button
+        variant="default"
+        :disabled="!projectReady || isGenerating || isExporting"
+        @click="generate"
+      >
         <LmtIcon name="printer" :size="14" />
         {{ t("instruct.generate") }}
       </Button>
       <Button
         variant="outline"
-        :disabled="!projectReady || !html || isExporting"
+        :disabled="!projectReady || !html || isGenerating || isExporting"
         @click="exportPdf"
       >
         <LmtIcon name="download" :size="14" />

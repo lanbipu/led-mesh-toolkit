@@ -5,7 +5,7 @@ use lmt_core::export::build::surface_to_mesh_output;
 use lmt_core::export::obj::write_obj;
 use lmt_core::shape::CabinetArray;
 use lmt_core::surface::TargetSoftware;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn parse_target(s: &str) -> LmtResult<TargetSoftware> {
     match s {
@@ -55,16 +55,20 @@ pub fn run_export(
 
     // Caller-chosen destination (from a save dialog) takes precedence; otherwise
     // fall back to the legacy `{project}/output/<screen>_<target>_run<id>.obj`.
-    // For DB bookkeeping we record a project-relative path when possible.
+    //
+    // DB bookkeeping (`runs.output_obj_path`): project-relative when the
+    // chosen path is under `{project}/`, else absolute. UI must handle both
+    // (an absolute path here will not survive a cross-machine project move —
+    // M1.1 scope, revisit when project archive/import is added).
     let (out_abs, out_rel_for_db) = match dst_abs_path {
         Some(p) => {
-            let abs = p.to_path_buf();
-            let rel_for_db = abs
+            let abs = ensure_obj_extension(p);
+            let rel = abs
                 .strip_prefix(&project_root)
                 .ok()
                 .map(|r| r.display().to_string())
                 .unwrap_or_else(|| abs.display().to_string());
-            (abs, rel_for_db)
+            (abs, rel)
         }
         None => {
             let rel = PathBuf::from("output")
@@ -86,6 +90,20 @@ pub fn run_export(
     }
 
     Ok(out_abs.display().to_string())
+}
+
+/// Append `.obj` if the path doesn't already end with that extension
+/// (case-insensitive). Users who skip the dialog's filter and type
+/// `mymesh` should still get a usable OBJ file.
+fn ensure_obj_extension(p: &Path) -> PathBuf {
+    match p.extension() {
+        Some(ext) if ext.eq_ignore_ascii_case("obj") => p.to_path_buf(),
+        _ => {
+            let mut buf = p.as_os_str().to_os_string();
+            buf.push(".obj");
+            PathBuf::from(buf)
+        }
+    }
 }
 
 #[tauri::command]
