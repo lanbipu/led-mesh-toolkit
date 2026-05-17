@@ -9,6 +9,10 @@
 
 pub mod data;
 pub mod dto;
+pub mod envelope;
 pub mod error;
+pub mod exit_codes;
+pub mod schema;
 
+pub use envelope::{ApiError, Envelope, ErrorEnvelope};
 pub use error::{LmtError, LmtResult};

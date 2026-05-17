@@ -1,7 +1,9 @@
+use schemars::JsonSchema;
 use serde::Serialize;
 
-#[derive(Debug, thiserror::Error, Serialize)]
+#[derive(Debug, thiserror::Error, Serialize, JsonSchema)]
 #[serde(tag = "kind", content = "message", rename_all = "snake_case")]
+#[schemars(rename_all = "snake_case")]
 pub enum LmtError {
     #[error("io: {0}")]
     Io(String),

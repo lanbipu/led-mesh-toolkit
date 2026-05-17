@@ -16,6 +16,8 @@ serde_yaml.workspace = true
 thiserror.workspace = true
 rusqlite.workspace = true
 chrono.workspace = true
+dirs = "5"
+schemars = "0.8"
 
 [dev-dependencies]
 tempfile.workspace = true

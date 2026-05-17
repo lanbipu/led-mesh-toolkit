@@ -1,8 +1,9 @@
 use lmt_core::{shape::CabinetArray, surface::QualityMetrics, surface::ReconstructedSurface};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RecentProject {
     pub id: i64,
     pub abs_path: String,
@@ -10,7 +11,7 @@ pub struct RecentProject {
     pub last_opened_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectConfig {
     pub project: ProjectMeta,
     pub screens: BTreeMap<String, ScreenConfig>,
@@ -18,7 +19,7 @@ pub struct ProjectConfig {
     pub output: OutputConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectMeta {
     pub name: String,
     pub unit: String,
@@ -26,14 +27,14 @@ pub struct ProjectMeta {
     pub method: Option<SurveyMethod>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SurveyMethod {
     M1,
     M2,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ScreenConfig {
     pub cabinet_count: [u32; 2],
     pub cabinet_size_mm: [f64; 2],
@@ -47,7 +48,7 @@ pub struct ScreenConfig {
     pub bottom_completion: Option<BottomCompletionConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ShapePriorConfig {
     Flat,
@@ -61,28 +62,28 @@ pub enum ShapePriorConfig {
     },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ShapeMode {
     Rectangle,
     Irregular,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BottomCompletionConfig {
     pub lowest_measurable_row: u32,
     pub fallback_method: String,
     pub assumed_height_mm: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CoordinateSystemConfig {
     pub origin_point: String,
     pub x_axis_point: String,
     pub xy_plane_point: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OutputConfig {
     pub target: String,
     pub obj_filename: String,
@@ -97,7 +98,7 @@ pub struct ReconstructionResult {
     pub report_json_path: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReconstructionRun {
     pub id: i64,
     pub screen_id: String,
@@ -124,7 +125,7 @@ pub struct ReconstructionReport {
     pub weld_tolerance_mm: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TotalStationImportResult {
     /// 相对 project_abs_path 的路径，e.g. "measurements/measured.yaml"
@@ -138,7 +139,7 @@ pub struct TotalStationImportResult {
     pub warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct InstructionCardResult {
     /// HTML 字符串，前端 iframe srcdoc 渲染。PDF 通过单独的
