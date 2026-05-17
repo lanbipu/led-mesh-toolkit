@@ -29,6 +29,10 @@
 
 ## CLI 底座维护契约(必读)
 
+**现状**:`lmt` CLI(`crates/lmt-cli` → `./target/debug/lmt`)已建好,覆盖 12/14
+个 Tauri command(详见 `docs/agents-cli.md`)。新 session / 验证 / 调试 / agent
+集成都可以直接用 `lmt <cmd>` 在 headless 下调用项目核心功能,不必启动 GUI。
+
 本项目同时通过 Tauri GUI 与 `lmt` CLI 两个 transport 暴露功能。两边共用同一个
 `lmt-app` 服务层。**任何新增功能从设计阶段就必须考虑 CLI 暴露**,不能只做 GUI 然后
 说"以后补 CLI"——历史经验是"以后"永远不来,CLI 会逐渐落后于 GUI 直到失去 agent
