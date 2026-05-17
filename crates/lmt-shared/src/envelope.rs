@@ -175,6 +175,7 @@ mod tests {
         // 防止有人再次在 struct/impl 上加 `T: JsonSchema` bound —— 那会让
         // CLI 在包装 `ReconstructionReport` / `ReconstructionResult`(故意
         // 没派生 schema 的 DTO)时直接编译失败。
+        #[allow(dead_code)]
         struct NoSchema(i32);
         let _ = Envelope::ok(NoSchema(42));
     }

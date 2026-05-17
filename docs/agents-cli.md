@@ -132,12 +132,20 @@ Both the Tauri GUI command and the CLI subcommand go through the same helper,
 so the same project always lands on the same UNIQUE key regardless of which
 side wrote it.
 
-**Legacy data caveat:** if you have an old DB (predating this contract) with
-raw / symlink-path rows in `recent_projects` or `reconstruction_runs`, those
-rows may not be automatically merged on first open. `list_runs_for` performs a
-raw + canonical OR-query to mitigate; if you see duplicates in
-`recent_projects`, manually delete the stale row. No production data is at
-risk because the project is still in development.
+**Legacy data**: `schema::migrate()` 在每次 `open()` 之后跑一次幂等的
+`normalize_legacy_paths` sweep,把 `recent_projects.abs_path` 与
+`reconstruction_runs.project_path` 里的老 raw / symlink path canonicalize 到
+统一字符串;`recent_projects` 上的 UNIQUE 冲突通过比较 `last_opened_at`
+(较新的 `display_name` 与 `last_opened_at` 合并到 canonical row),再删除
+raw alias 解决。GUI 之前用 `/var/...` 写入的 row,在 GUI 启动或任何写入命令
+首次 open DB 时自动迁移到 `/private/var/...` canonical 形式。
+
+注意:**`open_readonly()` 不调 `migrate()`**——这是 read-only 契约的代价。
+如果用户从一个未升级的 DB 直接跑 `lmt project list-recent` 之类 read-only
+命令,sweep 不会触发,结果里可能仍有 raw + canonical 两条 row。任何一次
+GUI 启动 / `add-recent` / `reconstruct surface` 之类的写命令都会触发 sweep
+并收敛。`list_runs_for` 内部仍保留 raw + canonical OR-query 作为查询时的
+二次兜底,所以 read-only 路径上"看不到旧 run"是不会发生的。
 
 ## Side-effect taxonomy (for MCP wrapping)
 
