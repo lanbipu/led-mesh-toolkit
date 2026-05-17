@@ -1,6 +1,43 @@
 use crate::dto::RecentProject;
-use crate::error::LmtResult;
+use crate::error::{LmtError, LmtResult};
 use rusqlite::Connection;
+use std::path::Path;
+
+/// 把 `abs_path` 规范化到一个稳定的字符串形式,再走 [`upsert`]。这是
+/// GUI 与 CLI 共用 DB 时唯一的入口契约:同一个项目无论从哪边添加,
+/// `recent_projects.abs_path`(UNIQUE key)都落到同一字符串,不会变成
+/// 两条记录。
+///
+/// 规范化策略:
+/// - 路径存在:`std::fs::canonicalize`(解符号链接 + 去 `.`/`..`)。
+/// - 路径不存在:`std::path::absolute`(基于当前进程 cwd 转绝对)。
+pub fn upsert_normalized(
+    conn: &Connection,
+    abs_path: &str,
+    display_name: &str,
+) -> LmtResult<RecentProject> {
+    let raw = Path::new(abs_path);
+    let normalized = if raw.exists() {
+        std::fs::canonicalize(raw).map_err(|e| {
+            LmtError::Io(format!("canonicalize recent project {abs_path}: {e}"))
+        })?
+    } else {
+        std::path::absolute(raw)
+            .map_err(|e| LmtError::Io(format!("absolutize recent project {abs_path}: {e}")))?
+    };
+    let normalized_str = normalized.display().to_string();
+    // 如果 caller 传的 raw 跟规范化后字符串不同,DB 里可能有一条老 raw alias
+    // (升级前写入的、或另一个 caller 用 symlink path 写入的)。在写 canonical
+    // 之前先删掉 raw alias,这样同一项目永远只剩一条 row;否则 list-recent
+    // 会显示两个看上去不同的入口,GUI / agent 都困惑。
+    if abs_path != normalized_str.as_str() {
+        conn.execute(
+            "DELETE FROM recent_projects WHERE abs_path = ?1",
+            rusqlite::params![abs_path],
+        )?;
+    }
+    upsert(conn, &normalized_str, display_name)
+}
 
 /// Insert or update a recent project entry.
 /// On conflict (same abs_path), updates display_name and last_opened_at.

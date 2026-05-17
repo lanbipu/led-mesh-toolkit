@@ -13,6 +13,16 @@ pub fn run_reconstruction(
     screen_id: &str,
     measurements_rel_path: &str,
 ) -> LmtResult<ReconstructionResult> {
+    // Canonicalize project_path 在入口做一次,让 DB 里写入的字符串与 cwd /
+    // symlink 无关。CLI 与 Tauri GUI 都受益:任何 caller 给 `./proj` 或
+    // symlink path 都被规范化到真实绝对路径,后续 list_runs_for /
+    // read_run_report 才能 exact-match 找到。
+    let project_path = &std::fs::canonicalize(project_path).map_err(|e| {
+        LmtError::Io(format!(
+            "canonicalize project_path {}: {e}",
+            project_path.display()
+        ))
+    })?;
     // Load project.yaml to snapshot cabinet_array and weld_tolerance at this moment.
     let yaml = std::fs::read_to_string(project_path.join("project.yaml"))?;
     let cfg: lmt_shared::dto::ProjectConfig =
@@ -106,8 +116,28 @@ pub fn list_runs_for(
     project_path: &str,
     screen_id: Option<&str>,
 ) -> LmtResult<Vec<lmt_shared::dto::ReconstructionRun>> {
+    // 同时按 raw 与 canonical key 查询,合并去重。本 patch 之后写入的
+    // run 是 canonical,但 patch 之前的旧 row 可能仍是 raw symlink path;
+    // 单按 canonical 查会让升级前的历史 "消失"。所以两种字符串都试,合并
+    // 去重(按 id),保持 created_at desc 顺序。
+    let canonical = std::fs::canonicalize(project_path)
+        .ok()
+        .map(|p| p.display().to_string());
     let conn = db.lock().unwrap();
-    runs::list_by_project(&conn, project_path, screen_id)
+    let mut rows = runs::list_by_project(&conn, project_path, screen_id)?;
+    if let Some(canon) = canonical {
+        if canon != project_path {
+            let extra = runs::list_by_project(&conn, &canon, screen_id)?;
+            let seen: std::collections::HashSet<i64> = rows.iter().map(|r| r.id).collect();
+            for r in extra {
+                if !seen.contains(&r.id) {
+                    rows.push(r);
+                }
+            }
+            rows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        }
+    }
+    Ok(rows)
 }
 
 pub fn read_run_report(db: Db, run_id: i64) -> LmtResult<serde_json::Value> {

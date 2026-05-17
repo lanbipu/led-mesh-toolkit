@@ -1,0 +1,425 @@
+//! lmt-cli E2E 测试 —— 直接 spawn `lmt` binary,模拟 agent 调用。
+//!
+//! 覆盖维度:
+//! - `--version` / `--help` 出口
+//! - `schema` 子命令 stdout 是合法 JSON envelope
+//! - `total-station import` 完整路径:happy / dry-run / refuse-no-yes / cross-screen 冲突
+//! - `project save` + `load` round-trip
+//! - `reconstruct surface` → `list-runs` → `get-run-report` → `export obj` 全链路
+//! - `--json` 模式下 stderr 只含一条 envelope(`reconstruct` 算法路径有 tracing,
+//!   是 JSON 隔离测试的硬条件)
+//! - `--timeout` 暴露为 unsupported(v0 未实现)
+//! - 任意 destructive 命令在 `--dry-run` 下不创建 DB 文件
+
+use assert_cmd::Command;
+use serde_json::Value;
+use std::path::Path;
+use tempfile::TempDir;
+
+/// 重用 workspace 内 `examples/curved-flat`,跟既有 src-tauri 集成测试一致。
+fn examples_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples")
+}
+
+/// 复制一个 examples/<name> 到给定目录下。返回拷贝出的 project 根。
+fn seed_project(into: &Path, example: &str) -> std::path::PathBuf {
+    let src = examples_root().join(example);
+    let dst = into.join(example);
+    copy_dir(&src, &dst);
+    dst
+}
+
+fn copy_dir(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir(&from, &to);
+        } else {
+            std::fs::copy(&from, &to).unwrap();
+        }
+    }
+}
+
+fn lmt() -> Command {
+    Command::cargo_bin("lmt").expect("lmt binary should build")
+}
+
+// ── 版本 / schema ────────────────────────────────────────────────────────────
+
+#[test]
+fn version_prints_semver_line() {
+    let out = lmt().arg("--version").assert().success().get_output().clone();
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("lmt "), "stdout: {s}");
+}
+
+#[test]
+fn schema_json_envelope_has_known_types() {
+    let out = lmt().args(["--json", "schema"]).assert().success().get_output().clone();
+    let env: Value = serde_json::from_slice(&out.stdout).expect("stdout must be JSON envelope");
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["meta"]["schema_version"], "1");
+    let types = env["data"]["types"].as_object().expect("types map");
+    for name in [
+        "ProjectConfig",
+        "TotalStationImportResult",
+        "ReconstructionRun",
+        "LmtError",
+        "ApiError",
+        "Envelope",
+        "ErrorEnvelope",
+    ] {
+        assert!(types.contains_key(name), "missing schema for {name}: keys={:?}", types.keys().collect::<Vec<_>>());
+    }
+}
+
+// ── --timeout 未实现 ─────────────────────────────────────────────────────────
+
+#[test]
+fn timeout_flag_rejected_as_unsupported() {
+    let assert = lmt().args(["--timeout", "5", "schema"]).assert().failure();
+    let out = assert.get_output();
+    // exit code 7 = UNSUPPORTED(见 lmt_shared::exit_codes)
+    assert_eq!(out.status.code(), Some(7));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("unsupported"), "stderr: {stderr}");
+}
+
+// ── total-station import: refuse / dry-run / execute / cross-screen 冲突 ────
+
+#[test]
+fn import_refuses_without_yes_or_dry_run() {
+    let tmp = TempDir::new().unwrap();
+    let proj = seed_project(tmp.path(), "curved-flat");
+    let csv = proj.join("measurements").join("raw.csv");
+
+    let assert = lmt()
+        .args([
+            "total-station",
+            "import",
+            proj.to_str().unwrap(),
+            "MAIN",
+            csv.to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+    // INVALID_INPUT = 2
+    assert_eq!(assert.get_output().status.code(), Some(2));
+}
+
+#[test]
+fn import_dry_run_does_not_write_files() {
+    let tmp = TempDir::new().unwrap();
+    let proj = seed_project(tmp.path(), "curved-flat");
+    let csv = proj.join("measurements").join("raw.csv");
+
+    lmt()
+        .args([
+            "--dry-run",
+            "total-station",
+            "import",
+            proj.to_str().unwrap(),
+            "MAIN",
+            csv.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // 既有 measured.yaml 是 example 自带的,但 import_report.json 是 import 产物。
+    // dry-run 必须不写 import_report.json(也不动 measured.yaml.bak 等)。
+    assert!(
+        !proj.join("measurements/import_report.json").exists(),
+        "dry-run must not write import_report.json"
+    );
+    assert!(
+        !proj.join("measurements/measured.yaml.bak").exists(),
+        "dry-run must not create .bak"
+    );
+}
+
+#[test]
+fn import_dry_run_refuses_cross_screen_conflict() {
+    let tmp = TempDir::new().unwrap();
+    let proj = seed_project(tmp.path(), "curved-flat");
+    // 把 measured.yaml 改成另一个 screen 的数据,模拟"被另一个 screen 占用"。
+    let stale = "screen_id: FLOOR\ncoordinate_frame:\n  origin_world: [0.0, 0.0, 0.0]\npoints: []\n";
+    std::fs::write(proj.join("measurements/measured.yaml"), stale).unwrap();
+
+    let csv = proj.join("measurements").join("raw.csv");
+    let assert = lmt()
+        .args([
+            "--dry-run",
+            "total-station",
+            "import",
+            proj.to_str().unwrap(),
+            "MAIN",
+            csv.to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    // INVALID_INPUT = 2(checkok 复用 run_import 的 cross-screen guard)
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("FLOOR"), "stderr: {stderr}");
+}
+
+#[test]
+fn import_yes_writes_artifacts_and_envelope() {
+    let tmp = TempDir::new().unwrap();
+    let proj = seed_project(tmp.path(), "curved-flat");
+    let csv = proj.join("measurements").join("raw.csv");
+
+    let assert = lmt()
+        .args([
+            "--yes",
+            "--json",
+            "total-station",
+            "import",
+            proj.to_str().unwrap(),
+            "MAIN",
+            csv.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    assert!(env["data"]["measuredCount"].as_u64().unwrap() >= 3);
+    assert!(proj.join("measurements/import_report.json").is_file());
+}
+
+// ── --json stderr 隔离:错误时 stderr 单条 envelope,无 tracing 噪音 ───────
+
+#[test]
+fn json_error_stderr_contains_only_envelope() {
+    let tmp = TempDir::new().unwrap();
+    let proj = seed_project(tmp.path(), "curved-flat");
+
+    // 拿一个会失败的命令(unknown screen)。
+    let assert = lmt()
+        .args([
+            "--json",
+            "total-station",
+            "instruction-card",
+            proj.to_str().unwrap(),
+            "BOGUS_SCREEN",
+        ])
+        .assert()
+        .failure();
+    let stderr = std::str::from_utf8(&assert.get_output().stderr).unwrap().trim_end();
+    // 只有一行;且整行是合法 JSON envelope(ok=false)。
+    assert!(
+        !stderr.contains('\n'),
+        "stderr must be a single line envelope; got:\n{stderr}"
+    );
+    let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
+    assert_eq!(env["ok"], false);
+    assert!(env["error"]["code"].as_str().unwrap_or("").len() > 0);
+}
+
+// ── project save → load round-trip(覆盖 --input + write_safe) ────────────
+
+#[test]
+fn project_save_load_roundtrip_via_input_file() {
+    let tmp = TempDir::new().unwrap();
+    let dst = tmp.path().join("new-project");
+    let input = tmp.path().join("input.yaml");
+    let yaml = r#"
+project:
+  name: RoundTrip
+  unit: mm
+screens:
+  S1:
+    cabinet_count: [2, 2]
+    cabinet_size_mm: [500.0, 500.0]
+    shape_prior:
+      type: flat
+    shape_mode: rectangle
+    irregular_mask: []
+coordinate_system:
+  origin_point: S1_V001_R001
+  x_axis_point: S1_V003_R001
+  xy_plane_point: S1_V001_R003
+output:
+  target: neutral
+  obj_filename: "{screen_id}.obj"
+  weld_vertices_tolerance_mm: 1.0
+  triangulate: true
+"#;
+    std::fs::write(&input, yaml).unwrap();
+
+    // save 是 destructive,必须 --yes。
+    lmt()
+        .args([
+            "--yes",
+            "project",
+            "save",
+            dst.to_str().unwrap(),
+            "--input",
+            input.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert!(dst.join("project.yaml").is_file());
+
+    let load = lmt()
+        .args(["--json", "project", "load", dst.to_str().unwrap()])
+        .assert()
+        .success();
+    let env: Value = serde_json::from_slice(&load.get_output().stdout).unwrap();
+    assert_eq!(env["data"]["project"]["name"], "RoundTrip");
+}
+
+// ── 全链路:import → reconstruct → list-runs → get-run-report → export ────
+
+#[test]
+fn full_pipeline_import_reconstruct_export() {
+    let tmp = TempDir::new().unwrap();
+    let proj = seed_project(tmp.path(), "curved-flat");
+    let db = tmp.path().join("lmt.sqlite");
+    let csv = proj.join("measurements").join("raw.csv");
+
+    // 1) import
+    lmt()
+        .args([
+            "--yes",
+            "--db",
+            db.to_str().unwrap(),
+            "total-station",
+            "import",
+            proj.to_str().unwrap(),
+            "MAIN",
+            csv.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // 2) reconstruct surface
+    let reconstruct = lmt()
+        .args([
+            "--yes",
+            "--json",
+            "--db",
+            db.to_str().unwrap(),
+            "reconstruct",
+            "surface",
+            proj.to_str().unwrap(),
+            "MAIN",
+            "measurements/measured.yaml",
+        ])
+        .assert()
+        .success();
+    let env: Value = serde_json::from_slice(&reconstruct.get_output().stdout).unwrap();
+    let run_id = env["data"]["run_id"].as_i64().expect("run_id");
+    assert!(run_id > 0);
+
+    // 3) list-runs(走 readonly DB,跟 reconstruct 同库)
+    let list = lmt()
+        .args([
+            "--json",
+            "--db",
+            db.to_str().unwrap(),
+            "reconstruct",
+            "list-runs",
+            proj.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let listed: Value = serde_json::from_slice(&list.get_output().stdout).unwrap();
+    assert_eq!(listed["data"][0]["id"].as_i64(), Some(run_id));
+
+    // 4) get-run-report(返回 report.json 原始 Value)
+    let report = lmt()
+        .args([
+            "--json",
+            "--db",
+            db.to_str().unwrap(),
+            "reconstruct",
+            "get-run-report",
+            &run_id.to_string(),
+        ])
+        .assert()
+        .success();
+    let rep_env: Value = serde_json::from_slice(&report.get_output().stdout).unwrap();
+    assert_eq!(rep_env["data"]["screen_id"], "MAIN");
+
+    // 5) export obj(destructive)
+    let export = lmt()
+        .args([
+            "--yes",
+            "--json",
+            "--db",
+            db.to_str().unwrap(),
+            "export",
+            "obj",
+            &run_id.to_string(),
+            "neutral",
+        ])
+        .assert()
+        .success();
+    let exp_env: Value = serde_json::from_slice(&export.get_output().stdout).unwrap();
+    let written = exp_env["data"]["written"].as_str().expect("written path");
+    assert!(Path::new(written).is_file(), "OBJ should exist at {written}");
+}
+
+// ── read-only / dry-run 不创建 default DB ─────────────────────────────────
+
+#[test]
+fn dry_run_remove_recent_does_not_create_db_file() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("nonexistent.sqlite");
+    lmt()
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--dry-run",
+            "project",
+            "remove-recent",
+            "99",
+        ])
+        .assert()
+        .success();
+    assert!(!db.exists(), "dry-run must not create the DB file");
+}
+
+#[test]
+fn list_recent_against_missing_db_returns_empty_envelope() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("nonexistent.sqlite");
+    let out = lmt()
+        .args([
+            "--json",
+            "--db",
+            db.to_str().unwrap(),
+            "project",
+            "list-recent",
+        ])
+        .assert()
+        .success();
+    let env: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    assert!(
+        env["data"].as_array().unwrap().is_empty(),
+        "list-recent against missing DB must yield []"
+    );
+    assert!(!db.exists(), "list-recent must not create the DB file");
+}
+
+// ── parse error 走 envelope when --json ──────────────────────────────────────
+
+#[test]
+fn parse_error_with_json_yields_envelope_on_stderr() {
+    let assert = lmt()
+        .args(["--json", "project", "load"]) // 缺 required ABS_PATH
+        .assert()
+        .failure();
+    // INVALID_INPUT = 2
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    let stderr = std::str::from_utf8(&assert.get_output().stderr).unwrap().trim_end();
+    let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "invalid_input");
+}

@@ -1,0 +1,30 @@
+[package]
+name = "lmt-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Agent-friendly command-line interface for LED Mesh Toolkit"
+
+[[bin]]
+name = "lmt"
+path = "src/main.rs"
+
+[dependencies]
+lmt-core = { path = "../core" }
+lmt-shared = { path = "../lmt-shared" }
+lmt-app = { path = "../lmt-app" }
+lmt-adapter-total-station = { path = "../adapter-total-station" }
+clap = { version = "4", features = ["derive", "env"] }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+assert_cmd = "2"
+predicates = "3"

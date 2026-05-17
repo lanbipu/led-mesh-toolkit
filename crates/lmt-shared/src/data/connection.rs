@@ -50,6 +50,32 @@ pub fn open(path: &Path) -> rusqlite::Result<Db> {
     Ok(std::sync::Arc::new(Mutex::new(conn)))
 }
 
+/// 只读地打开已存在的 SQLite 文件。**不**触发 WAL / busy_timeout /
+/// migration——这是 dry-run 校验路径专用,要求"看 DB 但不写 DB"。
+///
+/// 如果文件不存在或不可读,返回 `rusqlite::Error`,调用方决定是否上报为
+/// 用户错误(典型 dry-run 场景下"DB 不存在"应该被视为 not-found 而非
+/// 错误)。
+pub fn open_readonly(path: &Path) -> rusqlite::Result<Db> {
+    // **不**用 `immutable=1`:虽然它能保证完全不写 sidecar,但代价是 SQLite
+    // 会忽略 WAL,看不到 GUI 当前未 checkpoint 的写入。GUI + CLI 共用同一份
+    // `lmt.sqlite` 是本工具的核心场景:GUI 刚 add-recent / reconstruct,CLI
+    // 立刻 list-recent / list-runs 必须能看到。所以走 normal SQLITE_OPEN_READ_ONLY,
+    // 能读 WAL,但 SQLite 协议可能创建 `.sqlite-shm`(reader/writer 共享内存
+    // 协调文件)。我们不**写主 DB 文件本身**,这是契约;sidecar 是 WAL 模式
+    // 必需,跟 GUI/任何 reader/writer 共享 —— 单测里只断言主 DB 文件 mtime。
+    let conn = Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+            | rusqlite::OpenFlags::SQLITE_OPEN_URI
+            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    // busy_timeout 是 connection setting,不会写盘;让 reader 在 active writer
+    // 切 WAL frame 的短暂 SQLITE_BUSY 上挺住。journal_mode / foreign_keys 不设。
+    conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
+    Ok(std::sync::Arc::new(Mutex::new(conn)))
+}
+
 pub fn open_in_memory() -> rusqlite::Result<Db> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
@@ -106,6 +132,39 @@ mod tests {
             parent_name,
             Some(APP_IDENTIFIER),
             "parent dir mismatch in {p:?}"
+        );
+    }
+
+    #[test]
+    fn open_readonly_sets_busy_timeout_without_touching_main_db() {
+        // 先用普通 open 建库并 migrate(测试需要一个有效的 SQLite 文件)。
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.sqlite");
+        let _db = open(&db_path).unwrap();
+        let mtime_before = std::fs::metadata(&db_path).unwrap().modified().unwrap();
+
+        // 等一下,让 mtime 分辨率有空间区分(macOS HFS+ 是秒级)。
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        let ro = open_readonly(&db_path).unwrap();
+        let conn = ro.lock().unwrap();
+        let busy: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(busy, 5000, "readonly busy_timeout must be 5000ms");
+        // 跑一次实际查询,触发 reader 路径。
+        let _: Result<i64, _> = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master",
+            [],
+            |r| r.get(0),
+        );
+
+        // 契约:**主 DB 文件**不被写。`.sqlite-shm` 是 WAL 协议必需的
+        // 共享内存协调文件,reader 可能创建——这不是"我们写 DB"。
+        let mtime_after = std::fs::metadata(&db_path).unwrap().modified().unwrap();
+        assert_eq!(
+            mtime_after, mtime_before,
+            "readonly open must not touch the main DB file"
         );
     }
 

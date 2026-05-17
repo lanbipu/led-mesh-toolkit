@@ -50,20 +50,8 @@ pub fn run_import(
     let report_json_path = measurements_dir.join("import_report.json");
     let backup_path = measurements_dir.join("measured.yaml.bak");
 
-    // 4a. 若已有 measured.yaml，检查它的 screen_id 跟本次导入是否匹配。
-    //     M1.1 单 screen scope；多 screen 项目走同一 measured.yaml，但本次 import
-    //     若覆盖的是另一个 screen 的测量数据，拒绝（避免无声毁掉别人的工作）。
-    if measured_yaml_path.exists() {
-        if let Some(existing_screen) = read_existing_screen_id(&measured_yaml_path) {
-            if existing_screen != screen_id {
-                return Err(LmtError::InvalidInput(format!(
-                    "refusing to overwrite measured.yaml for screen {existing_screen:?} \
-                     with an import targeting screen {screen_id:?}; remove the existing \
-                     file first or import to the correct screen"
-                )));
-            }
-        }
-    }
+    // 4a. cross-screen guard,跟 dry-run 预览共享。
+    check_import_no_screen_conflict(project_abs_path, screen_id)?;
 
     // 4b. 若已有 measured.yaml，rename 成 .bak（覆盖上一次的 .bak）。
     //     保留 .bak 作为上一版本快照——不在成功后删除，给用户一份 recovery copy。
@@ -110,6 +98,31 @@ pub fn run_import(
         missing_count: report.missing.len(),
         warnings: report.warnings.clone(),
     })
+}
+
+/// 检查 `<project>/measurements/measured.yaml` 是否属于另一个 screen。
+/// 多 screen 项目共用一个 measured.yaml,本次 import 若会覆盖别的 screen 的
+/// 数据,直接拒绝(避免无声毁掉同事的工作)。
+///
+/// 抽成 pub 函数让 lmt-cli 的 `--dry-run import` 复用 execute 一致的检查。
+pub fn check_import_no_screen_conflict(
+    project_abs_path: &Path,
+    target_screen_id: &str,
+) -> LmtResult<()> {
+    let measured_yaml_path = project_abs_path.join("measurements").join("measured.yaml");
+    if !measured_yaml_path.exists() {
+        return Ok(());
+    }
+    if let Some(existing_screen) = read_existing_screen_id(&measured_yaml_path) {
+        if existing_screen != target_screen_id {
+            return Err(LmtError::InvalidInput(format!(
+                "refusing to overwrite measured.yaml for screen {existing_screen:?} \
+                 with an import targeting screen {target_screen_id:?}; remove the \
+                 existing file first or import to the correct screen"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Lightweight YAML scan for the top-level `screen_id:` field. Avoids deserializing

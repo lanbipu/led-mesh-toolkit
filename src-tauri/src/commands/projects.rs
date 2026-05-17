@@ -30,7 +30,9 @@ pub fn add_recent_project(
     display_name: String,
 ) -> LmtResult<RecentProject> {
     let conn = state.lock().unwrap();
-    recent_projects::upsert(&conn, &abs_path, &display_name)
+    // 走 upsert_normalized,让 GUI 与 CLI 共用 DB 时 abs_path 落到同一字符串,
+    // 避免同一项目被记录成两条 recent_projects(UNIQUE key 才有意义)。
+    recent_projects::upsert_normalized(&conn, &abs_path, &display_name)
 }
 
 #[tauri::command]
