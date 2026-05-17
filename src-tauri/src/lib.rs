@@ -1,8 +1,9 @@
 pub mod commands;
-pub mod data;
-pub mod dto;
-pub mod error;
 pub mod pdf_render;
+
+// `data` / `dto` / `error` 现在住在 lmt-shared,这里 re-export 让既有
+// `crate::dto::* / crate::error::* / crate::data::*` 调用点零改动。
+pub use lmt_shared::{data, dto, error};
 
 use std::path::PathBuf;
 use tauri::Manager;
