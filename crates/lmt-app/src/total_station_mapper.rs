@@ -9,9 +9,8 @@
 //! 跟 export.rs 同步（pass-through 当 0-based），等 M0.3 统一修。
 
 use lmt_adapter_total_station::project as m1;
-
-use crate::dto;
-use crate::error::{LmtError, LmtResult};
+use lmt_shared::dto;
+use lmt_shared::error::{LmtError, LmtResult};
 
 pub fn map_to_adapter(cfg: &dto::ProjectConfig) -> LmtResult<m1::ProjectConfig> {
     use std::collections::HashMap;

@@ -1,0 +1,24 @@
+[package]
+name = "lmt-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "LMT service layer: transport-agnostic run_* helpers consumed by Tauri GUI + CLI"
+
+[dependencies]
+lmt-core = { path = "../core" }
+lmt-shared = { path = "../lmt-shared" }
+lmt-adapter-total-station = { path = "../adapter-total-station" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+rusqlite.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+pretty_assertions.workspace = true

@@ -2250,6 +2250,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "lmt-app"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "lmt-adapter-total-station",
+ "lmt-core",
+ "lmt-shared",
+ "pretty_assertions",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
 name = "lmt-core"
 version = "0.1.0"
 dependencies = [
@@ -2289,6 +2307,7 @@ dependencies = [
  "block2",
  "chrono",
  "lmt-adapter-total-station",
+ "lmt-app",
  "lmt-core",
  "lmt-shared",
  "objc2",

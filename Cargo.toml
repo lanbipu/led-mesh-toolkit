@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/core",
     "crates/lmt-shared",
+    "crates/lmt-app",
     "crates/adapter-total-station",
     "crates/adapter-visual-ba",
     "src-tauri",
