@@ -63,10 +63,143 @@ impl Reconstructor for SurfaceFitReconstructor {
     fn applicable(&self, points: &MeasuredPoints) -> bool {
         points.sampling_mode == SamplingMode::Scatter
     }
-    fn reconstruct(&self, _points: &MeasuredPoints) -> Result<ReconstructedSurface, CoreError> {
-        Err(CoreError::Reconstruction(
-            "surface_fit reconstruction not yet assembled".into(),
-        ))
+    fn reconstruct(&self, points: &MeasuredPoints) -> Result<ReconstructedSurface, CoreError> {
+        use crate::reconstruct::surface_fit::{boundary, fit, frame, project, resample};
+        use crate::shape::ShapePrior;
+        use crate::surface::{GridTopology, QualityMetrics, ReconstructedSurface};
+
+        let cols = points.cabinet_array.cols;
+        let rows = points.cabinet_array.rows;
+        let raw: Vec<_> = points.points.iter().map(|p| p.position).collect();
+        if raw.len() < 5 {
+            return Err(CoreError::Reconstruction(
+                "scatter needs >=5 points".into(),
+            ));
+        }
+
+        let (verts_world, cframe, deriv, shape, inliers, outlier_idx, proj_size_m, param_range) =
+            match &points.shape_prior {
+                ShapePrior::Curved { .. } => {
+                    let cyl = fit::fit_cylinder(&raw).ok_or_else(|| {
+                        CoreError::Reconstruction("cylinder fit failed".into())
+                    })?;
+                    let proj = project::project_cylinder(&raw, &cyl);
+                    let (f, d) = frame::derive_cylinder_frame(&cyl, &proj);
+                    let verts = resample::resample_cylinder(&cyl, &proj, cols, rows);
+                    let width_m = cyl.radius_m * (proj.range[1] - proj.range[0]);
+                    let height_m = proj.range[3] - proj.range[2];
+                    (
+                        verts,
+                        f,
+                        d,
+                        ScatterShape::Cylinder {
+                            radius_mm: cyl.radius_m * 1000.0,
+                            axis: [0.0, 0.0, 1.0],
+                        },
+                        cyl.inliers,
+                        cyl.outliers,
+                        [width_m, height_m],
+                        proj.range,
+                    )
+                }
+                ShapePrior::Flat => {
+                    let pl = fit::fit_plane(&raw).ok_or_else(|| {
+                        CoreError::Reconstruction("plane fit failed".into())
+                    })?;
+                    let proj = project::project_plane(&raw, &pl, cols, rows);
+                    let (f, d) = frame::derive_plane_frame(pl.normal, &proj);
+                    let verts = resample::resample_plane(&proj, cols, rows);
+                    let width_m = proj.range[1] - proj.range[0];
+                    let height_m = proj.range[3] - proj.range[2];
+                    (
+                        verts,
+                        f,
+                        d,
+                        ScatterShape::Plane {
+                            normal: [pl.normal.x, pl.normal.y, pl.normal.z],
+                        },
+                        pl.inliers,
+                        pl.outliers,
+                        [width_m, height_m],
+                        proj.range,
+                    )
+                }
+                ShapePrior::Folded { .. } => {
+                    return Err(CoreError::Reconstruction(
+                        "folded prior not supported in scatter mode".into(),
+                    ));
+                }
+            };
+
+        let ratio = inliers.len() as f64 / raw.len() as f64;
+        if ratio < 0.5 {
+            return Err(CoreError::Reconstruction(format!(
+                "inlier ratio {ratio:.2} below 0.5 — scatter data does not fit the shape prior"
+            )));
+        }
+
+        let bcheck = boundary::check_boundary(proj_size_m, &points.cabinet_array);
+        if bcheck.verdict == "reject" {
+            return Err(CoreError::Reconstruction(format!(
+                "boundary check rejected: projected {:?}mm vs expected {:?}mm",
+                bcheck.projected_size_mm, bcheck.expected_size_mm
+            )));
+        }
+
+        let vertices: Vec<_> = verts_world.iter().map(|w| cframe.world_to_model(w)).collect();
+        let uv_coords = resample::grid_uv(cols, rows);
+
+        let outliers: Vec<ScatterOutlier> = outlier_idx
+            .iter()
+            .map(|&i| ScatterOutlier {
+                point_id: points.points[i].name.clone(),
+                source_row: i,
+                coordinates: [raw[i].x, raw[i].y, raw[i].z],
+                residual_mm: 0.0,
+            })
+            .collect();
+        let outlier_ids: Vec<String> = outliers.iter().map(|o| o.point_id.clone()).collect();
+
+        let method = match shape {
+            ScatterShape::Cylinder { .. } => "surface_fit_cylinder",
+            ScatterShape::Plane { .. } => "surface_fit_plane",
+        };
+        let mut warnings = vec![];
+        if bcheck.verdict == "warning" {
+            warnings.push(
+                "boundary size deviates from cabinet array; verify edge coverage".into(),
+            );
+        }
+        warnings.push(
+            "orientation auto-derived from fit; verify FrameDerivation in report".into(),
+        );
+
+        let scatter_fit = ScatterFit {
+            shape,
+            inlier_count: inliers.len(),
+            outliers,
+            param_range,
+            boundary_check: bcheck,
+            frame_derivation: deriv,
+        };
+
+        let quality_metrics = QualityMetrics {
+            method: method.into(),
+            measured_count: inliers.len(),
+            expected_count: ((cols + 1) * (rows + 1)) as usize,
+            outliers: outlier_ids,
+            warnings,
+            ..Default::default()
+        };
+
+        Ok(ReconstructedSurface {
+            screen_id: points.screen_id.clone(),
+            topology: GridTopology { cols, rows },
+            vertices,
+            uv_coords,
+            quality_metrics,
+            scatter_fit: Some(scatter_fit),
+        })
     }
 }
 
@@ -86,9 +219,77 @@ mod tests {
     }
 
     #[test]
-    fn reconstruct_stub_errors_until_assembled() {
-        let mp = minimal_scatter_points();
-        let err = SurfaceFitReconstructor.reconstruct(&mp).unwrap_err();
-        assert!(matches!(err, crate::error::CoreError::Reconstruction(_)));
+    fn reconstruct_cylinder_end_to_end() {
+        use crate::coordinate::CoordinateFrame;
+        use crate::measured_points::MeasuredPoints;
+        use crate::point::{MeasuredPoint, PointSource};
+        use crate::sampling::SamplingMode;
+        use crate::shape::{CabinetArray, ShapePrior};
+        use crate::uncertainty::Uncertainty;
+        use nalgebra::Vector3;
+
+        let r = 9.523_f64;
+        let (cx, cy) = (0.0_f64, 0.0_f64);
+        let mk = |p: Vector3<f64>, n: &str| MeasuredPoint {
+            name: n.into(),
+            position: p,
+            uncertainty: Uncertainty::Isotropic(1.0),
+            source: PointSource::TotalStation,
+        };
+        let mut points = vec![];
+        for k in 0..60 {
+            let t = -1.4 + 2.8 * (k as f64 / 59.0);
+            for (li, &z) in [0.0_f64, 7.5].iter().enumerate() {
+                points.push(mk(
+                    Vector3::new(cx + r * t.cos(), cy + r * t.sin(), z),
+                    &format!("row{k}_{li}"),
+                ));
+            }
+        }
+        points.push(mk(
+            Vector3::new(cx + 0.3, cy, 3.0),
+            "row999_CD1",
+        )); // 杂点
+
+        let mp = MeasuredPoints {
+            screen_id: "MAIN".into(),
+            coordinate_frame: CoordinateFrame {
+                origin_world: [0.0; 3],
+                basis: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+            },
+            cabinet_array: CabinetArray::rectangle(55, 15, [500.0, 500.0]),
+            shape_prior: ShapePrior::Curved { radius_mm: 9523.0 },
+            points,
+            sampling_mode: SamplingMode::Scatter,
+        };
+
+        let surf = SurfaceFitReconstructor.reconstruct(&mp).unwrap();
+        assert_eq!(surf.vertices.len(), (56 * 16) as usize);
+        assert_eq!(surf.uv_coords.len(), surf.vertices.len());
+        let sf = surf.scatter_fit.as_ref().unwrap();
+        match &sf.shape {
+            ScatterShape::Cylinder { radius_mm, .. } => {
+                assert!((radius_mm - 9523.0).abs() < 50.0)
+            }
+            _ => panic!("expected cylinder"),
+        }
+        assert_eq!(sf.outliers.len(), 1);
+        assert_eq!(surf.quality_metrics.method, "surface_fit_cylinder");
+        // 朝向：model frame +Z=up，圆柱屏高 7.5m → model z 跨度≈7.5
+        let zmin = surf
+            .vertices
+            .iter()
+            .map(|v| v.z)
+            .fold(f64::INFINITY, f64::min);
+        let zmax = surf
+            .vertices
+            .iter()
+            .map(|v| v.z)
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            (zmax - zmin - 7.5).abs() < 0.2,
+            "model-frame height span={}",
+            zmax - zmin
+        );
     }
 }
