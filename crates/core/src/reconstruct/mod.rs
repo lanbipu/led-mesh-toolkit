@@ -6,6 +6,7 @@ pub mod boundary_interp;
 pub mod direct;
 pub mod nominal;
 pub mod radial_basis;
+pub mod surface_fit;
 
 /// Strategy for reconstructing a continuous surface from sparse measured points.
 pub trait Reconstructor {

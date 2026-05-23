@@ -75,6 +75,7 @@ fn disguise_export_actually_swaps_y_z_axes() {
         vertices: model_vertices,
         uv_coords: compute_grid_uv(topo),
         quality_metrics: QualityMetrics::default(),
+        scatter_fit: None,
     };
     let cab = CabinetArray::rectangle(1, 1, [500.0, 500.0]);
 

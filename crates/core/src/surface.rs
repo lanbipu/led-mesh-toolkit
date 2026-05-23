@@ -1,6 +1,8 @@
 use nalgebra::{Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 
+use crate::reconstruct::surface_fit::ScatterFit;
+
 /// Maximum allowed cabinet count per axis (prevents pathological allocations
 /// + overflow). 10_000 × 10_000 cabinets = 100M vertices upper bound, far
 ///   beyond any realistic LED screen.
@@ -93,6 +95,9 @@ pub struct ReconstructedSurface {
     #[serde(with = "vec_vector2_serde")]
     pub uv_coords: Vec<Vector2<f64>>,
     pub quality_metrics: QualityMetrics,
+    /// scatter 路径的拟合元数据；grid 路径为 None。
+    #[serde(default)]
+    pub scatter_fit: Option<ScatterFit>,
 }
 
 #[derive(Deserialize)]
@@ -104,6 +109,9 @@ struct ReconstructedSurfaceRaw {
     #[serde(with = "vec_vector2_serde")]
     uv_coords: Vec<Vector2<f64>>,
     quality_metrics: QualityMetrics,
+    /// scatter 路径的拟合元数据；grid 路径为 None。
+    #[serde(default)]
+    scatter_fit: Option<ScatterFit>,
 }
 
 impl<'de> Deserialize<'de> for ReconstructedSurface {
@@ -115,6 +123,7 @@ impl<'de> Deserialize<'de> for ReconstructedSurface {
             vertices: raw.vertices,
             uv_coords: raw.uv_coords,
             quality_metrics: raw.quality_metrics,
+            scatter_fit: raw.scatter_fit,
         };
         surface
             .validate()

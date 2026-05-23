@@ -85,6 +85,7 @@ impl Reconstructor for NominalReconstructor {
             vertices,
             uv_coords: uvs,
             quality_metrics: metrics,
+            scatter_fit: None,
         })
     }
 }

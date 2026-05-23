@@ -154,6 +154,7 @@ impl Reconstructor for BoundaryInterpReconstructor {
             vertices,
             uv_coords: uvs,
             quality_metrics: metrics,
+            scatter_fit: None,
         })
     }
 }

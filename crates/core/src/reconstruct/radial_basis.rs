@@ -131,6 +131,7 @@ impl Reconstructor for RadialBasisReconstructor {
             vertices,
             uv_coords: uvs,
             quality_metrics: metrics,
+            scatter_fit: None,
         })
     }
 }
