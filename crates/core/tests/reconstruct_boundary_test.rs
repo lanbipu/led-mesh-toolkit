@@ -5,6 +5,7 @@ use lmt_core::reconstruct::boundary_interp::BoundaryInterpReconstructor;
 use lmt_core::reconstruct::Reconstructor;
 use lmt_core::shape::{CabinetArray, ShapePrior};
 use lmt_core::uncertainty::Uncertainty;
+use lmt_core::sampling::SamplingMode;
 use nalgebra::Vector3;
 
 fn p(name: &str, x: f64, y: f64, z: f64) -> MeasuredPoint {
@@ -41,6 +42,7 @@ fn boundary_interp_with_top_bottom_complete_works() {
         cabinet_array: CabinetArray::rectangle(4, 2, [500.0, 500.0]),
         shape_prior: ShapePrior::Flat,
         points: pts,
+        sampling_mode: SamplingMode::Grid,
     };
 
     let r = BoundaryInterpReconstructor;
@@ -82,6 +84,7 @@ fn boundary_interp_with_missing_top_corner_not_applicable() {
         cabinet_array: CabinetArray::rectangle(4, 2, [500.0, 500.0]),
         shape_prior: ShapePrior::Flat,
         points: pts,
+        sampling_mode: SamplingMode::Grid,
     };
 
     let r = BoundaryInterpReconstructor;
@@ -108,6 +111,7 @@ fn boundary_interp_flags_interior_point_disagreement() {
         cabinet_array: CabinetArray::rectangle(4, 2, [500.0, 500.0]),
         shape_prior: ShapePrior::Flat,
         points: pts,
+        sampling_mode: SamplingMode::Grid,
     };
 
     let r = BoundaryInterpReconstructor;
@@ -143,6 +147,7 @@ fn boundary_interp_no_middle_dev_when_no_interior_points() {
         cabinet_array: CabinetArray::rectangle(4, 2, [500.0, 500.0]),
         shape_prior: ShapePrior::Flat,
         points: pts,
+        sampling_mode: SamplingMode::Grid,
     };
 
     let r = BoundaryInterpReconstructor;

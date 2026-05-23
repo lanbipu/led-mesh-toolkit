@@ -3,6 +3,7 @@ use lmt_core::measured_points::MeasuredPoints;
 use lmt_core::point::{MeasuredPoint, PointSource};
 use lmt_core::shape::{CabinetArray, ShapePrior};
 use lmt_core::uncertainty::Uncertainty;
+use lmt_core::sampling::SamplingMode;
 use nalgebra::Vector3;
 
 fn sample_frame() -> CoordinateFrame {
@@ -34,6 +35,7 @@ fn full_collection_round_trips_through_yaml() {
             sample_point("MAIN_V001_R001", 0.0, 0.0, 0.0),
             sample_point("MAIN_V005_R005", 2.0, 0.0, 2.0),
         ],
+        sampling_mode: SamplingMode::Grid,
     };
     let yaml = serde_yaml::to_string(&mp).unwrap();
     let back: MeasuredPoints = serde_yaml::from_str(&yaml).unwrap();
@@ -56,6 +58,7 @@ fn lookup_by_name() {
             sample_point("MAIN_V001_R001", 0.0, 0.0, 0.0),
             sample_point("MAIN_V002_R001", 0.5, 0.0, 0.0),
         ],
+        sampling_mode: SamplingMode::Grid,
     };
     let found = mp.find("MAIN_V001_R001").unwrap();
     assert_eq!(found.name, "MAIN_V001_R001");

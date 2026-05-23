@@ -10,6 +10,7 @@ pub mod export;
 pub mod measured_points;
 pub mod point;
 pub mod reconstruct;
+pub mod sampling;
 pub mod shape;
 pub mod surface;
 pub mod triangulate;

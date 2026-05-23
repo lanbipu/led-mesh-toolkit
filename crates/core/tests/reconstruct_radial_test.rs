@@ -5,6 +5,7 @@ use lmt_core::reconstruct::radial_basis::RadialBasisReconstructor;
 use lmt_core::reconstruct::Reconstructor;
 use lmt_core::shape::{CabinetArray, ShapePrior};
 use lmt_core::uncertainty::Uncertainty;
+use lmt_core::sampling::SamplingMode;
 use nalgebra::Vector3;
 
 fn p(name: &str, x: f64, y: f64, z: f64) -> MeasuredPoint {
@@ -40,6 +41,7 @@ fn radial_basis_reproduces_anchor_points_exactly() {
             p("MAIN_V005_R005", 2.0, 0.0, 2.0),
             p("MAIN_V003_R003", 1.0, 0.0, 1.0),
         ],
+        sampling_mode: SamplingMode::Grid,
     };
 
     let r = RadialBasisReconstructor;
@@ -68,6 +70,7 @@ fn radial_basis_with_only_4_corners_is_not_applicable() {
             p("MAIN_V001_R005", 0.0, 0.0, 2.0),
             p("MAIN_V005_R005", 2.0, 0.0, 2.0),
         ],
+        sampling_mode: SamplingMode::Grid,
     };
     let r = RadialBasisReconstructor;
     assert!(!r.applicable(&mp));
@@ -81,6 +84,7 @@ fn radial_basis_needs_more_than_4_points() {
         cabinet_array: CabinetArray::rectangle(4, 4, [500.0, 500.0]),
         shape_prior: ShapePrior::Flat,
         points: vec![p("MAIN_V001_R001", 0.0, 0.0, 0.0)],
+        sampling_mode: SamplingMode::Grid,
     };
     let r = RadialBasisReconstructor;
     assert!(!r.applicable(&mp));
@@ -101,6 +105,7 @@ fn radial_basis_rejects_clustered_anchors_without_corners() {
             p("MAIN_V002_R003", 0.5, 0.0, 1.0),
             p("MAIN_V003_R003", 1.0, 0.0, 1.0),
         ],
+        sampling_mode: SamplingMode::Grid,
     };
     let r = RadialBasisReconstructor;
     assert!(
@@ -124,6 +129,7 @@ fn radial_basis_ignores_out_of_grid_anchor_names() {
             p("MAIN_V005_R005", 2.0, 0.0, 2.0),
             p("MAIN_V999_R999", 100.0, 0.0, 100.0), // out of grid
         ],
+        sampling_mode: SamplingMode::Grid,
     };
     let r = RadialBasisReconstructor;
     assert!(
@@ -147,6 +153,7 @@ fn radial_basis_dedupes_repeated_anchor_names() {
             p("MAIN_V005_R005", 2.0, 0.0, 2.0),
             p("MAIN_V001_R001", 0.0, 0.0, 0.0), // duplicate of corner
         ],
+        sampling_mode: SamplingMode::Grid,
     };
     let r = RadialBasisReconstructor;
     assert!(

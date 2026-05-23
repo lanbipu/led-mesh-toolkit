@@ -4,6 +4,7 @@ use lmt_core::point::{MeasuredPoint, PointSource};
 use lmt_core::reconstruct::auto_reconstruct;
 use lmt_core::shape::{CabinetArray, ShapePrior};
 use lmt_core::uncertainty::Uncertainty;
+use lmt_core::sampling::SamplingMode;
 use nalgebra::Vector3;
 
 fn p(name: &str, x: f64, y: f64, z: f64) -> MeasuredPoint {
@@ -38,6 +39,7 @@ fn full_grid_picks_direct_link() {
         cabinet_array: CabinetArray::rectangle(3, 2, [500.0, 500.0]),
         shape_prior: ShapePrior::Flat,
         points: pts,
+        sampling_mode: SamplingMode::Grid,
     };
     let surface = auto_reconstruct(&mp).unwrap();
     assert_eq!(surface.quality_metrics.method, "direct_link");
@@ -56,6 +58,7 @@ fn only_corners_falls_back_to_nominal() {
             p("MAIN_V001_R003", 0.0, 0.0, 1.0),
             p("MAIN_V003_R003", 1.0, 0.0, 1.0),
         ],
+        sampling_mode: SamplingMode::Grid,
     };
     let surface = auto_reconstruct(&mp).unwrap();
     assert_eq!(surface.quality_metrics.method, "nominal");
@@ -82,6 +85,7 @@ fn top_bottom_plus_interior_picks_radial_basis() {
         cabinet_array: CabinetArray::rectangle(4, 4, [500.0, 500.0]),
         shape_prior: ShapePrior::Flat,
         points: pts,
+        sampling_mode: SamplingMode::Grid,
     };
 
     let surface = auto_reconstruct(&mp).unwrap();
@@ -124,6 +128,7 @@ fn boundary_only_falls_to_boundary_interp() {
         cabinet_array: CabinetArray::rectangle(4, 4, [500.0, 500.0]),
         shape_prior: ShapePrior::Flat,
         points: pts,
+        sampling_mode: SamplingMode::Grid,
     };
 
     let surface = auto_reconstruct(&mp).unwrap();

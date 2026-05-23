@@ -5,6 +5,7 @@ use lmt_core::reconstruct::nominal::NominalReconstructor;
 use lmt_core::reconstruct::Reconstructor;
 use lmt_core::shape::{CabinetArray, ShapePrior};
 use lmt_core::uncertainty::Uncertainty;
+use lmt_core::sampling::SamplingMode;
 use nalgebra::Vector3;
 
 fn frame_at_origin() -> CoordinateFrame {
@@ -39,6 +40,7 @@ fn nominal_flat_4x4_panel_emits_25_vertices() {
             p("MAIN_V001_R005", 0.0, 0.0, 2.0),
             p("MAIN_V005_R005", 2.0, 0.0, 2.0),
         ],
+        sampling_mode: SamplingMode::Grid,
     };
 
     let r = NominalReconstructor;
@@ -67,6 +69,7 @@ fn nominal_with_too_few_points_returns_error() {
             p("MAIN_V001_R001", 0.0, 0.0, 0.0),
             // only 1 corner; need 4
         ],
+        sampling_mode: SamplingMode::Grid,
     };
 
     let r = NominalReconstructor;

@@ -3,6 +3,7 @@ use lmt_core::measured_points::MeasuredPoints;
 use lmt_core::point::{MeasuredPoint, PointSource};
 use lmt_core::reconstruct::direct::DirectLinkReconstructor;
 use lmt_core::reconstruct::Reconstructor;
+use lmt_core::sampling::SamplingMode;
 use lmt_core::shape::{CabinetArray, ShapePrior};
 use lmt_core::uncertainty::Uncertainty;
 use nalgebra::Vector3;
@@ -36,6 +37,7 @@ fn full_grid_3x2() -> MeasuredPoints {
         cabinet_array: CabinetArray::rectangle(3, 2, [500.0, 500.0]),
         shape_prior: ShapePrior::Flat,
         points: pts,
+        sampling_mode: SamplingMode::Grid,
     }
 }
 
