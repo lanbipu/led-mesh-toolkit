@@ -101,5 +101,6 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<MeasuredPoints> {
         cabinet_array: ipc_to_ir_cabinet(&args.project.cabinet_array)?,
         shape_prior: ipc_to_ir_shape(&args.project.shape_prior)?,
         points,
+        sampling_mode: lmt_core::sampling::SamplingMode::Grid,
     })
 }

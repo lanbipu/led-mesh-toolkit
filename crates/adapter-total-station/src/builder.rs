@@ -150,6 +150,7 @@ pub fn build_screen_measured_points_with_outcome(
         cabinet_array,
         shape_prior,
         points,
+        sampling_mode: lmt_core::sampling::SamplingMode::Grid,
     };
 
     Ok((mp, outcome))
