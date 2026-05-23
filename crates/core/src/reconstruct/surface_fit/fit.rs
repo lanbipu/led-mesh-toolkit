@@ -1,4 +1,4 @@
-use nalgebra::{Matrix3, Vector3};
+use nalgebra::{Matrix3, Vector2, Vector3};
 
 /// inlier 判定阈值（米）。与 geometric_naming 的 50mm 同量级。
 pub const INLIER_THRESH_M: f64 = 0.050;
@@ -72,7 +72,8 @@ pub fn fit_plane(pts: &[Vector3<f64>]) -> Option<PlaneFit> {
     let centroid =
         best.iter().map(|&i| pts[i]).sum::<Vector3<f64>>() / best.len() as f64;
     let normal = pca_smallest_axis(pts, &best, centroid);
-    let outliers = (0..pts.len()).filter(|i| !best.contains(i)).collect();
+    let best_set: std::collections::HashSet<usize> = best.iter().copied().collect();
+    let outliers = (0..pts.len()).filter(|i| !best_set.contains(i)).collect();
     Some(PlaneFit {
         normal,
         centroid,
@@ -82,6 +83,7 @@ pub fn fit_plane(pts: &[Vector3<f64>]) -> Option<PlaneFit> {
 }
 
 /// 协方差矩阵最小特征向量 = 平面法向。
+// 假设 inlier>=3 且非全共线；共线时协方差秩为 1、最小特征向量不稳定，但 RANSAC 候选阶段已用叉积滤掉共线三点。
 fn pca_smallest_axis(
     pts: &[Vector3<f64>],
     idx: &[usize],
@@ -102,10 +104,118 @@ fn pca_smallest_axis(
     eig.eigenvectors.column(min_k).normalize().into()
 }
 
+pub struct CylinderFit {
+    pub axis: Vector3<f64>,
+    pub center_xy: Vector2<f64>,
+    pub radius_m: f64,
+    pub inliers: Vec<usize>,
+    pub outliers: Vec<usize>,
+}
+
+/// 第一版：固定竖直轴，把点投到水平面跑 RANSAC 圆拟合（Kåsa 代数法精修）。
+pub fn fit_cylinder(pts: &[Vector3<f64>]) -> Option<CylinderFit> {
+    if pts.len() < 3 {
+        return None;
+    }
+    let xy: Vec<Vector2<f64>> = pts.iter().map(|p| Vector2::new(p.x, p.y)).collect();
+    let mut rng = Lcg::new(0xC0FFEE);
+    let mut best: Vec<usize> = vec![];
+    for _ in 0..RANSAC_ITERS {
+        let Some((a, b, c)) = pick3(&mut rng, xy.len()) else {
+            break;
+        };
+        let Some((cc, r)) = circle_from_3(xy[a], xy[b], xy[c]) else {
+            continue;
+        };
+        let inliers: Vec<usize> = (0..xy.len())
+            .filter(|&i| ((xy[i] - cc).norm() - r).abs() < INLIER_THRESH_M)
+            .collect();
+        if inliers.len() > best.len() {
+            best = inliers;
+        }
+    }
+    if best.len() < 3 {
+        return None;
+    }
+    let (center_xy, radius_m) = kasa_circle(&xy, &best)?;
+    let best_set: std::collections::HashSet<usize> = best.iter().copied().collect();
+    let outliers = (0..pts.len()).filter(|i| !best_set.contains(i)).collect();
+    Some(CylinderFit {
+        axis: Vector3::new(0.0, 0.0, 1.0),
+        center_xy,
+        radius_m,
+        inliers: best,
+        outliers,
+    })
+}
+
+/// 三点定圆（外接圆）。共线返回 None。
+fn circle_from_3(a: Vector2<f64>, b: Vector2<f64>, c: Vector2<f64>) -> Option<(Vector2<f64>, f64)> {
+    let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+    if d.abs() < 1e-12 {
+        return None;
+    }
+    let a2 = a.x * a.x + a.y * a.y;
+    let b2 = b.x * b.x + b.y * b.y;
+    let c2 = c.x * c.x + c.y * c.y;
+    let ux = (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d;
+    let uy = (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d;
+    let center = Vector2::new(ux, uy);
+    Some((center, (a - center).norm()))
+}
+
+/// Kåsa 代数最小二乘圆拟合：解 D x + E y + F = -(x²+y²)。
+fn kasa_circle(xy: &[Vector2<f64>], idx: &[usize]) -> Option<(Vector2<f64>, f64)> {
+    let n = idx.len() as f64;
+    let (mut sx, mut sy, mut sxx, mut syy, mut sxy) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    let (mut sxz, mut syz, mut sz) = (0.0, 0.0, 0.0);
+    for &i in idx {
+        let (x, y) = (xy[i].x, xy[i].y);
+        let z = -(x * x + y * y);
+        sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y;
+        sxz += x * z; syz += y * z; sz += z;
+    }
+    let m = Matrix3::new(sxx, sxy, sx, sxy, syy, sy, sx, sy, n);
+    let rhs = Vector3::new(sxz, syz, sz);
+    let sol = m.lu().solve(&rhs)?;
+    let (dd, ee, ff) = (sol[0], sol[1], sol[2]);
+    let cx = -dd / 2.0;
+    let cy = -ee / 2.0;
+    let r = (cx * cx + cy * cy - ff).sqrt();
+    if !r.is_finite() {
+        return None;
+    }
+    Some((Vector2::new(cx, cy), r))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use nalgebra::Vector3;
+
+    fn cylinder_arc_with_outliers() -> Vec<Vector3<f64>> {
+        let mut v = vec![];
+        let r = 9.5_f64;
+        let (cx, cy) = (1.0_f64, 0.5_f64);
+        for k in 0..40 {
+            let t = -80.0_f64.to_radians() + (160.0_f64.to_radians()) * (k as f64 / 39.0);
+            for &z in &[2.0_f64, 4.0_f64] {
+                v.push(Vector3::new(cx + r * t.cos(), cy + r * t.sin(), z));
+            }
+        }
+        v.push(Vector3::new(cx + 0.2, cy, 3.0));
+        v.push(Vector3::new(cx + 20.0, cy, 3.0));
+        v
+    }
+
+    #[test]
+    fn fit_cylinder_recovers_radius_and_drops_outliers() {
+        let pts = cylinder_arc_with_outliers();
+        let fit = fit_cylinder(&pts).expect("should fit");
+        assert!((fit.radius_m - 9.5).abs() < 0.05, "radius={}", fit.radius_m);
+        assert_eq!(fit.outliers.len(), 2);
+        assert!(fit.axis.z.abs() > 0.99);
+    }
 
     fn plane_grid_with_outliers() -> Vec<Vector3<f64>> {
         let mut v = vec![];
