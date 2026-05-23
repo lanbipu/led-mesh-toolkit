@@ -1,8 +1,8 @@
 # Surface-Fit Reconstruct — 设计文档
 
-- 日期：2026-05-23（2026-05-24 经 Codex adversarial review 修订）
+- 日期：2026-05-23（2026-05-24 经两轮 review 修订：Codex adversarial + code-review max）
 - 分支：`worktree-feat+surface-fit-reconstruct`（基线已 rebase 到本地 main `0970689`，含 lmt CLI 重构）
-- 状态：设计已逐节确认 + adversarial review 修订，待 spec 复审 → writing-plans
+- 状态：设计已逐节确认 + 两轮 review 修订，待 spec 复审 → writing-plans
 
 ## 1. 背景与动机
 
@@ -21,41 +21,47 @@ nominal` 四级序列）有一个共同前提：**每个测量点必须带 `<scr
 
 ### 能力边界（明确写出，避免误用）
 
-仅支持**形状参数化可拟合**的屏：平面、圆柱面。完全不规则的自由曲面屏不在范围内，仍需
-密集网格测量。本功能是"扩大适用范围"，不是"取代网格测量"。
+- 仅支持**形状参数化可拟合**的屏：平面、圆柱面。自由曲面屏不在范围内，仍需密集网格测量。
+- **scatter 模式仍需要完整 `project.yaml`**：`cabinet_array`（cols/rows/cabinet_size_mm）与
+  `shape_prior` 跟 grid 模式一样从 project.yaml 读（见 §5）。本功能省掉的是"按网格点逐点测量"，
+  不是"省掉屏体配置"。光有一个 CSV 不够。
 
 ## 2. 已确认的设计决策
 
 | # | 决策点 | 选定方案 |
 |---|---|---|
 | 1 | 形状范围 | 平面 + 圆柱面（球面/自由曲面不做）|
-| 2 | 散点入口 | 复用 `import → reconstruct` 两步；import 加散点模式跳过网格命名 |
-| 3 | 网格定位 | inlier 投影取覆盖范围当屏边界，**且与 cabinet 物理尺寸做一致性校验**（见 §9）|
+| 2 | 散点入口 | 复用 `import → reconstruct` 两步；import 加 scatter 模式，走**独立路径**跳过 SOP 坐标系校验与网格命名 |
+| 3 | 网格定位 | inlier 投影取覆盖范围当屏边界，**且与 `cabinet_array.total_size_mm()` 做单位换算后的一致性校验**（见 §9.1）|
 | 4 | 屏面点筛选 | 全用上 + robust fitting（RANSAC）自动剔除离群杂点 |
-| 5 | 代码落地 | measured.yaml 加 `sampling_mode`，reconstruct 顶层显式分流 |
-| 6 | 朝向控制 | 默认拟合几何自动导出 frame；可选 frame hints 覆盖；全程写入 report（见 §9）|
+| 5 | 代码落地 | measured.yaml 加 `sampling_mode`，reconstruct 顶层显式分流（不进 auto 序列）|
+| 6 | 朝向控制 | 第一版：拟合几何**自动导出 frame** + `FrameDerivation` 写进 report + 朝向不确定 warning。frame hints + 强制 export gate **推迟到后续**（见 §9.2、§13）|
 | 7 | 点身份 | scatter 点保留"行号+原始 label"稳定唯一 id，供 outlier 追溯（见 §5）|
+| 8 | 圆柱拟合策略 | 第一版默认"**固定竖直轴 + 投影平面内 RANSAC 圆拟合**"（已验证可行）；通用轴向 RANSAC 留 backlog（见 §4）|
+| 9 | 错误码 | **新增 `surface_fit_failed`**，三处同步（现状无 `reconstruction` 码，见 §8）|
 
 ## 3. 端到端数据流
 
 ```
-散点 CSV（可含杂点 CD/A/BZ）
+散点 CSV（可含杂点 CD/A/BZ）+ 已配好的 project.yaml（cabinet_array + shape_prior）
   │ lmt total-station import --mode scatter [--columns x=3,y=4,z=5]
-  │   ① 宽松解析：取 (x,y,z) + 生成稳定唯一 id（行号+原始 label）；不建 SOP 坐标系、不做网格命名
+  │   scatter 独立路径：① 新 scatter CSV parser 取 (x,y,z) + 生成稳定 id（行号+label）
+  │                     ② 从 project.yaml 读 cabinet_array + shape_prior（同 grid）
+  │                     ③ 不建 SOP 坐标系、不做网格命名、不经 map_to_adapter 的 V_R 校验
   ▼
-measured.yaml  (sampling_mode: scatter, points = 裸坐标 + id, 无 V_R 编号)
-  │ lmt reconstruct surface [--frame-hints ...]
-  │   ② reconstruct 顶层按 sampling_mode 分流
-  ▼  ─ grid    → 现状四级序列（direct_link…nominal）  ← 不动
-     └ scatter → 新模块 surface_fit
+measured.yaml  (sampling_mode: scatter, points = 裸坐标 + 字符串 id, 无 V_R 编号, coordinate_frame=identity)
+  │ lmt reconstruct surface
+  │   reconstruct 顶层（lmt-app/reconstruct.rs）按 sampling_mode 分流
+  ▼  ─ grid    → 现状 auto_reconstruct 四级序列（direct_link…nominal）  ← 不动
+     └ scatter → SurfaceFitReconstructor（不进 auto 序列）
 core::reconstruct::surface_fit
-  ③ robust 拟合（RANSAC）：依 shape_prior 选 平面/圆柱；杂点落为 outlier（记 id+行+残差）
+  ③ robust 拟合（RANSAC）：依 shape_prior 选 平面/圆柱；杂点落为 outlier（记 id+行+坐标+残差）
   ④ inlier 投影到曲面参数空间（圆柱: 角度θ + 高度h；平面: u,v）
-  ⑤ 取 θ/h 覆盖范围当屏边界 → **与 cabinet_count×cabinet_size_mm 期望尺寸一致性校验**
-  ⑥ 按 cabinet (cols+1)×(rows+1) 均匀撒网格，映回 3D；导出 M0.1 IR 坐标系
-  ⑦ frame/unwrap/origin/边界校验结果全写入 report；朝向不确定时 warning
+  ⑤ 取覆盖范围当屏边界 → 与 cabinet_array.total_size_mm() 单位换算后一致性校验（§9.1）
+  ⑥ 按 (cols+1)×(rows+1) 均匀撒网格，映回 3D；uv 用 compute_grid_uv(topology)
+  ⑦ 自动导出 M0.1 IR 坐标系；FrameDerivation + 边界校验 + outlier 明细写进 ScatterFitInfo
   ▼
-ReconstructedSurface（标准结构，填 shape_fit_rms_mm + outliers + ScatterFitInfo）
+ReconstructedSurface（标准结构）+ ReconstructionReport.scatter_fit = Some(ScatterFitInfo)
   │ lmt export obj <run_id> <target>   ← 完全复用，零改动
   ▼
 OBJ（disguise / unreal / neutral）
@@ -63,166 +69,215 @@ OBJ（disguise / unreal / neutral）
 
 ## 4. 核心组件：`surface_fit` 模块
 
-新增 `crates/core/src/reconstruct/surface_fit/`，纯几何、无 IO，五个小单元各管一件事：
+新增 `crates/core/src/reconstruct/surface_fit/`，纯几何、无 IO。`SurfaceFitReconstructor`
+是 **unit struct**（同 `DirectLinkReconstructor`），`impl Reconstructor`，方法签名
+`reconstruct(&self, points: &MeasuredPoints) -> Result<ReconstructedSurface, CoreError>`
+**与 trait 完全一致**（frame hints 第一版不做，不引入第二参数）。拟合 + frame 导出全在
+方法内部自动完成。模块内五个小单元：
 
-| 单元 | 职责 | 输入 → 输出 |
-|---|---|---|
-| `fit.rs` | RANSAC 鲁棒拟合 `fit_plane` / `fit_cylinder`：迭代取最小子集拟合候选曲面，按点到面距离阈值统计 inlier，取 inlier 最多者，再用全体 inlier 最小二乘精修 | 散点 + shape_prior → 曲面参数 + inlier/outlier 划分 |
-| `project.rs` | inlier 投影到曲面参数空间，定屏边界范围。圆柱：θ=绕轴角、h=沿轴高；平面：平面内两正交基 u,v | 曲面 + inlier → (θ,h) 或 (u,v) 的 min/max 范围 |
-| `boundary.rs` | **边界一致性校验**：投影范围导出的弧长/高 vs `cabinet_count×cabinet_size_mm` 期望值，偏差分级 → ok / warning / reject（见 §9）| 范围 + cabinet_array → 校验结论 + 偏差量 |
-| `resample.rs` | 在校验过的参数范围内按 cabinet 列×行均匀撒 (cols+1)×(rows+1) 网格点，映回 3D 模型坐标 | 范围 + cabinet_array → `Vec<Vector3>` |
-| `frame.rs` | 导出 M0.1 IR 坐标系（圆柱轴→+Z 行向上、周向→+X 列、径向朝外→+Y 法向；平面→法向 +Y）；接收可选 frame hints 覆盖 sign/origin/unwrap，并产出可序列化的 `FrameDerivation` 记录 | 曲面 + 可选 hints → CoordinateFrame + FrameDerivation |
+| 单元 | 职责 |
+|---|---|
+| `fit.rs` | RANSAC 鲁棒拟合 `fit_plane` / `fit_cylinder`，返回曲面参数 + inlier/outlier 划分（带每点残差）|
+| `project.rs` | inlier 投影到曲面参数空间。圆柱：θ=绕轴角、h=沿轴高；平面：见下方平面定向 |
+| `boundary.rs` | 边界一致性校验：投影范围导出尺寸（米）×1000 vs `cabinet_array.total_size_mm()`（mm），分级 ok/warning/reject（§9.1）|
+| `resample.rs` | 在校验过的参数范围内按 (cols+1)×(rows+1) 撒网格、映回 3D；uv 调 `crate::uv::compute_grid_uv(topology)` |
+| `frame.rs` | 导出 M0.1 IR 坐标系，产出可序列化 `FrameDerivation`（轴/origin/unwrap 方向）|
 
-入口 `surface_fit::reconstruct(points, frame_hints) -> Result<ReconstructedSurface>`，
-实现 `Reconstructor` trait 保持接口统一，但**由 reconstruct 顶层按 `sampling_mode` 显式
-调用，不进 `auto_reconstruct` 序列**。
+reconstruct 顶层分流：`crates/lmt-app/src/reconstruct.rs` 在调 `auto_reconstruct` 前判
+`measured.sampling_mode`，`Scatter` 走 `SurfaceFitReconstructor.reconstruct(&points)`。
 
 ### 拟合数学要点
 
 - **平面**：RANSAC 取 3 点定候选平面（法向 n、距离 d），inlier = 点到平面距离 < 阈值；
-  全体 inlier 用 PCA / 最小二乘精修法向。
-- **圆柱**：拟合 轴向 a、轴上一点 c、半径 r。**轴向估计是核心难点**（一条近平面的弧线
-  做 PCA 会估出弧的展开方向而非圆柱轴，不可靠），实现阶段二选一：(a) 专用圆柱 RANSAC，
-  取子集联立解轴向+半径；(b) 利用"屏面竖直"先验固定轴向近竖直，再在垂直于轴的平面内做
-  圆拟合（Kåsa 代数法）。inlier = |点到轴距离 − r| < 阈值，全体 inlier 精修。崩铁数据
-  已用"固定竖直轴 + Kåsa"验证可行（残差 0.14%）——但通用性靠 (a)，需在实现阶段评测。
+  全体 inlier PCA 精修法向。
+  - **平面定向（消歧，应对 code-review）**：平面内 u/v 基不能任取，否则网格会旋转/镜像。
+    定向规则：origin 取投影 (u,v) 范围中对应 cabinet (col=0,row=0) 的角；u 基取使
+    Δu : Δv 最接近 `cols : rows`（按 cabinet 物理长宽比）的方向，v 基由 u 与法向叉乘定，
+    符号使 +Z 朝上、构成右手系。
+- **圆柱（决策 8 拍板默认）**：固定轴向近竖直（LED 屏常态），把 inlier 投影到水平面，在
+  其中跑 **RANSAC 圆拟合**（候选圆用 3 点 Kåsa 解，inlier = |点到圆心距 − r| < 阈值），
+  全体 inlier 精修圆心/半径；轴向高度直接取 z。崩铁数据验证可行（残差 0.14%）。
+  通用任意轴向的圆柱 RANSAC 留 backlog（§13）。
+- **inlier 距离阈值**：默认 50mm（与几何命名同量级），常量可调。
 
 ## 5. 数据模型变更
 
 | 改动 | 位置 | 说明 |
 |---|---|---|
-| 加 `sampling_mode: SamplingMode`（`Grid`\|`Scatter`）| `core` `MeasuredPoints` | serde `#[serde(default)]` = `Grid`，旧 measured.yaml 无此字段自动当 Grid，**向后兼容** |
-| scatter 点带**稳定唯一 id** | `MeasuredPoint.name` | scatter 模式 name 存 `行号 + 原始 CSV label`（如 `row6_LEDB-1`），**不留空、拒绝重复**。不用于网格匹配，仅供 outlier 追溯（修订自 Codex Finding 4）|
-| scatter import 不建 SOP 坐标系 | `coordinate_frame` | 存 identity；真实坐标系由 `surface_fit::frame` 拟合后算 |
-| scatter import 报告简化 | import 输出 | 只报"存入 N 个散点"；inlier/outlier 划分在 reconstruct 拟合阶段产生 |
+| 加 `sampling_mode: SamplingMode`（`Grid`\|`Scatter`）| `core` `MeasuredPoints` | serde `#[serde(default)]` = `Grid`，旧 measured.yaml 向后兼容（`MeasuredPoints` 是普通 derive Deserialize，可加）|
+| scatter 点带**稳定唯一 id** | `MeasuredPoint.name` | 存 `行号 + 原始 CSV label`（如 `row6_LEDB-1`），不留空、拒绝重复。仅供 outlier 追溯，不用于网格匹配 |
+| scatter import 走**独立路径** | `lmt-app/total_station.rs` | 不经 `map_to_adapter`（它会校验 `coordinate_system.{origin,x_axis,xy_plane}_point` 为 V_R 格式）；scatter 模式 `coordinate_system` 块可缺省/忽略 |
+| `cabinet_array` + `shape_prior` 来源 | project.yaml | **与 grid 一样从 project.yaml 读**，不是从 CSV 推。scatter import 仍要求项目配好这两项 |
+| `coordinate_frame` = identity | scatter measured.yaml | 真实坐标系由 `surface_fit::frame` 拟合后算；identity frame 通过 `CoordinateFrame` 的 basis 校验 |
+| `ReconstructionReport` 加 `scatter_fit: Option<ScatterFitInfo>` | `lmt-shared/dto.rs` | **列为交付项**：grid 模式为 `None`，scatter 模式 `Some(...)`。`ReconstructionReport` 已在 schema `incomplete` 列表，加字段不改变这点 |
+| import 报告**复用** `TotalStationImportResult` | dto.rs | scatter 模式：`measured_count` = 存入点数，`fabricated_count`/`outlier_count`/`missing_count` = 0（这些 grid 概念在 import 阶段不适用，outlier 在 reconstruct 阶段算并进 ScatterFitInfo）；`warnings` 带 scatter 说明。不新增 import DTO |
 
-`SamplingMode` 作为 core 域类型；被 measured.yaml DTO 引用的部分进 `schema::dump_all()`
-的 `incomplete` 列表并注明"引用 core 域类型"。
+## 6. DTO / schemars
 
-## 6. DTO / schemars（`lmt-shared`）
+- 新增 `lmt-shared` 的 `ScatterFitInfo`（纯标量/数组，**坐标用 `[f64;3]` 不用 `nalgebra::Vector3`**，
+  因 lmt-shared 不依赖 nalgebra 且 schemars 0.8 无 Vector3 impl）：
+  - `shape`: `"plane"` \| `"cylinder"`
+  - `radius_mm: Option<f64>`（圆柱）/ `plane_normal: Option<[f64;3]>`（平面）
+  - `inlier_count: usize`
+  - `outliers: Vec<ScatterOutlier>`，`ScatterOutlier { point_id: String, source_row: usize, coordinates: [f64;3], residual_mm: f64 }`
+  - `param_range`: 覆盖范围（θ/h 或 u/v 的 min/max）
+  - `boundary_check`: 校验结论 + 投影尺寸 vs 期望尺寸（都换算成 mm）
+  - `frame_derivation: FrameDerivation { axis: [f64;3], origin: [f64;3], unwrap_dir: String }`
+- `ScatterFitInfo`、`FrameDerivation`、`ScatterOutlier`、`SamplingMode` 派生
+  `Serialize + Deserialize + JsonSchema`，在 **`crates/lmt-shared/src/schema.rs`** 的
+  `dump_all()` `add!()` 宏块注册（**不是 data/schema.rs，那是 DB migration**）。
+- `quality_metrics.outliers`（`Vec<String>`，core 既有字段）仅放 outlier 的 id 列表（字符串）；
+  **结构化明细放 `ScatterFitInfo.outliers`**，避免把结构体硬塞 `Vec<String>`。
 
-- 新增 `ScatterFitInfo`：拟合形状（plane/cylinder）、半径 or 法向、inlier_count、
-  outlier 明细列表（每条含 `point_id`、`source_row`、`coordinates`、`residual_mm`）、
-  参数覆盖范围（θ/h 或 u/v）、边界校验结论、`FrameDerivation`（导出的轴/origin/unwrap）。
-  派生 `Serialize + Deserialize + JsonSchema`，加进 `schema::dump_all()`。
-- 拟合细节随 run 的 `report.json` 落盘；`quality_metrics` 填
-  `method = surface_fit_cylinder | surface_fit_plane`、`shape_fit_rms_mm`、`outliers`。
-
-## 7. CLI 六件套契约（项目硬要求）
+## 7. CLI 六件套契约
 
 | # | 交付项 | 内容 |
 |---|---|---|
-| ① | lmt-app helper | `total_station.rs` import 加 scatter 分支；`reconstruct.rs` 顶层按 `sampling_mode` 分流到 `surface_fit`，透传 frame hints |
-| ② | Tauri shim | `src-tauri/src/commands/total_station.rs` import command 加 `mode`/`columns` 参数；reconstruct command 加 `frame_hints`（thin wrapper，业务在 lmt-app）；GUI 的 UI 入口后续接，shim 先就位 |
-| ③ | CLI 子命令 | `lmt total-station import --mode scatter [--columns x=3,y=4,z=5]`；`lmt reconstruct surface [--frame-hints origin=...,up=...,x=...]`（不传则自动导出）|
-| ④ | CLI E2E | happy（scatter import→reconstruct→export 出 OBJ）/ refuse（无 --yes）/ dry-run / error envelope（拟合失败 / 边界校验拒绝）|
-| ⑤ | docs/agents-cli.md | import 行补 `--mode`/`--columns`、reconstruct 行补 `--frame-hints`；如新增错误码补对照表 |
-| ⑥ | DTO schemars | `ScatterFitInfo`、`SamplingMode`、`FrameDerivation` 进 schema dump |
+| ① | lmt-app helper | `total_station.rs` import 加 scatter 独立分支（新 parser + 从 project.yaml 取 cabinet/shape + 生成 id）；`reconstruct.rs` 顶层按 `sampling_mode` 分流到 `SurfaceFitReconstructor` |
+| ② | Tauri shim | `src-tauri/src/commands/total_station.rs` import command 加 `mode`/`columns` 参数（thin wrapper）；reconstruct command 无新参数；GUI UI 后续接 |
+| ③ | CLI 子命令 | `lmt total-station import --mode scatter [--columns x=3,y=4,z=5]`；`lmt reconstruct surface` 不变（自动分流）。**无 `--frame-hints`**（推迟，§13）|
+| ④ | CLI E2E | happy（scatter import→reconstruct→export 出 OBJ）/ refuse（无 --yes）/ dry-run / error envelope（`surface_fit_failed`：inlier 太少 / 边界 reject）|
+| ⑤ | docs/agents-cli.md | import 行补 `--mode`/`--columns`；错误码表加 `surface_fit_failed` |
+| ⑥ | DTO schemars | `ScatterFitInfo`/`ScatterOutlier`/`FrameDerivation`/`SamplingMode` 进 `schema.rs` 的 dump_all |
 
 ## 8. 错误处理
 
-- **优先复用**现有 `reconstruction` 错误码，message 说明拟合失败原因（inlier 比例太低 /
-  数据不成形 / shape_prior 与数据不符 / 边界与物理尺寸严重不符），避免动错误码三处契约。
-- 仅当语义确需区分时才新增 `surface_fit_failed`，那就三处同步（`error_codes` 常量 +
-  `exit_codes` + docs 错误码表）。第一版倾向不新增。
+现状事实（已核对）：`error_codes`（envelope.rs:96-117）**没有 `reconstruction` 码**；
+`CoreError::Reconstruction` → `LmtError::Core` → `invalid_input`（envelope.rs:125）。
+
+- **新增 `surface_fit_failed` 错误码，三处同步**（envelope.rs 注释明确要求）：
+  ① `error_codes::SURFACE_FIT_FAILED` 常量；② `exit_codes` 加退出码映射；
+  ③ `docs/agents-cli.md` 错误码表。并在 lmt-app 层把 surface_fit 的拟合失败/边界 reject
+  映射到此码（与普通 `invalid_input` 区分，让 agent 能按 exit code 辨别"拟合数学失败"
+  vs "传错参数"）。
 - import 阶段：重复或空的 point id → `invalid_input` 拒绝。
+- 触发 `surface_fit_failed` 的情形：inlier 比例低于阈值（暂定 50%）、边界校验 reject、
+  RANSAC 无法收敛。
 
-## 9. 边界与朝向安全机制（应对 Codex Finding 2 / 3）
+## 9. 边界与朝向安全机制
 
-纯靠 inlier 投影 min/max 框定边界，有两个静默失效模式，且产出的错 OBJ 能通过 vertex
-count / finite validation——下游难发现。两道防线：
+### 9.1 边界一致性校验（含单位换算，应对 code-review 单位 bug）
 
-### 9.1 边界一致性校验（Finding 2）
+`boundary.rs` 把投影范围导出的物理尺寸**换算成 mm**后与 `cabinet_array.total_size_mm()`
+对比（顶点是米，`total_size_mm()` 是 mm，必须 ×1000）：
 
-`boundary.rs` 把投影范围导出的物理尺寸（圆柱：弧长 = R×Δθ、高 = Δh；平面：Δu×Δv）跟
-`cabinet_count × cabinet_size_mm` 的期望尺寸对比：
-
-- 偏差 ≤ ±1 cabinet（或 ±2%，取大者）：ok。
-- 偏差中等：产出 + warning，report 记两组尺寸。
-- 偏差 > 阈值（暂定 ±10% 或 ±2 cabinet，实现阶段调）：reject，报错提示"测量未覆盖到屏边缘"
+- 圆柱：投影宽 = `R_m × Δθ × 1000` mm，高 = `Δh_m × 1000` mm。
+- 平面：投影 `Δu_m × 1000`、`Δv_m × 1000` mm。
+- 期望：`total_size_mm() = [cabinet_size_mm[0]×cols, cabinet_size_mm[1]×rows]`。
+- 偏差 ≤ ±1 cabinet（或 ±2%，取大）：ok；中等：warning + report 记两组尺寸；
+  > ±10% 或 ±2 cabinet（暂定，可调）：reject（`surface_fit_failed`），提示"未覆盖屏边缘"
   或"混入屏外同曲面点"。
 
-覆盖两个失效模式：① 同曲面屏外点撑大范围；② 缺失边缘点缩小范围。两者都会让投影范围偏离
-cabinet 物理总尺寸而被抓住。
+覆盖两个失效模式：① 同曲面屏外点撑大范围；② 缺失边缘点缩小范围。平面同样校验（用上面
+平面投影尺寸），配合 §4 的平面定向规则防止旋转/镜像。
 
-### 9.2 朝向可控 + 可追溯（Finding 3）
+### 9.2 朝向可追溯（第一版）+ hints（后续）
 
-scatter 默认由拟合几何自动导出 frame，但：
-
-- **全程记录**：导出的 `CoordinateFrame`、cylinder unwrap 方向、origin corner 选择写入
-  report 的 `FrameDerivation`，下游可核对。
-- **可选 frame hints**：`--frame-hints` 传 origin / up / x-direction / outward，覆盖自动
-  结果的 sign / origin / unwrap 歧义。
-- **无 hints 时**：产出但带 `orientation-uncertain` warning；可配置为仅允许 neutral
-  target 导出（debug 用），disguise/unreal 需确认朝向后再导。
+- **第一版**：拟合几何自动导出 frame；`FrameDerivation`（轴/origin/unwrap 方向）写进
+  `ScatterFitInfo` → report，下游可核对；导出带 `orientation-uncertain` warning（在 CLI
+  human 输出与 report warnings 里）。
+- **推迟到后续**（§13）：`--frame-hints` 显式覆盖、以及"仅允许 neutral target 导出"的
+  强制 gate。这两个需要定义 CLI hint 格式 + 在 surface/report 加标志位 + export 层加拦截，
+  第一版不做；朝向可控性靠"记录 + warning + 用户看 report 核对"满足。
 
 ## 10. 拍板细节（实现时遵循）
 
-- **坐标系自动导出**：grid 模式靠 CSV 前 3 个 SOP 点；scatter 模式无此约定，坐标系由拟合
-  曲面几何自动导出，朝向歧义由 §9.2 的记录 + hints 兜底。
-- **CSV 列映射**：scatter import 默认按"末尾 3 个数值列 = xyz"猜；猜不准用
-  `--columns x=3,y=4,z=5`（1-based）显式指定。兼容用户真实的 `name,空,x,y,z` 非标格式。
+- **scatter CSV parser（新增，不复用 `parse_csv`）**：现状 `parse_csv` 要表头且 `name`
+  必须解析为非零 `u32`，拒绝 `LEDB-1` 这类标签。scatter 用独立 parser：无表头要求；按
+  `--columns x=C,y=C,z=C`（1-based 列号，默认"末尾 3 个数值列"）取坐标；可选 label 列
+  原样留存；point id = `row{行号}_{label或空}`，保证唯一。产出直接是带 string id 的散点
+  集（不经 `RawPoint` 的 u32 instrument_id 体系）。
+- **scatter 模式 `coordinate_system`**：project.yaml 的 `coordinate_system` 块在 scatter
+  模式可缺省；scatter import 不读它、不校验 V_R 格式。
+- **坐标系自动导出**：见 §9.2；朝向歧义由 `FrameDerivation` 记录 + warning 兜底。
 
 ## 11. 测试策略
 
 - **core 单元测试**：合成已知半径圆柱 / 平面散点 + 注入离群点 → 验证 RANSAC 恢复
-  半径·法向、正确剔除离群、重采样顶点数 = (cols+1)×(rows+1)、坐标系符合 M0.1 IR。
-- **拒绝 / 边界测试（应对 Finding 2/3/4）**：
-  - partial contour（缺边缘点）→ 边界校验应 warning/reject。
-  - same-surface off-screen point（屏外同曲面点）→ 边界校验应抓出。
-  - frame sign flip → `FrameDerivation` 记录正确、hints 能覆盖。
-  - empty / duplicate labels → import 拒绝。
-- **真实数据回归**：用崩铁 CSV 做 fixture，断言拟合出 R≈9523mm、张角≈165°、网格合理，
-  且边界校验与 cabinet 物理尺寸自洽（呼应 27480 vs 55×500 的交叉验证）。
+  半径·法向、剔除离群、顶点数 = (cols+1)×(rows+1)、坐标系符合 M0.1 IR、uv 与 grid 一致。
+- **回归 / 拒绝测试（应对两轮 review）**：
+  - 单位换算：构造米级真实屏，断言边界校验**不会**因 mm/m 混用误判 reject。
+  - 平面定向：旋转/镜像输入 → 网格行列与 cabinet 对齐，不产出转 90°/镜像的屏。
+  - partial contour（缺边缘）/ same-surface off-screen point → 边界校验 warning/reject。
+  - scatter parser：字符串 label（`LEDB-1`）能解析、空/重复 id 被拒。
+  - 错误码：拟合失败走 `surface_fit_failed` 且 exit code 与 `invalid_input` 不同。
+- **真实数据回归**：崩铁 CSV 做 fixture，断言 R≈9523mm、张角≈165°、边界校验与 cabinet
+  物理尺寸自洽（27480 vs 55×500）。fixture 见 §12 隐私说明。
 - **CLI E2E**：§7④ 四类。
 - 合并前自检：`cargo test --workspace`、`lmt --json schema | jq`（新 DTO 进 dump）、
-  `lmt total-station import --help`、`lmt reconstruct surface --help`（新参数注册）。
+  `lmt total-station import --help`。
 
 ## 12. 文件清单（改 / 新增）
 
 新增：
 - `crates/core/src/reconstruct/surface_fit/{mod,fit,project,boundary,resample,frame}.rs`
+- scatter CSV parser（`crates/adapter-total-station/src/` 新模块，或 lmt-app 内）
 - `crates/lmt-cli/tests/cli_e2e.rs` 的 scatter case
-- core 测试 fixture（合成 + 崩铁真实 CSV）
+- core 测试 fixture（合成 + 崩铁脱敏 CSV）
 
 修改：
-- `crates/core/src/measured_points.rs`（`sampling_mode` + scatter 点 id）
+- `crates/core/src/measured_points.rs`（`sampling_mode`）
 - `crates/core/src/shape.rs` 或新增（`SamplingMode` enum）
-- `crates/core/src/reconstruct/mod.rs`（如需暴露 surface_fit 入口）
-- `crates/lmt-app/src/reconstruct.rs`（顶层分流 + frame hints 透传）
-- `crates/lmt-app/src/total_station.rs`（scatter import 分支 + id 生成）
-- `crates/adapter-total-station/src/csv_parser.rs`（宽松解析 + 列映射，或新增 scatter parser）
-- `crates/lmt-shared/src/dto.rs`（`ScatterFitInfo`、`SamplingMode`、`FrameDerivation`）
-- `crates/lmt-shared/src/data/schema.rs`（`dump_all`）
-- `crates/lmt-cli/src/cli.rs`（`--mode`/`--columns`/`--frame-hints`）
-- `crates/lmt-cli/src/commands/total_station.rs`、`crates/lmt-cli/src/commands/reconstruct.rs`
-- `src-tauri/src/commands/total_station.rs`、`src-tauri/src/commands/reconstruct.rs`
-- `docs/agents-cli.md`
+- `crates/core/src/reconstruct/mod.rs`（导出 surface_fit）
+- `crates/lmt-app/src/reconstruct.rs`（顶层按 sampling_mode 分流）
+- `crates/lmt-app/src/total_station.rs`（scatter 独立 import 分支 + id 生成）
+- `crates/lmt-shared/src/dto.rs`（`ScatterFitInfo`/`ScatterOutlier`/`FrameDerivation`；
+  `ReconstructionReport` 加 `scatter_fit` 字段；`SamplingMode` 暴露）
+- **`crates/lmt-shared/src/schema.rs`**（dump_all 的 add! 宏 —— 不是 data/schema.rs）
+- `crates/lmt-shared/src/envelope.rs`（`error_codes::SURFACE_FIT_FAILED`）
+- `crates/lmt-shared/src/exit_codes.rs`（退出码映射）
+- `crates/lmt-cli/src/cli.rs`（import `--mode`/`--columns`）
+- `crates/lmt-cli/src/commands/total_station.rs`
+- `src-tauri/src/commands/total_station.rs`（import shim 加参数）
+- `docs/agents-cli.md`（import 参数 + `surface_fit_failed` 错误码表）
 
-## 13. 非目标（YAGNI）
+## 13. 非目标（YAGNI / 后续）
 
 - 球面 / 自由曲面拟合。
+- 通用任意轴向的圆柱 RANSAC（第一版固定竖直轴）。
+- `--frame-hints` 显式朝向覆盖 + "仅 neutral 导出"的强制 export gate（第一版靠记录+warning）。
 - scatter 模式的 GUI UI 入口（Tauri shim 就位，UI 后续）。
 - scatter 模式的现场指令卡（指令卡服务于 grid SOP）。
 - 多曲面 / 拼接屏的自动分段拟合。
 
 ## 14. 成功标准
 
-1. 用崩铁 CSV：`import --mode scatter` → `reconstruct surface` → `export obj` 三步出 OBJ，
-   拟合 R≈9523mm、张角≈165°，`shape_fit_rms` 小，杂点（CD/A/BZ）被剔除为 outlier 且
-   report 能定位其行号。
-2. 边界校验：投影范围与 cabinet 物理尺寸自洽；构造缺边缘 / 屏外点的 fixture 能被抓出。
-3. `FrameDerivation` 写入 report；frame hints 能覆盖自动朝向。
-4. CLI 四类 E2E 全过。
-5. `cargo test --workspace` 全过。
-6. `lmt --json schema` 含 `ScatterFitInfo` / `SamplingMode` / `FrameDerivation`。
-7. 旧 grid 流程（现状四级序列）行为不变，回归测试不破。
+1. 用崩铁 CSV（+ 配好 project.yaml）：`import --mode scatter` → `reconstruct surface` →
+   `export obj` 三步出 OBJ，拟合 R≈9523mm、张角≈165°，杂点（CD/A/BZ）被剔除为 outlier，
+   report 的 `scatter_fit.outliers` 能定位其行号/坐标/残差。
+2. 边界校验：单位换算正确（米级屏不误判）；缺边缘 / 屏外点 fixture 被抓出。
+3. 平面定向：旋转/镜像输入不产出错位网格。
+4. `surface_fit_failed` 错误码三处同步，拟合失败 exit code 与 `invalid_input` 不同。
+5. `FrameDerivation` 写入 report；朝向不确定有 warning。
+6. CLI 四类 E2E 全过；`cargo test --workspace` 全过。
+7. `lmt --json schema` 含 `ScatterFitInfo`/`SamplingMode`/`FrameDerivation`。
+8. 旧 grid 流程行为不变，回归测试不破。
 
-## 15. 对抗性 review 的回应（Codex，2026-05-24）
+## 15. Codex adversarial review 回应（2026-05-24）
 
 | Finding | 处理 |
 |---|---|
-| [high] 引用不存在的 crates（lmt-app/lmt-cli/lmt-shared）| **非 spec 错误**：worktree 误建在过时的 origin/main（落后整个 lmt CLI 重构）。已 rebase 到本地 main，13 个引用路径全部核实存在。交付面引用不变。|
-| [high] inlier min/max 边界静默产出错误几何 | 采纳：新增 §9.1 边界一致性校验（投影范围 vs cabinet 物理尺寸）+ 拒绝测试。|
-| [high] 自动导出 frame 朝向不可控 | 采纳：新增 §9.2 frame hints + `FrameDerivation` 全程记录 + 无 hints 时 warning/限制。|
-| [medium] 忽略 label 致 outlier 身份丢失 | 采纳：§5 scatter 点保留"行号+原始 label"稳定唯一 id；§6 outlier 明细带行号/坐标/残差。|
+| [high] 引用不存在的 crates | 非 spec 错误：worktree 误建在过时 origin/main。已 rebase 到本地 main，路径全部核实存在 |
+| [high] inlier min/max 边界静默错误 | 采纳：§9.1 边界一致性校验 + 拒绝测试 |
+| [high] 自动 frame 朝向不可控 | 采纳（调整）：第一版 `FrameDerivation` 记录 + warning；hints/gate 推迟（§9.2、§13）|
+| [medium] outlier 身份丢失 | 采纳：§5 稳定 id；§6 `ScatterFitInfo.outliers` 带行号/坐标/残差 |
+
+## 16. code-review (max) 回应（2026-05-24，15 findings）
+
+| # | Finding | 处理 |
+|---|---|---|
+| 1 | scatter import 被 `map_to_adapter` 的 V_R 校验挡死 | §2/§5：scatter 走独立 import 路径，不经 map_to_adapter，`coordinate_system` 可缺省 |
+| 2 | §9.1 单位 1000× + `cabinet_count` 字段名不存在 | §9.1：明确 ×1000 换算 + 用 `cols/rows` + `total_size_mm()` |
+| 3 | `surface_fit::reconstruct(points, frame_hints)` 破坏 trait 签名 | §4：`SurfaceFitReconstructor` 退回 unit struct，无第二参，签名与 trait 一致（hints 推迟）|
+| 4 | `parse_csv` 拒字符串 label / 位置映射 | §10：新增独立 scatter parser，无表头、`--columns` 位置映射、string id |
+| 5 | `ScatterFitInfo` 无承载字段 | §5：`ReconstructionReport` 加 `scatter_fit: Option<ScatterFitInfo>`，列入 §12 |
+| 6 | `outliers: Vec<String>` 装不下明细 + Vector3 类型 | §6：结构化明细进 `ScatterFitInfo.outliers`；坐标用 `[f64;3]` |
+| 7 | scatter 的 cabinet_array/shape_prior 来源未说 | §1/§5：明确从 project.yaml 读，scatter 仍需完整 project.yaml |
+| 8 | `reconstruction` 错误码不存在 | §8：修正事实，新增 `surface_fit_failed` 三处同步 |
+| 9 | 平面分支边界/frame/uv 未定义 | §4 平面定向规则；§9.1 平面边界校验；uv 复用 compute_grid_uv |
+| 10 | orientation-uncertain 无落地载体 | §9.2：第一版降级为记录+warning，hard gate 推迟（§13）|
+| 11 | 圆柱拟合两候选未拍板 | 决策 8 + §4：拍板默认竖直轴+RANSAC 圆，通用轴向留 backlog |
+| 12 | schema 路径写错 data/schema.rs | §6/§12：改为 `crates/lmt-shared/src/schema.rs` |
+| 13 | `--frame-hints` 格式未定义 | §13：推迟，第一版不做 |
+| 14 | scatter import 报告 DTO 未定义 | §5：复用 `TotalStationImportResult`，scatter 模式 grid 字段填 0 |
+| 15 | uv 生成未提 | §4：复用 `crate::uv::compute_grid_uv(topology)` |
