@@ -114,6 +114,8 @@ pub mod error_codes {
     pub const CONFLICT: &str = "conflict";
     /// 未分类内部错误——后台 bug,记 log。
     pub const INTERNAL: &str = "internal";
+    /// 散点曲面拟合失败(数据不成形 / inlier 太少 / 边界 reject)——与 invalid_input 区分。
+    pub const SURFACE_FIT_FAILED: &str = "surface_fit_failed";
 }
 
 impl From<crate::error::LmtError> for ApiError {
@@ -126,6 +128,7 @@ impl From<crate::error::LmtError> for ApiError {
             E::Db(m) => (error_codes::DB, m.clone()),
             E::NotFound(m) => (error_codes::NOT_FOUND, m.clone()),
             E::InvalidInput(m) => (error_codes::INVALID_INPUT, m.clone()),
+            E::SurfaceFitFailed(m) => (error_codes::SURFACE_FIT_FAILED, m.clone()),
             E::Other(m) => (error_codes::INTERNAL, m.clone()),
         };
         ApiError::new(code, message)
@@ -192,6 +195,10 @@ mod tests {
             (
                 LmtError::InvalidInput("x".into()),
                 error_codes::INVALID_INPUT,
+            ),
+            (
+                LmtError::SurfaceFitFailed("x".into()),
+                error_codes::SURFACE_FIT_FAILED,
             ),
             (LmtError::Other("x".into()), error_codes::INTERNAL),
         ];

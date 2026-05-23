@@ -17,6 +17,8 @@ pub enum LmtError {
     NotFound(String),
     #[error("invalid_input: {0}")]
     InvalidInput(String),
+    #[error("surface_fit_failed: {0}")]
+    SurfaceFitFailed(String),
     #[error("{0}")]
     Other(String),
 }
@@ -104,6 +106,13 @@ mod tests {
         assert!(matches!(lmt, LmtError::Io(_)));
         let json = serde_json::to_string(&lmt).unwrap();
         assert!(json.contains(r#""kind":"io""#), "got: {json}");
+    }
+
+    #[test]
+    fn surface_fit_failed_serializes_with_kind() {
+        let err = LmtError::SurfaceFitFailed("inlier ratio too low".into());
+        let s = serde_json::to_string(&err).unwrap();
+        assert_eq!(s, r#"{"kind":"surface_fit_failed","message":"inlier ratio too low"}"#);
     }
 
 }

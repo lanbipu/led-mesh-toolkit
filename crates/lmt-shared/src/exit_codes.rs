@@ -20,6 +20,7 @@ pub const CANCELLED: i32 = 8;
 pub const TIMEOUT: i32 = 9;
 pub const CONFLICT: i32 = 10;
 pub const INTERNAL: i32 = 11;
+pub const SURFACE_FIT_FAILED: i32 = 12;
 
 /// 把 [`crate::envelope::ApiError`] 的 string code 转成退出码;未知 code
 /// 一律 [`UNKNOWN`],方便老 CLI / 老 agent 在新版本里至少能识别"出错了"。
@@ -35,6 +36,7 @@ pub fn from_api_error_code(code: &str) -> i32 {
         c if c == ec::CANCELLED => CANCELLED,
         c if c == ec::TIMEOUT => TIMEOUT,
         c if c == ec::CONFLICT => CONFLICT,
+        c if c == ec::SURFACE_FIT_FAILED => SURFACE_FIT_FAILED,
         c if c == ec::INTERNAL => INTERNAL,
         _ => UNKNOWN,
     }
@@ -58,6 +60,7 @@ mod tests {
             (ec::TIMEOUT, TIMEOUT),
             (ec::CONFLICT, CONFLICT),
             (ec::INTERNAL, INTERNAL),
+            (ec::SURFACE_FIT_FAILED, SURFACE_FIT_FAILED),
         ];
         // 顺带反推 distinct,防止哪天有人复制粘贴写错把两个 code 映射到同一个数字。
         let mut seen = std::collections::HashSet::new();

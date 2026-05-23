@@ -90,6 +90,7 @@ Failure (`--json`):
 | `timeout` | 9 | Long task timed out (not currently produced) |
 | `conflict` | 10 | Write conflict (reserved; current `cross-screen` import refusal still maps to `invalid_input` for API simplicity) |
 | `internal` | 11 | Uncategorized internal error |
+| `surface_fit_failed` | 12 | 散点曲面拟合失败：数据不成形 / inlier 比例 < 0.5 / 边界校验 reject |
 | _unknown_ | 1 | Caller saw a code not in this table (forward-compat) |
 | _success_ | 0 | OK |
 
