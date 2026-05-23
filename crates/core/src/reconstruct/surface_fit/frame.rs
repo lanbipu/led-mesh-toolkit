@@ -50,31 +50,29 @@ pub fn derive_cylinder_frame(
     (frame, deriv)
 }
 
-/// 平面坐标系：+X=u_dir(列)、+Y=v_dir(行)、+Z=法向。
-/// project_plane 保证 (u×v)·n > 0，basis=[u,v,n] 的 det=(u×v)·n=+1，右手系。
+/// 平面坐标系：+X=列(u_dir)、+Y=法向(v×u)、+Z=行向上(v_dir)。
+/// 与圆柱 [周向(列), radial(法向), up(行)] 统一——两者 +Z 都是行向上(up)，
+/// 匹配 export adapt 的 model-frame +Z up 约定（adapt.rs:8）。
 ///
-/// 注：M0.1 IR 对平面写的 +Y=法向是笔误（[u,n,v] det=-1）；这里统一用
-/// "两个切向量先，法向最后"的 [u,v,n] 排列，与坐标变换约定一致。
+/// basis=[u, v×u, v]，det = u·((v×u)×v) = u·u = 1（v 单位、u⊥v），右手系。
+/// 列/行方向直接取 project_plane 的 u_dir/v_dir，与 resample 撒点方向一致，
+/// 避免镜像；法向由 v×u 推出，符号自洽（不依赖传入的 PCA normal 符号）。
 pub fn derive_plane_frame(
-    normal: Vector3<f64>,
+    _normal: Vector3<f64>,
     proj: &Projection,
 ) -> (CoordinateFrame, FrameDerivation) {
     let (origin, u_dir, v_dir) = proj
         .plane_basis
         .expect("derive_plane_frame requires plane_basis from project_plane");
 
-    // pca_smallest_axis 返回的 normal 符号不确定；project_plane 保证 (u×v)·n_passed_in>0
-    // 并不一定——这里重新对齐：让 normal 与 u×v 同向（det=(u×v)·n>0=+1）。
-    let normal = if u_dir.cross(&v_dir).dot(&normal) >= 0.0 {
-        normal
-    } else {
-        -normal
-    };
+    let u = u_dir.normalize(); // +X = 列（与 resample 列方向一致）
+    let v = v_dir.normalize(); // +Z = 行（竖直向上，符合 export adapt 的 model +Z up）
+    let y = v.cross(&u); // +Y = 法向，v×u 保证 [u, y, v] 右手 det=+1
 
     let basis = [
-        [u_dir.x, u_dir.y, u_dir.z],     // X = u（列方向）
-        [v_dir.x, v_dir.y, v_dir.z],     // Y = v（行方向）
-        [normal.x, normal.y, normal.z],   // Z = 法向
+        [u.x, u.y, u.z], // X = 列
+        [y.x, y.y, y.z], // Y = 法向
+        [v.x, v.y, v.z], // Z = 行（up）
     ];
 
     let frame = CoordinateFrame {
@@ -82,7 +80,7 @@ pub fn derive_plane_frame(
         basis,
     };
     let deriv = FrameDerivation {
-        axis: [normal.x, normal.y, normal.z],
+        axis: [y.x, y.y, y.z], // 法向轴 = frame +Y
         origin: [origin.x, origin.y, origin.z],
         unwrap_dir: "planar".into(),
     };
@@ -116,6 +114,14 @@ mod tests {
         let back: crate::coordinate::CoordinateFrame = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(back.basis, frame.basis);
 
+        // axis-identity：+Z(basis[2]) = 竖直向上，匹配 export adapt model +Z up
+        let z_col = Vector3::new(frame.basis[2][0], frame.basis[2][1], frame.basis[2][2]);
+        assert!((z_col - Vector3::new(0.0, 0.0, 1.0)).norm() < 1e-9, "+Z not up: {:?}", z_col);
+        // +Y(basis[1]) = 单位径向法向（水平，z≈0）
+        let y_col = Vector3::new(frame.basis[1][0], frame.basis[1][1], frame.basis[1][2]);
+        assert!((y_col.norm() - 1.0).abs() < 1e-9, "+Y not unit: norm={}", y_col.norm());
+        assert!(y_col.z.abs() < 1e-9, "radial normal should be horizontal: {:?}", y_col);
+
         // 圆柱轴应接近 Z 方向
         assert!(
             deriv.axis[2].abs() > 0.99,
@@ -142,12 +148,23 @@ mod tests {
         let back: crate::coordinate::CoordinateFrame = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(back.basis, frame.basis);
 
-        // 法向应接近 ±Y
+        let (_origin, u_dir, v_dir) = proj.plane_basis.unwrap();
+        let u = u_dir.normalize();
+        let v = v_dir.normalize();
+        // axis-identity：+X(basis[0]) = u_dir(列)
+        let x_col = Vector3::new(frame.basis[0][0], frame.basis[0][1], frame.basis[0][2]);
+        assert!((x_col - u).norm() < 1e-9, "+X not u_dir(列): {:?} vs {:?}", x_col, u);
+        // +Z(basis[2]) = v_dir(行/up)
+        let z_col = Vector3::new(frame.basis[2][0], frame.basis[2][1], frame.basis[2][2]);
+        assert!((z_col - v).norm() < 1e-9, "+Z not v_dir(行): {:?} vs {:?}", z_col, v);
+        // +Y(basis[1]) = v×u 法向，单位长度
+        let y_col = Vector3::new(frame.basis[1][0], frame.basis[1][1], frame.basis[1][2]);
+        let expect_y = v.cross(&u);
+        assert!((y_col - expect_y).norm() < 1e-9, "+Y not v×u: {:?} vs {:?}", y_col, expect_y);
+        assert!((y_col.norm() - 1.0).abs() < 1e-9, "+Y not unit: norm={}", y_col.norm());
+
+        // FrameDerivation.axis = 法向(frame +Y)
         let n = deriv.axis;
-        assert!(
-            n[1].abs() > 0.99,
-            "plane normal should be near Y axis: {:?}",
-            n
-        );
+        assert!((Vector3::new(n[0], n[1], n[2]) - expect_y).norm() < 1e-9, "axis not normal: {:?}", n);
     }
 }
