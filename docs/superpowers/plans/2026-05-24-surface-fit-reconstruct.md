@@ -1999,8 +1999,10 @@ fn parse_columns(s: &str) -> Result<lmt_adapter_total_station::scatter_csv::Colu
 }
 ```
 
-> **注：** dry-run 分支对 scatter 复用现有 project/screen/csv 存在性校验即可（scatter 不需要 SOP 校验，
-> 现有 dry-run 不读 coordinate_system，无需改）。
+> **注：** dry-run 分支对 scatter：复用现有 project/screen/csv 存在性校验（不需要 SOP），
+> **并额外**在 scatter 模式下解析 `--columns`（调 `parse_column_map`），格式错（如 `x=abc`、缺 `x=`）
+> 立刻报 `invalid_input`，让 agent 在 `--yes` 前就发现列映射错误。对应 Step 1 加一个 dry-run case：
+> `import ... --mode scatter --columns x=abc --dry-run` → exit 2 + envelope code `invalid_input`。
 
 - [ ] **Step 5: 跑测试确认通过**
 
