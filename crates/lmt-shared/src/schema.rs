@@ -42,6 +42,12 @@ pub fn dump_all() -> Value {
     }
 
     // DTO
+    add!("ScatterFitInfo", dto::ScatterFitInfo);
+    add!("ScatterShapeInfo", dto::ScatterShapeInfo);
+    add!("ScatterOutlierInfo", dto::ScatterOutlierInfo);
+    add!("FrameDerivationInfo", dto::FrameDerivationInfo);
+    add!("BoundaryCheckInfo", dto::BoundaryCheckInfo);
+    add!("SamplingModeInfo", dto::SamplingModeInfo);
     add!("RecentProject", dto::RecentProject);
     add!("ProjectConfig", dto::ProjectConfig);
     add!("ProjectMeta", dto::ProjectMeta);

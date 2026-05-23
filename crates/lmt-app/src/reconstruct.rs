@@ -76,6 +76,7 @@ pub fn run_reconstruction(
         created_at: now.to_rfc3339(),
         cabinet_array,
         weld_tolerance_mm,
+        scatter_fit: None, // Task 14 会填充 scatter 路径的真实值
     };
     let json = serde_json::to_vec_pretty(&report)
         .map_err(|e| LmtError::Yaml(format!("json: {e}")))?;

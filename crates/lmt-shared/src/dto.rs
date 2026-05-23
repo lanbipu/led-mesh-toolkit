@@ -69,6 +69,14 @@ pub enum ShapeMode {
     Irregular,
 }
 
+/// lmt-core 的 `SamplingMode` 镜像，用于 schema dump（core 不派生 JsonSchema）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SamplingModeInfo {
+    Grid,
+    Scatter,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BottomCompletionConfig {
     pub lowest_measurable_row: u32,
@@ -90,6 +98,83 @@ pub struct OutputConfig {
     pub weld_vertices_tolerance_mm: f64,
     pub triangulate: bool,
 }
+
+// ── Scatter-fit DTO types ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", tag = "shape")]
+pub enum ScatterShapeInfo {
+    Plane { normal: [f64; 3] },
+    Cylinder { radius_mm: f64, axis: [f64; 3] },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ScatterOutlierInfo {
+    pub point_id: String,
+    pub source_row: usize,
+    pub coordinates: [f64; 3],
+    pub residual_mm: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FrameDerivationInfo {
+    pub axis: [f64; 3],
+    pub origin: [f64; 3],
+    pub unwrap_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BoundaryCheckInfo {
+    pub verdict: String,
+    pub projected_size_mm: [f64; 2],
+    pub expected_size_mm: [f64; 2],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ScatterFitInfo {
+    pub shape: ScatterShapeInfo,
+    pub inlier_count: usize,
+    pub outliers: Vec<ScatterOutlierInfo>,
+    pub param_range: [f64; 4],
+    pub boundary_check: BoundaryCheckInfo,
+    pub frame_derivation: FrameDerivationInfo,
+}
+
+impl From<lmt_core::reconstruct::surface_fit::ScatterFit> for ScatterFitInfo {
+    fn from(c: lmt_core::reconstruct::surface_fit::ScatterFit) -> Self {
+        use lmt_core::reconstruct::surface_fit::ScatterShape as S;
+        ScatterFitInfo {
+            shape: match c.shape {
+                S::Plane { normal } => ScatterShapeInfo::Plane { normal },
+                S::Cylinder { radius_mm, axis } => ScatterShapeInfo::Cylinder { radius_mm, axis },
+            },
+            inlier_count: c.inlier_count,
+            outliers: c
+                .outliers
+                .into_iter()
+                .map(|o| ScatterOutlierInfo {
+                    point_id: o.point_id,
+                    source_row: o.source_row,
+                    coordinates: o.coordinates,
+                    residual_mm: o.residual_mm,
+                })
+                .collect(),
+            param_range: c.param_range,
+            boundary_check: BoundaryCheckInfo {
+                verdict: c.boundary_check.verdict,
+                projected_size_mm: c.boundary_check.projected_size_mm,
+                expected_size_mm: c.boundary_check.expected_size_mm,
+            },
+            frame_derivation: FrameDerivationInfo {
+                axis: c.frame_derivation.axis,
+                origin: c.frame_derivation.origin,
+                unwrap_dir: c.frame_derivation.unwrap_dir,
+            },
+        }
+    }
+}
+
+// ── Reconstruction types ──────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ReconstructionResult {
@@ -123,6 +208,9 @@ pub struct ReconstructionReport {
     pub cabinet_array: CabinetArray,
     /// Weld tolerance (mm) snapshot captured at reconstruction time.
     pub weld_tolerance_mm: f64,
+    /// Scatter 路径的拟合元数据；grid 路径为 None。
+    #[serde(default)]
+    pub scatter_fit: Option<ScatterFitInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -145,6 +233,46 @@ pub struct InstructionCardResult {
     /// HTML 字符串，前端 iframe srcdoc 渲染。PDF 通过单独的
     /// `save_instruction_pdf` 命令按用户选定的目标路径写盘。
     pub html_content: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scatter_fit_info_from_core_roundtrips_and_has_schema() {
+        use lmt_core::reconstruct::surface_fit::{
+            BoundaryCheck, FrameDerivation, ScatterFit, ScatterOutlier, ScatterShape,
+        };
+        let core = ScatterFit {
+            shape: ScatterShape::Cylinder {
+                radius_mm: 9523.0,
+                axis: [0.0, 0.0, 1.0],
+            },
+            inlier_count: 120,
+            outliers: vec![ScatterOutlier {
+                point_id: "row6_LEDB-1".into(),
+                source_row: 6,
+                coordinates: [1.0, 2.0, 3.0],
+                residual_mm: 4.2,
+            }],
+            param_range: [-1.4, 1.4, 0.0, 7.5],
+            boundary_check: BoundaryCheck {
+                verdict: "ok".into(),
+                projected_size_mm: [27480.0, 7500.0],
+                expected_size_mm: [27500.0, 7500.0],
+            },
+            frame_derivation: FrameDerivation {
+                axis: [0.0, 0.0, 1.0],
+                origin: [0.0, 0.0, 0.0],
+                unwrap_dir: "theta".into(),
+            },
+        };
+        let dto: ScatterFitInfo = core.into();
+        assert_eq!(dto.outliers[0].point_id, "row6_LEDB-1");
+        let dump = crate::schema::dump_all();
+        assert!(dump["types"]["ScatterFitInfo"].is_object());
+    }
 }
 
 #[cfg(test)]
