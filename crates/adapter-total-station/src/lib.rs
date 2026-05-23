@@ -15,6 +15,7 @@ pub mod project;
 pub mod project_loader;
 pub mod raw_point;
 pub mod reference_frame;
+pub mod scatter_csv;
 pub mod report;
 pub mod report_builder;
 pub mod shape_grid;
