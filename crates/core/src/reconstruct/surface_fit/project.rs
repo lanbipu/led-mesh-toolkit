@@ -11,6 +11,8 @@ pub struct Projection {
 }
 
 pub fn project_cylinder(pts: &[Vector3<f64>], cyl: &CylinderFit) -> Projection {
+    // 假设安装弧度 < π。点云跨越 θ=±π 边界时 min/max 的 span 会偏大，是已知限制，后续处理。
+    debug_assert!(!cyl.inliers.is_empty(), "project_cylinder needs inliers");
     let (mut min_t, mut max_t) = (f64::INFINITY, f64::NEG_INFINITY);
     let (mut min_h, mut max_h) = (f64::INFINITY, f64::NEG_INFINITY);
     for &i in &cyl.inliers {
@@ -48,14 +50,21 @@ pub fn project_plane(pts: &[Vector3<f64>], pl: &PlaneFit, cols: u32, rows: u32) 
     let (e2lo, e2hi) = proj(&e2);
     let (d1, d2) = (e1hi - e1lo, e2hi - e2lo);
     let target = cols as f64 / rows as f64;
-    let (u_dir, v_dir, urange, vrange) =
+    let (mut u_dir, mut v_dir, mut urange, mut vrange) =
         if (d1 / d2 - target).abs() <= (d2 / d1 - target).abs() {
             (e1, e2, (e1lo, e1hi), (e2lo, e2hi))
         } else {
             (e2, e1, (e2lo, e2hi), (e1lo, e1hi))
         };
-    let v_dir = if v_dir.z < 0.0 { -v_dir } else { v_dir };
-    let u_dir = if u_dir.cross(&v_dir).dot(&n) < 0.0 { -u_dir } else { u_dir };
+    // 翻方向时必须同步翻它的 range，否则 origin/range 在非对称点云下算错。
+    if v_dir.z < 0.0 {
+        v_dir = -v_dir;
+        vrange = (-vrange.1, -vrange.0);
+    }
+    if u_dir.cross(&v_dir).dot(&n) < 0.0 {
+        u_dir = -u_dir;
+        urange = (-urange.1, -urange.0);
+    }
     let origin = pl.centroid + u_dir * urange.0 + v_dir * vrange.0;
     Projection {
         range: [urange.0, urange.1, vrange.0, vrange.1],
@@ -98,5 +107,49 @@ mod tests {
         let du = p.range[1] - p.range[0];
         let dv = p.range[3] - p.range[2];
         assert!((du / dv - 2.0).abs() < 0.1, "du={du} dv={dv}");
+    }
+
+    /// 非对称点云：在 x=z=0 角堆 30 个重复点，把质心拉离几何中心，使某轴投影
+    /// 范围不再 lo=-hi（这里 u 轴变成 (-1.4, 0.6)）。屏 x∈[0,2]、z∈[0,1]，4×2。
+    ///
+    /// 不变量（不依赖 PCA 法向符号）：origin 必须是 min-u/min-v 真角点 —— 每个 inlier
+    /// 投到 (u_dir, v_dir) 相对 origin 的坐标都落在 [0, du]/[0, dv]，且 du≈2、dv≈1。
+    ///
+    /// 旧代码翻转 u_dir/v_dir 后没同步翻 range，origin 会落到非角点（实测 (1.2,0,-0.4)），
+    /// 部分点投影变负 / 超界。对称点云（lo=-hi）下翻不翻一样，所以必须用这个偏心点云才能抓到。
+    #[test]
+    fn plane_origin_at_min_corner_for_asymmetric_cloud() {
+        let mut pts = vec![];
+        for i in 0..9 {
+            for j in 0..5 {
+                pts.push(Vector3::new(i as f64 * 0.25, 0.0, j as f64 * 0.25));
+            }
+        }
+        for _ in 0..30 {
+            pts.push(Vector3::new(0.0, 0.0, 0.0));
+        }
+        let pl = fit_plane(&pts).unwrap();
+        let p = project_plane(&pts, &pl, 4, 2);
+        let du = p.range[1] - p.range[0];
+        let dv = p.range[3] - p.range[2];
+        assert!((du - 2.0).abs() < 0.05, "du={du}");
+        assert!((dv - 1.0).abs() < 0.05, "dv={dv}");
+        let (origin, u_dir, v_dir) = p.plane_basis.unwrap();
+        let eps = 1e-6;
+        for &i in &pl.inliers {
+            let d = pts[i] - origin;
+            let su = d.dot(&u_dir);
+            let sv = d.dot(&v_dir);
+            assert!(
+                su >= -eps && su <= du + eps,
+                "u proj {su} out of [0,{du}] for pt {:?}",
+                pts[i]
+            );
+            assert!(
+                sv >= -eps && sv <= dv + eps,
+                "v proj {sv} out of [0,{dv}] for pt {:?}",
+                pts[i]
+            );
+        }
     }
 }
