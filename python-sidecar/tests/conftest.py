@@ -128,12 +128,18 @@ def _camera_poses() -> list[tuple[np.ndarray, np.ndarray]]:
     return poses
 
 
-@pytest.fixture
-def synthetic_charuco_capture(tmp_path: pathlib.Path) -> dict:
+def _build_synthetic_charuco_capture(
+    tmp_path: pathlib.Path, cab1_view_limit: int | None = None
+) -> dict:
     """Build a 2-cabinet ChArUco capture set with known truth.
 
     Returns a dict with file paths (capture manifest, screen_mapping, a
     pose_report output path) plus the known truth (distance 700mm, angle 10deg).
+
+    ``cab1_view_limit``: if set, the non-root board (V001_R000) is composited
+    into ONLY the first ``cab1_view_limit`` camera views; the root board stays in
+    all views. Keep it >=2 so V001 still clears the HARD observability gate but
+    falls below QUALITY_MIN_VIEWS, exercising the soft "low_observation" path.
     """
     cap_dir = tmp_path / "capture"
     cap_dir.mkdir()
@@ -167,7 +173,9 @@ def synthetic_charuco_capture(tmp_path: pathlib.Path) -> dict:
     for i, (Rc, tc) in enumerate(_camera_poses()):
         canvas = np.full((_IMAGE_SIZE[1], _IMAGE_SIZE[0]), 64, dtype=np.uint8)
         _render_board_into(canvas, board0, R0, t0, K, Rc, tc)
-        _render_board_into(canvas, board1, R1, t1, K, Rc, tc)
+        # Board1 (V001_R000) only in the first cab1_view_limit views if limited.
+        if cab1_view_limit is None or i < cab1_view_limit:
+            _render_board_into(canvas, board1, R1, t1, K, Rc, tc)
         img_path = cap_dir / f"cam_{i:03d}.png"
         cv2.imwrite(str(img_path), canvas)
         views.append({"view_id": f"cam_{i:03d}", "images": [img_path.name]})
@@ -249,3 +257,17 @@ def synthetic_charuco_capture(tmp_path: pathlib.Path) -> dict:
         "distance_mm": _BOARD_DISTANCE_MM,
         "angle_deg": _BOARD_ANGLE_DEG,
     }
+
+
+@pytest.fixture
+def synthetic_charuco_capture(tmp_path: pathlib.Path) -> dict:
+    """Full-visibility 2-cabinet ChArUco capture (both boards in every view)."""
+    return _build_synthetic_charuco_capture(tmp_path)
+
+
+@pytest.fixture
+def synthetic_charuco_capture_underobserved(tmp_path: pathlib.Path) -> dict:
+    """Like synthetic_charuco_capture, but the non-root board (V001_R000) is only
+    in the first 3 views — still >=2 (clears observability) but below
+    QUALITY_MIN_VIEWS (4), so it should be flagged "low_observation"."""
+    return _build_synthetic_charuco_capture(tmp_path, cab1_view_limit=3)

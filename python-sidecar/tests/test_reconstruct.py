@@ -14,7 +14,7 @@ import pathlib
 import numpy as np
 
 from lmt_vba_sidecar.ipc import ReconstructInput
-from lmt_vba_sidecar.reconstruct import run_reconstruct
+from lmt_vba_sidecar.reconstruct import _classify_cabinet_quality, run_reconstruct
 
 
 def _build_input(paths: dict) -> ReconstructInput:
@@ -86,6 +86,73 @@ def test_reconstruct_writes_pose_report_and_matches_known_geometry(
     p1 = np.array(by_name["MAIN_V001_R000"]["position"])
     assert np.allclose(p0, [0.0, 0.0, 0.0], atol=1e-6)
     assert abs(p1[0] - 0.7) < 0.005
+
+
+def test_classify_cabinet_quality_all_branches():
+    """Soft classifier: views-below-threshold dominates, then residual, else ok."""
+    assert _classify_cabinet_quality(2, 0.5) == "low_observation"  # views < 4
+    assert _classify_cabinet_quality(10, 3.0) == "high_residual"  # rms > 2.0
+    assert _classify_cabinet_quality(10, 0.5) == "ok"
+    # QUALITY_MIN_VIEWS boundary: exactly 4 is ok, 3 is low (strict <).
+    assert _classify_cabinet_quality(4, 0.5) == "ok"
+    assert _classify_cabinet_quality(3, 0.5) == "low_observation"
+
+
+def test_reconstruct_happy_path_quality_ok_no_warning(
+    synthetic_charuco_capture, capsys,
+):
+    """Both cabinets seen by all views with low residual -> quality "ok" and NO
+    cabinet_quality warning emitted."""
+    paths = synthetic_charuco_capture
+    rc = run_reconstruct(_build_input(paths))
+    assert rc == 0
+
+    rep = json.loads(open(paths["pose_report"]).read())
+    poses = {p["cabinet_id"]: p for p in rep["cabinet_poses"]}
+    assert poses["V000_R000"]["quality"] == "ok"
+    assert poses["V001_R000"]["quality"] == "ok"
+
+    events = [
+        json.loads(ln)
+        for ln in capsys.readouterr().out.splitlines()
+        if ln.strip()
+    ]
+    quality_warnings = [
+        e for e in events
+        if e.get("event") == "warning" and e.get("code") == "cabinet_quality"
+    ]
+    assert quality_warnings == []
+
+
+def test_reconstruct_underobserved_cabinet_flagged_low_observation(
+    synthetic_charuco_capture_underobserved, capsys,
+):
+    """Non-root cabinet rendered into only 3 views (>=2 clears observability,
+    but < QUALITY_MIN_VIEWS=4) -> quality "low_observation" + a cabinet_quality
+    warning for it. The root (in all views) stays "ok"."""
+    paths = synthetic_charuco_capture_underobserved
+    rc = run_reconstruct(_build_input(paths))
+    assert rc == 0
+
+    rep = json.loads(open(paths["pose_report"]).read())
+    poses = {p["cabinet_id"]: p for p in rep["cabinet_poses"]}
+    assert poses["V001_R000"]["observed_views"] == 3
+    assert poses["V001_R000"]["quality"] == "low_observation"
+    assert poses["V000_R000"]["quality"] == "ok"
+
+    events = [
+        json.loads(ln)
+        for ln in capsys.readouterr().out.splitlines()
+        if ln.strip()
+    ]
+    quality_warnings = [
+        e for e in events
+        if e.get("event") == "warning" and e.get("code") == "cabinet_quality"
+    ]
+    assert len(quality_warnings) == 1
+    w = quality_warnings[0]
+    assert w["cabinet"] == "V001_R000"
+    assert "low_observation" in w["message"]
 
 
 def test_reconstruct_structured_light_method_rejected(synthetic_charuco_capture):

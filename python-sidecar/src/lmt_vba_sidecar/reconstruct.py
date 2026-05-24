@@ -67,6 +67,62 @@ ROOT_CABINET = (0, 0)  # V000_R000 is the gauge cabinet (world == its frame)
 MIN_PNP_CORNERS = 4
 FALLBACK_ISOTROPIC_M = 0.005
 
+# --- per-cabinet SOFT quality thresholds (tunable) ---
+# These sit ABOVE the HARD observability gate (min_views=2, min_points=8) in
+# check_observability: a cabinet that clears observability can still be flagged
+# here as a soft warning. A cabinet seen by <2 views never reaches this stage
+# (reconstruct aborts at observability_failed first).
+QUALITY_MIN_VIEWS = 4  # below this (but >=2) -> "low_observation"
+QUALITY_MAX_CABINET_RMS_PX = 2.0  # per-cabinet reproj RMS above this -> "high_residual"
+
+
+def _classify_cabinet_quality(observed_views: int, reproj_rms_px: float) -> str:
+    """Classify a cabinet's soft quality after BA.
+
+    Order: under-observation dominates residual (too few views makes the
+    residual itself untrustworthy), so check views first.
+    """
+    if observed_views < QUALITY_MIN_VIEWS:
+        return "low_observation"
+    if reproj_rms_px > QUALITY_MAX_CABINET_RMS_PX:
+        return "high_residual"
+    return "ok"
+
+
+def _per_cabinet_reproj_rms(
+    K: np.ndarray,
+    camera_poses: list[tuple[np.ndarray, np.ndarray]],
+    cabinet_poses: dict[int, tuple[np.ndarray, np.ndarray]],
+    observations: list[Observation],
+) -> dict[int, float]:
+    """Per-cabinet reprojection RMS (px) using the SAME projection convention as
+    model_constrained_ba._residuals: xc = Rc @ (Rb @ p_local + tb) + tc, then
+    p = K @ xc; residual = p[:2]/p[2] - pixel.
+
+    RMS over a cabinet's observations is sqrt(mean over obs of (dx^2 + dy^2)),
+    matching the BA's global rms = sqrt(mean_obs(dx^2 + dy^2)).
+
+    Precondition: every observation's cabinet_idx must be present in
+    cabinet_poses (guaranteed by check_observability upstream, which aborts
+    reconstruct unless every cabinet has >=2 views / >=8 observations). The
+    returned dict therefore has an entry for every observed cabinet.
+    """
+    sq_sum: dict[int, float] = {}
+    counts: dict[int, int] = {}
+    for o in observations:
+        Rc, tc = camera_poses[o.camera_idx]
+        Rb, tb = cabinet_poses[o.cabinet_idx]
+        xw = Rb @ o.p_local + tb
+        xc = Rc @ xw + tc
+        p = K @ xc
+        d = p[:2] / p[2] - o.pixel
+        sq_sum[o.cabinet_idx] = sq_sum.get(o.cabinet_idx, 0.0) + float(d @ d)
+        counts[o.cabinet_idx] = counts.get(o.cabinet_idx, 0) + 1
+    return {
+        idx: float(np.sqrt(sq_sum[idx] / counts[idx]))
+        for idx in sq_sum
+    }
+
 
 def _undistort_obs(pix: np.ndarray, K: np.ndarray, dist: np.ndarray) -> np.ndarray:
     """Map a single (x, y) pixel through cv2.undistortPoints to its
@@ -305,6 +361,10 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
 
     # --- 9. per-cabinet geometry ---
     write_event(ProgressEvent(event="progress", stage="output", percent=0.9, message="building pose report"))
+    # Per-cabinet reprojection RMS from the solved poses (same projection as BA).
+    per_cabinet_rms = _per_cabinet_reproj_rms(
+        K, result.camera_poses, result.cabinet_poses, observations
+    )
     idx_to_cab = {idx: cr for cr, idx in cab_to_idx.items()}
     cabinet_poses: list[CabinetPose] = []
     measured_points: list[MeasuredPoint] = []
@@ -316,6 +376,11 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
         center, normal, _size, world_corners = reconstruct_cabinet_geometry(R, t, corners_local)
         n_views = len(per_cabinet_views.get(idx, set()))
         n_points = per_cabinet_points.get(idx, 0)
+        # Direct index (not .get): observability upstream guarantees every
+        # cabinet has observations, so a missing entry is a broken invariant we
+        # want surfaced as a loud KeyError, not masked as a fake 0.0 RMS.
+        cab_rms = per_cabinet_rms[idx]
+        quality = _classify_cabinet_quality(n_views, cab_rms)
 
         cabinet_poses.append(CabinetPose(
             cabinet_id=cid,
@@ -323,11 +388,17 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
             rotation_matrix=R.tolist(),
             normal=normal.tolist(),
             corners_mm=[c.tolist() for c in world_corners],
-            reprojection_rms_px=float(result.rms_reprojection_px),
+            reprojection_rms_px=cab_rms,
             observed_views=n_views,
             observed_points=n_points,
-            quality="ok",
+            quality=quality,
         ))
+        if quality != "ok":
+            write_event(WarningEvent(
+                event="warning", code="cabinet_quality",
+                message=f"cabinet {cid}: {quality} (views={n_views}, rms={cab_rms:.2f}px)",
+                cabinet=cid,
+            ))
 
         # MeasuredPoint position is in METERS.
         cov_mm = result.cabinet_covariances.get(idx)
