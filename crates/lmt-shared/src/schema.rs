@@ -23,7 +23,7 @@
 //! - A. 给 lmt-core 加 schemars(可选 feature),最干净;
 //! - B. 在 lmt-shared 写 hand-rolled schema(快但易漂移)。
 
-use crate::{dto, envelope, error};
+use crate::{dto, envelope, error, manifest};
 use schemars::schema_for;
 use serde_json::{json, Map, Value};
 
@@ -72,6 +72,10 @@ pub fn dump_all() -> Value {
     add!("Envelope", envelope::Envelope<serde_json::Value>);
     add!("ErrorEnvelope", envelope::ErrorEnvelope);
 
+    // Contract Manifest
+    add!("ContractManifest", manifest::ContractManifest);
+    add!("Operation", manifest::Operation);
+
     json!({
         "schema_version": envelope::SCHEMA_VERSION,
         "types": types,
@@ -103,6 +107,8 @@ mod tests {
             "ApiError",
             "Envelope",
             "ErrorEnvelope",
+            "ContractManifest",
+            "Operation",
         ] {
             assert!(types.contains_key(expected), "missing schema for {expected}");
         }
