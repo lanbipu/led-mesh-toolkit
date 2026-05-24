@@ -120,6 +120,7 @@ mod tests {
         let ids: Vec<&str> = m.operations.iter().map(|o| o.operation_id.as_str()).collect();
         for expected in [
             "schema",
+            "manifest",
             "project.list_recent",
             "project.add_recent",
             "project.remove_recent",
@@ -135,6 +136,7 @@ mod tests {
         ] {
             assert!(ids.contains(&expected), "manifest missing operation_id {expected}; got {ids:?}");
         }
+        assert_eq!(m.operations.len(), 14, "operation count changed — update both build() and this test");
     }
 
     #[test]
@@ -234,6 +236,8 @@ pub fn build() -> ContractManifest {
     let operations = vec![
         op("schema", "Dump JsonSchema of all public DTOs + envelope + error types",
            "lmt schema", ReadOnly, false, false, true, None, &[0]),
+        op("manifest", "Dump the Contract Manifest (this operation list)",
+           "lmt manifest", ReadOnly, false, false, true, Some("ContractManifest"), &[0]),
         op("project.list_recent", "List recent_projects rows",
            "lmt project list-recent", ReadOnly, false, false, true, Some("RecentProject"), &[0, 2, 5]),
         op("project.add_recent", "Upsert a recent-projects row (normalized path)",
@@ -241,11 +245,11 @@ pub fn build() -> ContractManifest {
         op("project.remove_recent", "Delete a recent-projects row by id",
            "lmt project remove-recent <id>", Destructive, true, false, true, None, &[0, 2, 5]),
         op("project.load", "Read <dir>/project.yaml into ProjectConfig",
-           "lmt project load <abs_path>", ReadOnly, false, false, true, Some("ProjectConfig"), &[0, 2, 3, 6]),
+           "lmt project load <abs_path>", ReadOnly, false, false, true, Some("ProjectConfig"), &[0, 2, 3, 4, 6]),
         op("project.save", "Atomic write <dir>/project.yaml from YAML/JSON (stdin or --input)",
            "lmt project save <abs_path> [--input <path>]", Destructive, true, true, false, None, &[0, 2, 4, 6]),
         op("measurements.load", "Read a measured.yaml",
-           "lmt measurements load <path>", ReadOnly, false, false, true, None, &[0, 2, 3, 6]),
+           "lmt measurements load <path>", ReadOnly, false, false, true, None, &[0, 2, 3, 4, 6]),
         op("total_station.import", "Trimble CSV -> measurements/measured.yaml + import_report.json",
            "lmt total-station import <project> <screen_id> <csv> [--mode grid|scatter] [--columns <spec>]", Destructive, true, false, false, Some("TotalStationImportResult"), &[0, 2, 3, 4]),
         op("total_station.instruction_card", "Render instruction-card HTML on stdout (no PDF)",
@@ -255,9 +259,9 @@ pub fn build() -> ContractManifest {
         op("reconstruct.list_runs", "List reconstruction_runs for a project",
            "lmt reconstruct list-runs <project> [--screen-id <id>]", ReadOnly, false, false, true, Some("ReconstructionRun"), &[0, 2, 5]),
         op("reconstruct.get_run_report", "Return the full report.json for a run",
-           "lmt reconstruct get-run-report <run_id>", ReadOnly, false, false, true, None, &[0, 2, 3, 5]),
+           "lmt reconstruct get-run-report <run_id>", ReadOnly, false, false, true, None, &[0, 2, 3, 4, 5]),
         op("export.obj", "Write an OBJ for a run (target: disguise|unreal|neutral)",
-           "lmt export obj <run_id> <target> [--dst <path>]", Destructive, true, false, false, None, &[0, 2, 3, 5]),
+           "lmt export obj <run_id> <target> [--dst <path>]", Destructive, true, false, false, None, &[0, 2, 3, 4, 5]),
     ];
 
     ContractManifest {
@@ -766,7 +770,7 @@ impl Cli {
 
 ```rust
 /// machine 模式信号:`--json`,或 `--output` / `-o` 指定 `json`|`ndjson`。
-/// 双 token(`--output json`)与单 token(`--output=json` / `-o=json`)都认。
+/// 双 token(`--output json`)、单 token(`--output=json` / `-o=json`)、compact(`-ojson`)都认。
 fn wants_machine_output(argv: &[std::ffi::OsString]) -> bool {
     use std::ffi::OsStr;
     let is_val = |s: &OsStr| s == OsStr::new("json") || s == OsStr::new("ndjson");
@@ -777,6 +781,12 @@ fn wants_machine_output(argv: &[std::ffi::OsString]) -> bool {
         if let Some(s) = a.to_str() {
             if let Some(v) = s.strip_prefix("--output=").or_else(|| s.strip_prefix("-o=")) {
                 return v == "json" || v == "ndjson";
+            }
+            // compact short value: -ojson / -ondjson(clap 接受 -o<value> 无分隔符)
+            if let Some(v) = s.strip_prefix("-o") {
+                if v == "json" || v == "ndjson" {
+                    return true;
+                }
             }
         }
         (a == OsStr::new("--output") || a == OsStr::new("-o"))
@@ -1278,12 +1288,13 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: 扩 manifest 测试**
 
-在 `manifest.rs` 的 `manifest_lists_all_known_operations_with_stable_ids` 测试的期望 id 数组里加 `"seed_example"`:
+在 `manifest.rs` 的 `manifest_lists_all_known_operations_with_stable_ids` 测试的期望 id 数组里加 `"seed_example"`,并把 count 断言从 14 改为 15:
 
 ```rust
             "export.obj",
             "seed_example",
 ```
+（数组末尾追加;同时把 `assert_eq!(m.operations.len(), 14, ...)` 改成 `15`。）
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -1296,7 +1307,7 @@ Expected: FAIL —— `manifest missing operation_id seed_example`。
 
 ```rust
         op("seed_example", "Copy a built-in example project (curved-flat / curved-arc) into a directory",
-           "lmt seed-example <name> <dst>", Destructive, true, false, None, &[0, 2, 3, 4]),
+           "lmt seed-example <name> <dst>", Destructive, true, false, false, None, &[0, 2, 3, 4]),
 ```
 
 - [ ] **Step 4: 跑测试 + 刷新快照 + 更新 docs**
@@ -1306,7 +1317,7 @@ Run:
 cargo test -p lmt-shared manifest:: 2>&1 | tail -10
 cargo build -p lmt-cli && ./target/debug/lmt --json manifest | jq .data > docs/contract-manifest.json
 ```
-Expected: manifest 测试绿;快照含 14 个 operation。
+Expected: manifest 测试绿;快照含 15 个 operation。
 
 在 `docs/agents-cli.md` 的 `### Not exposed in CLI` 段落里,把 `seed-example` 那条**移除**(它现在已暴露),并在 Command tree 表 `export obj` 行后加:
 
