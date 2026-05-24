@@ -62,9 +62,16 @@ def test_calibrate_round_trip_with_varied_views(tmp_out: pathlib.Path) -> None:
     square_mm = 20.0
     K_true = np.array([[1500, 0, 960], [0, 1500, 540], [0, 0, 1]], dtype=float)
 
+    # 12 views spread across 4 image quadrants (3 views per quadrant, varied z).
+    # Translations chosen so the board center projects into each image quadrant,
+    # ensuring the union bounding box of all detected corners covers ≥60% of the
+    # image — the new coverage gate. z=600mm gives a comfortable board scale.
+    _quad_tx = [-324.0, 164.0, -324.0, 164.0]  # left / right columns
+    _quad_ty = [-188.0, -188.0, 68.0, 68.0]    # top  / bottom rows
     images: list[str] = []
     for i in range(12):
-        # Vary rotation around X / Y / Z and translation per view.
+        quad = i % 4
+        # Vary rotation around X / Y / Z per view for pose diversity.
         ang_x = np.deg2rad(-15 + (i % 5) * 8)
         ang_y = np.deg2rad(-10 + (i % 4) * 6)
         ang_z = np.deg2rad((i % 3) * 5)
@@ -73,9 +80,9 @@ def test_calibrate_round_trip_with_varied_views(tmp_out: pathlib.Path) -> None:
         Rz = cv2.Rodrigues(np.array([0, 0, ang_z]))[0]
         R = Rz @ Ry @ Rx
         t = np.array([
-            -square_mm * inner[0] / 2 + (i % 3 - 1) * 30,
-            -square_mm * inner[1] / 2 + (i // 3 - 1) * 30,
-            500.0 + (i % 4) * 50,
+            _quad_tx[quad],
+            _quad_ty[quad],
+            600.0 + (i // 4) * 50,
         ])
         img = _render_3d_checker_view(image_size, inner, square_mm, K_true, R, t)
         p = tmp_out / f"chk_{i}.png"
@@ -144,3 +151,27 @@ def test_calibrate_identical_frames_rejected_for_pose_diversity(tmp_out: pathlib
     rc = run_calibrate(cmd)
     assert rc != 0
     assert not out_path.exists()
+
+
+def test_max_reprojection_rms_threshold_is_tightened():
+    from lmt_vba_sidecar.calibrate import MAX_REPROJECTION_RMS_PX
+    assert MAX_REPROJECTION_RMS_PX == 0.5
+
+
+def test_corner_coverage_insufficient_when_clustered():
+    import numpy as np
+    from lmt_vba_sidecar.calibrate import _has_corner_coverage
+    # All corners clustered in a tiny top-left region of a 1920x1080 image.
+    clustered = [np.array([[10, 10], [20, 10], [20, 20], [10, 20]], dtype=float)
+                 for _ in range(6)]
+    assert _has_corner_coverage(clustered, (1920, 1080)) is False
+
+
+def test_corner_coverage_sufficient_when_spread():
+    import numpy as np
+    from lmt_vba_sidecar.calibrate import _has_corner_coverage
+    # Corner sets spanning most of a 1920x1080 image across frames.
+    spread = [
+        np.array([[100, 100], [1800, 100], [1800, 1000], [100, 1000]], dtype=float),
+    ]
+    assert _has_corner_coverage(spread, (1920, 1080)) is True

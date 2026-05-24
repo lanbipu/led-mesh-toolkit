@@ -35,7 +35,7 @@ def _atomic_write(path: pathlib.Path, content: str) -> None:
 
 # Pose diversity / quality thresholds.
 POSE_DIVERSITY_PX_RMS = 5.0  # mean pairwise corner-set RMS must exceed this
-MAX_REPROJECTION_RMS_PX = 2.0  # cv2 RMS reprojection error gate
+MAX_REPROJECTION_RMS_PX = 0.5  # cv2 RMS reprojection error gate (tightened from 2.0)
 FOCAL_BOUNDS_FRACTION = (0.2, 5.0)  # fx/fy must lie within (frac × image_dim)
 
 
@@ -62,6 +62,34 @@ def _has_pose_diversity(img_points_list: list) -> bool:
         return False
     mean_pair_rms = rms_total / pairs
     return mean_pair_rms > POSE_DIVERSITY_PX_RMS
+
+
+def _has_corner_coverage(
+    img_points_list: list, image_size: tuple[int, int], min_frac: float = 0.6,
+) -> bool:
+    """True if the union bounding box of all detected corners covers enough of the image.
+
+    Prevents calibration from fitting to corners clustered in one image region.
+    img_points_list: list of (N,2) or (N,1,2) arrays.
+    image_size: (width, height).
+    min_frac: required coverage fraction (default 0.6).
+
+    Note: this is the union bbox across all frames; a few outlier frames in
+    opposite corners can satisfy the gate even when most frames cluster, so the
+    principal-point estimate may still be dominated by the clustered frames. A
+    per-cell grid-occupancy check would be stricter (future). The RMS<0.5px gate
+    is the final quality arbiter.
+    """
+    if not img_points_list:
+        return False
+    all_pts = np.concatenate(
+        [np.asarray(p).reshape(-1, 2) for p in img_points_list], axis=0,
+    )
+    x_min, y_min = all_pts[:, 0].min(), all_pts[:, 1].min()
+    x_max, y_max = all_pts[:, 0].max(), all_pts[:, 1].max()
+    bbox_area = (x_max - x_min) * (y_max - y_min)
+    img_area = image_size[0] * image_size[1]
+    return bool((bbox_area / img_area) >= min_frac)
 
 
 def _validate_calibration_outputs(
@@ -148,6 +176,19 @@ def run_calibrate(cmd: CalibrateInput) -> int:
             message=(
                 "checkerboard pose diversity insufficient: all detected views "
                 "appear nearly identical. Capture from varied angles/distances."
+            ),
+            fatal=True,
+        ))
+        return 1
+
+    # Corner coverage: if all detected corners are clustered in one image region,
+    # calibration cannot reliably estimate principal point or distortion. Reject.
+    if not _has_corner_coverage(img_points, image_size):
+        write_event(ErrorEvent(
+            event="error", code="intrinsics_invalid",
+            message=(
+                "corner coverage insufficient: detected corners span less than 60% of "
+                "the image area. Capture checkerboard across the full frame."
             ),
             fatal=True,
         ))
