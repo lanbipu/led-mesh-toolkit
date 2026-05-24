@@ -1,0 +1,93 @@
+name: visual-ci
+
+on:
+  push:
+    branches: [feat/camera-branch-rework, main]
+    paths:
+      - 'python-sidecar/**'
+      - 'crates/**'
+      - '.github/workflows/visual-ci.yml'
+  pull_request:
+    paths:
+      - 'python-sidecar/**'
+      - 'crates/**'
+      - '.github/workflows/visual-ci.yml'
+
+jobs:
+  ci:
+    name: ci (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── (a) Python: venv at python-sidecar/.venv + pytest ──────────────────
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Create venv and install sidecar[dev]
+        shell: bash
+        run: |
+          python -m venv python-sidecar/.venv
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python-sidecar/.venv/Scripts/pip install -e "python-sidecar[dev]"
+          else
+            python-sidecar/.venv/bin/pip install -e "python-sidecar[dev]"
+          fi
+
+      - name: pytest
+        shell: bash
+        working-directory: python-sidecar
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            .venv/Scripts/python -m pytest
+          else
+            .venv/bin/python -m pytest
+          fi
+
+      # ── (b) Rust: cargo test --workspace ────────────────────────────────────
+      # macOS: real-sidecar integration tests in adapter-visual-ba find
+      #   python-sidecar/.venv/bin/python (created above) and RUN.
+      # Windows: those tests probe python-sidecar/.venv/bin/python (POSIX path),
+      #   don't find it (Win venv uses Scripts/), and SELF-SKIP — that's by
+      #   design: Windows coverage comes from pytest + unit tests + smoke below.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+      # ── (c) Packaging smoke: build onefile + simulate once ──────────────────
+      - name: Build sidecar (macOS)
+        if: runner.os == 'macOS'
+        run: bash python-sidecar/build_exe.sh
+
+      - name: Build sidecar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python-sidecar/build_exe.ps1
+
+      - name: Smoke test — simulate (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          payload='{"command":"simulate","version":1,"scene":{"cabinet_array":{"cols":2,"rows":1,"cabinet_size_mm":[600,340]}},"cameras":{"n_views":4,"distance_mm_range":[1500,3000],"yaw_deg_range":[-30,30],"pitch_deg_range":[-15,15]},"intrinsics":{"K":[[2000,0,960],[0,2000,540],[0,0,1]],"dist_coeffs":[0,0,0,0],"image_size":[1920,1080]},"noise":{"pixel_sigma":0.0},"seed":1,"out_dir":"smoke-out"}'
+          echo "$payload" | ./target/sidecar-vendor/darwin-arm64/lmt-vba-sidecar simulate
+          test -f smoke-out/scene.npz || { echo "scene.npz missing"; exit 1; }
+          echo "smoke OK"
+
+      - name: Smoke test — simulate (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $payload = '{"command":"simulate","version":1,"scene":{"cabinet_array":{"cols":2,"rows":1,"cabinet_size_mm":[600,340]}},"cameras":{"n_views":4,"distance_mm_range":[1500,3000],"yaw_deg_range":[-30,30],"pitch_deg_range":[-15,15]},"intrinsics":{"K":[[2000,0,960],[0,2000,540],[0,0,1]],"dist_coeffs":[0,0,0,0],"image_size":[1920,1080]},"noise":{"pixel_sigma":0.0},"seed":1,"out_dir":"smoke-out"}'
+          $output = $payload | & target\sidecar-vendor\windows-x86_64\lmt-vba-sidecar.exe simulate
+          if ($LASTEXITCODE -ne 0) { Write-Error "sidecar exit $LASTEXITCODE; output: $output"; exit 1 }
+          if (-not (Test-Path "smoke-out/scene.npz")) { Write-Error "scene.npz missing"; exit 1 }
+          Write-Host "smoke OK"

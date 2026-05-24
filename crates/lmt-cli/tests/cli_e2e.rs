@@ -895,6 +895,11 @@ fn visual_reconstruct_structured_light_is_unsupported() {
 /// resolves correctly via the venv's sys.path.
 ///
 /// Returns `None` if the python interpreter does not exist (CI without venv).
+///
+/// Unix-only: the wrapper is a POSIX `.sh` script (chmod 0o755) pointing at the
+/// venv interpreter at `.venv/bin/python`. Windows lacks both, so this helper
+/// and the real-sidecar tests below are excluded from compilation there.
+#[cfg(unix)]
 fn make_sidecar_wrapper(dir: &std::path::Path) -> Option<std::path::PathBuf> {
     use std::os::unix::fs::PermissionsExt;
     let bin = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -918,6 +923,7 @@ fn make_sidecar_wrapper(dir: &std::path::Path) -> Option<std::path::PathBuf> {
 
 /// Shared simulate config JSON (the `{scene, cameras, intrinsics, noise, seed}`
 /// object; run_simulate injects out_dir). Reused by simulate + eval happy tests.
+#[cfg(unix)]
 fn sim_config_json() -> &'static str {
     r#"{"scene":{"cabinet_array":{"cols":2,"rows":1,"cabinet_size_mm":[600,340]},"shape_prior":"flat","inter_board_angle_deg":10.0},"cameras":{"n_views":20,"distance_mm_range":[1500,3000],"yaw_deg_range":[-40,40],"pitch_deg_range":[-20,20]},"intrinsics":{"K":[[2000,0,960],[0,2000,540],[0,0,1]],"dist_coeffs":[0,0,0,0,0],"image_size":[1920,1080]},"noise":{"pixel_sigma":0.3,"visibility_frac":0.8},"seed":2}"#
 }
@@ -925,6 +931,7 @@ fn sim_config_json() -> &'static str {
 /// visual simulate — happy path (real sidecar).
 /// Writes a simulate config, runs `lmt --json --yes visual simulate`, asserts
 /// exit 0 + envelope ok + SimulateResult echo fields + scene.npz written to disk.
+#[cfg(unix)]
 #[test]
 fn visual_simulate_happy() {
     let tmp = TempDir::new().unwrap();
@@ -968,6 +975,7 @@ fn visual_simulate_happy() {
 /// visual eval — happy path (real sidecar, chained after simulate).
 /// Runs simulate first to produce a dataset dir, then eval, asserting
 /// exit 0 + envelope ok + max_distance_error_mm < 3.0 + method == "charuco".
+#[cfg(unix)]
 #[test]
 fn visual_eval_happy() {
     let tmp = TempDir::new().unwrap();
@@ -1137,10 +1145,13 @@ fn seed_example_rejects_path_component_name() {
 /// Shared cabinet_pose_report.json content for compare-known tests.
 /// V001 is 702mm from V000 (known says 700 → 2mm distance error), both normals
 /// +Z (angle error 0), both 600×340 (size error 0).
+/// Unix-only: only consumed by the real-sidecar compare-known tests below.
+#[cfg(unix)]
 fn compare_known_report_json() -> &'static str {
     r#"{"schema_version":"visual_pose_report.v1","frame":{},"cabinet_poses":[{"cabinet_id":"V000_R000","position_mm":[0,0,0],"normal":[0,0,1],"rotation_matrix":[[1,0,0],[0,1,0],[0,0,1]],"corners_mm":[[-300,-170,0],[300,-170,0],[300,170,0],[-300,170,0]],"reprojection_rms_px":0.4,"observed_views":7,"observed_points":120,"quality":"ok"},{"cabinet_id":"V001_R000","position_mm":[702,0,0],"normal":[0.0,0.0,1.0],"rotation_matrix":[[1,0,0],[0,1,0],[0,0,1]],"corners_mm":[[-300,-170,0],[300,-170,0],[300,170,0],[-300,170,0]],"reprojection_rms_px":0.4,"observed_views":7,"observed_points":120,"quality":"ok"}]}"#
 }
 
+#[cfg(unix)]
 fn compare_known_known_json() -> &'static str {
     r#"{"cabinets":{"V000_R000":{"size_mm":[600,340]},"V001_R000":{"size_mm":[600,340]}},"pairs":[{"a":"V000_R000","b":"V001_R000","distance_mm":700.0,"angle_deg":0.0}]}"#
 }
@@ -1148,6 +1159,7 @@ fn compare_known_known_json() -> &'static str {
 /// visual compare-known — happy path (real sidecar). Writes report + known JSON,
 /// runs `lmt --json visual compare-known <report> <known>`, asserts exit 0 +
 /// envelope ok + data.passed present + a distance_error_mm of ~2.0.
+#[cfg(unix)]
 #[test]
 fn visual_compare_known_happy() {
     let tmp = TempDir::new().unwrap();
@@ -1191,6 +1203,7 @@ fn visual_compare_known_happy() {
 
 /// visual compare-known — missing report file → error envelope. The sidecar
 /// emits invalid_input (exit 2) when a referenced file is absent.
+#[cfg(unix)]
 #[test]
 fn visual_compare_known_missing_file_is_invalid_input() {
     let tmp = TempDir::new().unwrap();
@@ -1240,6 +1253,11 @@ fn visual_compare_known_missing_file_is_invalid_input() {
 /// (so the adapter's payload write doesn't SIGPIPE), emits a single fatal
 /// error event with the given code, and exits 1. Returns the script path for
 /// `LMT_VBA_SIDECAR_PATH`.
+///
+/// Unix-only: the mock is a POSIX `.sh` script (chmod 0o755). Windows has no
+/// `.sh` runner, so this helper and the error-code tests below are excluded
+/// from compilation there.
+#[cfg(unix)]
 fn write_error_mock(dir: &std::path::Path, code: &str) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let wrapper = dir.join("lmt-vba-sidecar");
@@ -1257,6 +1275,8 @@ fn write_error_mock(dir: &std::path::Path, code: &str) -> std::path::PathBuf {
 /// Minimal valid project.yaml with a single `MAIN` screen — enough for
 /// `run_reconstruct` / `run_calibrate` to pass `load_screen` before reaching
 /// the sidecar. (calibrate doesn't read the screen, but reconstruct does.)
+/// Unix-only: only consumed by the error-code tests that spawn a `.sh` mock.
+#[cfg(unix)]
 fn write_visual_project(dir: &std::path::Path) {
     let yaml = r#"project: { name: VisualErr, unit: mm }
 screens:
@@ -1285,6 +1305,7 @@ output:
 /// CLI exit code + ErrorEnvelope code. Used for detection_failed / ba_diverged
 /// / observability_failed (reconstruct is a natural source; map_vba_err maps
 /// the code regardless of op).
+#[cfg(unix)]
 fn assert_reconstruct_error_code(code: &str, expected_exit: i32) {
     let tmp = TempDir::new().unwrap();
     let proj = tmp.path().join("proj");
@@ -1320,30 +1341,35 @@ fn assert_reconstruct_error_code(code: &str, expected_exit: i32) {
 }
 
 /// detection_failed → exit 13.
+#[cfg(unix)]
 #[test]
 fn visual_reconstruct_detection_failed_exit_13() {
     assert_reconstruct_error_code("detection_failed", 13);
 }
 
 /// ba_diverged → exit 14.
+#[cfg(unix)]
 #[test]
 fn visual_reconstruct_ba_diverged_exit_14() {
     assert_reconstruct_error_code("ba_diverged", 14);
 }
 
 /// observability_failed → exit 17.
+#[cfg(unix)]
 #[test]
 fn visual_reconstruct_observability_failed_exit_17() {
     assert_reconstruct_error_code("observability_failed", 17);
 }
 
 /// procrustes_failed → exit 15.
+#[cfg(unix)]
 #[test]
 fn visual_reconstruct_procrustes_failed_exit_15() {
     assert_reconstruct_error_code("procrustes_failed", 15);
 }
 
 /// decode_failed → exit 18.
+#[cfg(unix)]
 #[test]
 fn visual_reconstruct_decode_failed_exit_18() {
     assert_reconstruct_error_code("decode_failed", 18);
@@ -1353,6 +1379,7 @@ fn visual_reconstruct_decode_failed_exit_18() {
 /// source). calibrate requires a real checkerboard dir with >=1 image before
 /// reaching the sidecar, so we seed one png (content irrelevant — the mock
 /// ignores stdin and emits the error immediately).
+#[cfg(unix)]
 #[test]
 fn visual_calibrate_intrinsics_invalid_exit_16() {
     let tmp = TempDir::new().unwrap();

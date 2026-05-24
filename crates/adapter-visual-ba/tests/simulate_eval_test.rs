@@ -4,6 +4,13 @@
 //! a dev wrapper that execs `python -m lmt_vba_sidecar`. It proves the new
 //! `simulate` / `eval` api fns build the right payload, parse the right result
 //! shape, and that the synthetic ChArUco pipeline reconstructs within tolerance.
+//!
+//! Unix-only: the wrapper is a POSIX `.sh` script (chmod 0o755) pointing at the
+//! venv interpreter at `.venv/bin/python`. Windows has neither a `.sh` runner
+//! nor that venv layout (`.venv/Scripts/`), so the whole file is excluded from
+//! compilation there. Windows CI coverage comes from pytest + the cross-platform
+//! Rust tests + the PyInstaller packaging smoke.
+#![cfg(unix)]
 
 use std::env;
 use std::path::PathBuf;

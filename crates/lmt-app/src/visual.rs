@@ -464,14 +464,24 @@ pub fn run_compare_known(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-    use std::sync::Mutex;
     use tempfile::tempdir;
 
     // ── sidecar wrapper plumbing (mirrors adapter's simulate_eval_test) ────────
+    //
+    // The real-sidecar round-trips below rely on a POSIX `.sh` wrapper and a
+    // venv interpreter at `.venv/bin/python`, so they are `#[cfg(unix)]`-only.
+    // On Windows the venv lives under `.venv/Scripts/` and there is no `.sh`
+    // runner; these tests are excluded from compilation there (Windows CI
+    // covers pytest + the cross-platform tests below + the packaging smoke).
+
+    #[cfg(unix)]
+    use std::path::PathBuf;
+    #[cfg(unix)]
+    use std::sync::Mutex;
 
     /// Serialize env-var mutation across tests in this binary, since they share
     /// the process and all touch LMT_VBA_SIDECAR_PATH.
+    #[cfg(unix)]
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Path to the project's python-sidecar venv interpreter, computed from this
@@ -479,6 +489,7 @@ mod tests {
     /// We canonicalize only the parent `.venv/bin` dir and KEEP the `python`
     /// basename: launching via that path activates the venv's sys.path, while
     /// canonicalizing the file would resolve the symlink to the bare interpreter.
+    #[cfg(unix)]
     fn sidecar_python() -> Option<PathBuf> {
         let bin =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../python-sidecar/.venv/bin");
@@ -494,6 +505,7 @@ mod tests {
     /// Write a `sh` wrapper that execs `python -m lmt_vba_sidecar "$@"`, chmod
     /// 0o755; locate_sidecar requires an existing FILE, so we point the env var
     /// at the script (not the bare interpreter).
+    #[cfg(unix)]
     fn write_wrapper(dir: &Path, python: &Path) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let wrapper = dir.join("lmt-vba-sidecar");
@@ -510,6 +522,7 @@ mod tests {
 
     // ── real-sidecar test: simulate → eval ─────────────────────────────────────
 
+    #[cfg(unix)]
     #[test]
     fn simulate_then_eval_roundtrip() {
         let _guard = ENV_LOCK.lock().unwrap();
@@ -587,6 +600,7 @@ mod tests {
 
     // ── real-sidecar test: compare_known ───────────────────────────────────────
 
+    #[cfg(unix)]
     #[test]
     fn compare_known_roundtrip() {
         let _guard = ENV_LOCK.lock().unwrap();

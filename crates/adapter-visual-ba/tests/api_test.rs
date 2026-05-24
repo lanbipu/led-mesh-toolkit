@@ -1,3 +1,8 @@
+//! Unix-only: every test points `LMT_VBA_SIDECAR_PATH` at a `.sh` mock fixture
+//! and spawns it. Windows has no `.sh` runner, so the file is excluded from
+//! compilation there (the api-fn payload/result mapping is exercised on macOS CI).
+#![cfg(unix)]
+
 use std::env;
 use std::path::PathBuf;
 use std::sync::Mutex;

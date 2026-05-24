@@ -1,4 +1,9 @@
 //! Spawn a mock sidecar (shell script), parse its NDJSON stream.
+//!
+//! Unix-only: every test points `LMT_VBA_SIDECAR_PATH` at a `.sh` mock fixture
+//! and spawns it. Windows has no `.sh` runner, so the file is excluded from
+//! compilation there (the NDJSON stream path is exercised on macOS CI).
+#![cfg(unix)]
 
 use std::env;
 use std::path::PathBuf;
