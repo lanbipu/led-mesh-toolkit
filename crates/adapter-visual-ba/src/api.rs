@@ -14,9 +14,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::error::{VbaError, VbaResult};
 use crate::ipc::{
-    CabinetArray as IpcCabinetArray, CabinetSummary, CoordinateFrame as IpcCoordinateFrame,
-    EvalResultData, Event, ReconstructProject, ResultData, ShapePrior as IpcShapePrior,
-    SimulateResultData,
+    CabinetArray as IpcCabinetArray, CabinetSummary, CompareKnownResultData,
+    CoordinateFrame as IpcCoordinateFrame, EvalResultData, Event, ReconstructProject, ResultData,
+    ShapePrior as IpcShapePrior, SimulateResultData,
 };
 use crate::sidecar::{run_sidecar, SidecarRequest};
 
@@ -364,6 +364,37 @@ pub async fn eval(args: EvalArgs) -> VbaResult<EvalResultData> {
 
     let value = run_sidecar(SidecarRequest {
         subcommand: "eval".into(),
+        payload,
+        progress_tx: args.progress_tx,
+        cancel: args.cancel,
+    })
+    .await?;
+
+    // Undecodable result = sidecar protocol violation → BadEventJson.
+    serde_json::from_value(value).map_err(VbaError::BadEventJson)
+}
+
+// ---------------------------------------------------------------------------
+// compare_known
+// ---------------------------------------------------------------------------
+
+pub struct CompareKnownArgs {
+    pub report_path: String,
+    pub known_path: String,
+    pub progress_tx: Option<mpsc::Sender<Event>>,
+    pub cancel: Option<oneshot::Receiver<()>>,
+}
+
+pub async fn compare_known(args: CompareKnownArgs) -> VbaResult<CompareKnownResultData> {
+    let payload = json!({
+        "command": "compare_known",
+        "version": 1,
+        "report_path": &args.report_path,
+        "known_path": &args.known_path,
+    });
+
+    let value = run_sidecar(SidecarRequest {
+        subcommand: "compare_known".into(),
         payload,
         progress_tx: args.progress_tx,
         cancel: args.cancel,

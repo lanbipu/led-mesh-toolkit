@@ -127,6 +127,8 @@ pub fn build() -> ContractManifest {
            "lmt visual simulate <config> --out <dir>", Destructive, true, false, false, Some("SimulateResult"), &[0, 2, 4, 6]),
         op("visual.eval", "Evaluate a method vs ground truth on a synthetic dataset (gauge-invariant metrics)",
            "lmt visual eval <dataset> [--method charuco] [--seed-matrix <list>]", WriteSafe, false, false, true, Some("EvalResult"), &[0, 2, 4]),
+        op("visual.compare_known", "Compare a cabinet_pose_report against known monitor geometry (size/distance/angle errors)",
+           "lmt visual compare-known <report.json> <known.json>", WriteSafe, false, false, true, Some("CompareKnownResult"), &[0, 2, 4, 6]),
     ];
 
     ContractManifest {
@@ -169,10 +171,11 @@ mod tests {
             "visual.reconstruct",
             "visual.simulate",
             "visual.eval",
+            "visual.compare_known",
         ] {
             assert!(ids.contains(&expected), "manifest missing operation_id {expected}; got {ids:?}");
         }
-        assert_eq!(m.operations.len(), 21, "operation count changed — update both build() and this test");
+        assert_eq!(m.operations.len(), 22, "operation count changed — update both build() and this test");
     }
 
     #[test]

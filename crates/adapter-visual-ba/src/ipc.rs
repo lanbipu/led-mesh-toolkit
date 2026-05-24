@@ -201,6 +201,35 @@ pub struct EvalResultData {
     pub max_angle_error_deg: f64,
 }
 
+// --- compare_known result mirror (matches CompareKnownResultData in
+// python-sidecar/.../ipc.py). ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CabinetSizeCheck {
+    pub cabinet_id: String,
+    pub size_error_mm: f64,
+    #[serde(rename = "pass")]
+    pub pass: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairCheck {
+    pub a: String,
+    pub b: String,
+    pub distance_error_mm: f64,
+    pub angle_error_deg: f64,
+    pub distance_pass: bool,
+    pub angle_pass: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompareKnownResultData {
+    pub cabinets: Vec<CabinetSizeCheck>,
+    pub pairs: Vec<PairCheck>,
+    pub passed: bool,
+    pub thresholds: std::collections::BTreeMap<String, f64>,
+}
+
 /// One cabinet entry from the sidecar's `cabinet_pose_report.json`
 /// (`CabinetPose` in python-sidecar/.../ipc.py). The adapter reads only the
 /// summary fields it surfaces to lmt-app; the full report stays on disk.

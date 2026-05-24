@@ -42,6 +42,7 @@ lmt --db /path/to/lmt.sqlite project list-recent
 | `lmt visual reconstruct <project> <screen_id> --capture-manifest <json> [--method charuco]` | destructive | Multi-view photos → `measurements/measured.yaml` + `measurements/<screen_id>_cabinet_pose_report.json` (model-constrained BA, zero total station) |
 | `lmt visual simulate <config> --out <dir>` | destructive | Generate a synthetic geometry dataset (`scene.npz` + `meta.json`) for BA validation |
 | `lmt visual eval <dataset> [--method charuco] [--seed-matrix <list>]` | write_safe | Evaluate a method vs ground truth on a synthetic dataset (gauge-invariant metrics) |
+| `lmt visual compare-known <report.json> <known.json>` | write_safe | Compare a `cabinet_pose_report.json` against known monitor geometry — per-cabinet size error (from corners), per-pair distance error (from positions), per-pair angle error (from normals), + pass/fail vs thresholds (size≤2.0mm / distance≤3.0mm / angle≤0.3°). Reads two JSON files, writes nothing. |
 
 ### Scatter import mode
 
@@ -222,7 +223,7 @@ GUI 启动 / `add-recent` / `reconstruct surface` 之类的写命令都会触发
 | Class | Allowed without confirmation? | CLI commands |
 | --- | :---: | --- |
 | `read_only` | yes | `schema`, `project list-recent` / `load`, `measurements load`, `total-station instruction-card`, `reconstruct list-runs` / `get-run-report` |
-| `write_safe` | yes (no `--yes`) | `project add-recent` (still honors `--dry-run`), `visual eval` |
+| `write_safe` | yes (no `--yes`) | `project add-recent` (still honors `--dry-run`), `visual eval`, `visual compare-known` |
 | `destructive` | no (requires `--yes` or `--dry-run`) | `project remove-recent` / `save`, `total-station import`, `reconstruct surface`, `export obj`, `visual calibrate`, `visual generate-pattern`, `visual reconstruct`, `visual simulate` |
 
 An MCP tool wrapper should propagate these as the tool's `side_effect`

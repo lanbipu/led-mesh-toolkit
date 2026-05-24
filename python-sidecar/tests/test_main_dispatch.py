@@ -174,6 +174,72 @@ def test_eval_subcommand_after_simulate(tmp_path) -> None:
     assert last["data"]["method"] == "charuco"
 
 
+def test_compare_known_subcommand(tmp_path) -> None:
+    report = {
+        "schema_version": "visual_pose_report.v1",
+        "frame": {},
+        "cabinet_poses": [
+            {
+                "cabinet_id": "V000_R000",
+                "position_mm": [0, 0, 0],
+                "normal": [0, 0, 1],
+                "rotation_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                "corners_mm": [[-300, -170, 0], [300, -170, 0], [300, 170, 0], [-300, 170, 0]],
+                "reprojection_rms_px": 0.4,
+                "observed_views": 7,
+                "observed_points": 120,
+                "quality": "ok",
+            },
+            {
+                "cabinet_id": "V001_R000",
+                "position_mm": [702, 0, 0],
+                "normal": [0.0, 0.0, 1.0],
+                "rotation_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                "corners_mm": [[-300, -170, 0], [300, -170, 0], [300, 170, 0], [-300, 170, 0]],
+                "reprojection_rms_px": 0.4,
+                "observed_views": 7,
+                "observed_points": 120,
+                "quality": "ok",
+            },
+        ],
+    }
+    known = {
+        "cabinets": {"V000_R000": {"size_mm": [600, 340]}, "V001_R000": {"size_mm": [600, 340]}},
+        "pairs": [{"a": "V000_R000", "b": "V001_R000", "distance_mm": 700.0, "angle_deg": 0.0}],
+    }
+    report_path = tmp_path / "report.json"
+    known_path = tmp_path / "known.json"
+    report_path.write_text(json.dumps(report))
+    known_path.write_text(json.dumps(known))
+
+    payload = {
+        "command": "compare_known",
+        "version": 1,
+        "report_path": str(report_path),
+        "known_path": str(known_path),
+    }
+    code, out, _ = _run_cli(["compare_known"], json.dumps(payload))
+    assert code == 0
+    last = json.loads(out.strip().splitlines()[-1])
+    assert last["event"] == "result"
+    assert abs(last["data"]["pairs"][0]["distance_error_mm"] - 2.0) < 1e-6
+    assert last["data"]["passed"] is True
+
+
+def test_compare_known_missing_file_emits_invalid_input(tmp_path) -> None:
+    payload = {
+        "command": "compare_known",
+        "version": 1,
+        "report_path": str(tmp_path / "nope.json"),
+        "known_path": str(tmp_path / "also-nope.json"),
+    }
+    code, out, _ = _run_cli(["compare_known"], json.dumps(payload))
+    assert code != 0
+    last = json.loads(out.strip().splitlines()[-1])
+    assert last["event"] == "error"
+    assert last["code"] == "invalid_input"
+
+
 def test_transitive_import_failure_does_not_say_not_implemented(tmp_path, monkeypatch) -> None:
     """A dependency import failure (different module name than the subcommand
     module) must propagate as internal_error with traceback, NOT as

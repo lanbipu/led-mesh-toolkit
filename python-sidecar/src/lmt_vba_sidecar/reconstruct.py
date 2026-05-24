@@ -93,10 +93,15 @@ def _cabinet_id(col: int, row: int) -> str:
 
 
 def _active_surface_corners_mm(screen_mapping: ScreenMapping, cabinet_id: str) -> np.ndarray:
-    """The 4 active-surface CORNERS in local mm (center origin), TL,TR,BR,BL.
+    """The 4 active-surface CORNERS in local mm (center origin), BL,BR,TR,TL
+    (counter-clockwise starting from bottom-left).
 
     These are the physical panel corners (±w/2, ±h/2) — NOT the inner ChArUco
     corners — used to derive cabinet center / normal / corners in the report.
+
+    NOTE: the BL,BR,TR,TL ordering is load-bearing — compare_known derives
+    cabinet size from this order (width=‖c1-c0‖, height=‖c2-c1‖). Do not reorder
+    the array without updating compare_known.compare_known accordingly.
     """
     cab = None
     for c in screen_mapping.cabinets:

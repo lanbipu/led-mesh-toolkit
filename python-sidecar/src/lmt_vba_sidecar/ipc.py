@@ -319,3 +319,52 @@ class EvalResultData(BaseModel):
 class EvalResultEvent(BaseModel):
     event: Literal["result"]
     data: EvalResultData
+
+
+# ---------------------------------------------------------------------------
+# compare_known — reconcile a pose report against known monitor geometry
+# ---------------------------------------------------------------------------
+
+class CompareKnownInput(BaseModel):
+    command: Literal["compare_known"]
+    version: Literal[1]
+    report_path: str
+    known_path: str
+    # Optional per-key tolerance overrides (size_mm, distance_mm, angle_deg).
+    # The sidecar honors these, but the current CLI / adapter / lmt-app path
+    # never sends them — it always uses the spec §10.3 defaults (size≤2.0mm /
+    # distance≤3.0mm / angle≤0.3°). The field is kept as forward-compat for a
+    # future `--threshold` CLI flag (out of scope for Task 2.1).
+    thresholds: dict[str, float] | None = None
+
+
+class CabinetSizeCheck(BaseModel):
+    cabinet_id: str
+    size_error_mm: float
+    # `pass` is a Python keyword; expose it via alias so the JSON field is `pass`.
+    # serialize_by_alias makes model_dump_json emit `pass` (not `pass_`); the
+    # Rust DTO and adapter both read the bare `pass` key.
+    pass_: bool = Field(alias="pass")
+
+    model_config = {"populate_by_name": True, "serialize_by_alias": True}
+
+
+class PairCheck(BaseModel):
+    a: str
+    b: str
+    distance_error_mm: float
+    angle_error_deg: float
+    distance_pass: bool
+    angle_pass: bool
+
+
+class CompareKnownResultData(BaseModel):
+    cabinets: list[CabinetSizeCheck]
+    pairs: list[PairCheck]
+    passed: bool
+    thresholds: dict[str, float]
+
+
+class CompareKnownResultEvent(BaseModel):
+    event: Literal["result"]
+    data: CompareKnownResultData

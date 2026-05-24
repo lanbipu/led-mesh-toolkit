@@ -367,6 +367,23 @@
         2,
         4
       ]
+    },
+    {
+      "operation_id": "visual.compare_known",
+      "summary": "Compare a cabinet_pose_report against known monitor geometry (size/distance/angle errors)",
+      "cli": "lmt visual compare-known <report.json> <known.json>",
+      "side_effect": "write_safe",
+      "supports_dry_run": false,
+      "supports_stdin": false,
+      "idempotent": true,
+      "open_world": false,
+      "output_type": "CompareKnownResult",
+      "exit_codes": [
+        0,
+        2,
+        4,
+        6
+      ]
     }
   ]
 }

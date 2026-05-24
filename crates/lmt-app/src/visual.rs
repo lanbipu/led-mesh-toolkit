@@ -10,14 +10,14 @@
 use std::path::Path;
 
 use lmt_adapter_visual_ba::api::{
-    calibrate, eval, generate_pattern, reconstruct, simulate, CalibrateArgs, EvalArgs,
-    GeneratePatternArgs, ReconstructArgs, SimulateArgs,
+    calibrate, compare_known, eval, generate_pattern, reconstruct, simulate, CalibrateArgs,
+    CompareKnownArgs, EvalArgs, GeneratePatternArgs, ReconstructArgs, SimulateArgs,
 };
 use lmt_adapter_visual_ba::ipc;
 
 use lmt_shared::dto::{
-    CabinetPoseSummary, CalibrateResult, EvalResult, GeneratePatternResult, SimulateResult,
-    VisualReconstructResult,
+    CabinetPoseSummary, CabinetSizeCheck, CalibrateResult, CompareKnownResult, EvalResult,
+    GeneratePatternResult, PairCheck, SimulateResult, VisualReconstructResult,
 };
 use lmt_shared::error::{LmtError, LmtResult};
 
@@ -413,6 +413,53 @@ pub fn run_eval(
     })
 }
 
+// ---------------------------------------------------------------------------
+// compare_known
+// ---------------------------------------------------------------------------
+
+/// Reconcile a reconstructed `cabinet_pose_report.json` against a user-filled
+/// `known_geometry.json` (true monitor sizes + pairwise distances/angles).
+/// Reads both files in the sidecar; writes nothing (write_safe).
+pub fn run_compare_known(
+    report_path: &Path,
+    known_path: &Path,
+) -> LmtResult<CompareKnownResult> {
+    let args = CompareKnownArgs {
+        report_path: report_path.display().to_string(),
+        known_path: known_path.display().to_string(),
+        progress_tx: None,
+        cancel: None,
+    };
+
+    let out = rt()?.block_on(compare_known(args)).map_err(map_vba_err)?;
+
+    Ok(CompareKnownResult {
+        cabinets: out
+            .cabinets
+            .into_iter()
+            .map(|c| CabinetSizeCheck {
+                cabinet_id: c.cabinet_id,
+                size_error_mm: c.size_error_mm,
+                pass: c.pass,
+            })
+            .collect(),
+        pairs: out
+            .pairs
+            .into_iter()
+            .map(|p| PairCheck {
+                a: p.a,
+                b: p.b,
+                distance_error_mm: p.distance_error_mm,
+                angle_error_deg: p.angle_error_deg,
+                distance_pass: p.distance_pass,
+                angle_pass: p.angle_pass,
+            })
+            .collect(),
+        passed: out.passed,
+        thresholds: out.thresholds,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,6 +581,74 @@ mod tests {
             ev.max_distance_error_mm < 3.0,
             "max_distance_error_mm = {} should be < 3.0",
             ev.max_distance_error_mm
+        );
+    }
+
+    // ── real-sidecar test: compare_known ───────────────────────────────────────
+
+    #[test]
+    fn compare_known_roundtrip() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        let python = match sidecar_python() {
+            Some(p) => p,
+            None => {
+                eprintln!("skipping compare_known_roundtrip: python-sidecar venv not found");
+                return;
+            }
+        };
+
+        let tmp = tempdir().expect("tmpdir");
+        let wrapper = write_wrapper(tmp.path(), &python);
+
+        let report = serde_json::json!({
+            "schema_version": "visual_pose_report.v1",
+            "frame": {},
+            "cabinet_poses": [
+                {
+                    "cabinet_id": "V000_R000",
+                    "position_mm": [0, 0, 0],
+                    "normal": [0, 0, 1],
+                    "rotation_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                    "corners_mm": [[-300, -170, 0], [300, -170, 0], [300, 170, 0], [-300, 170, 0]],
+                    "reprojection_rms_px": 0.4,
+                    "observed_views": 7,
+                    "observed_points": 120,
+                    "quality": "ok"
+                },
+                {
+                    "cabinet_id": "V001_R000",
+                    "position_mm": [702, 0, 0],
+                    "normal": [0.0, 0.0, 1.0],
+                    "rotation_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                    "corners_mm": [[-300, -170, 0], [300, -170, 0], [300, 170, 0], [-300, 170, 0]],
+                    "reprojection_rms_px": 0.4,
+                    "observed_views": 7,
+                    "observed_points": 120,
+                    "quality": "ok"
+                }
+            ]
+        });
+        let known = serde_json::json!({
+            "cabinets": {"V000_R000": {"size_mm": [600, 340]}, "V001_R000": {"size_mm": [600, 340]}},
+            "pairs": [{"a": "V000_R000", "b": "V001_R000", "distance_mm": 700.0, "angle_deg": 0.0}]
+        });
+        let report_path = tmp.path().join("report.json");
+        let known_path = tmp.path().join("known.json");
+        std::fs::write(&report_path, serde_json::to_string(&report).unwrap()).unwrap();
+        std::fs::write(&known_path, serde_json::to_string(&known).unwrap()).unwrap();
+
+        std::env::set_var("LMT_VBA_SIDECAR_PATH", wrapper.to_str().unwrap());
+        let res = run_compare_known(&report_path, &known_path);
+        std::env::remove_var("LMT_VBA_SIDECAR_PATH");
+
+        let res = res.expect("run_compare_known should succeed");
+        assert!(res.passed, "2mm distance within default 3mm threshold");
+        assert_eq!(res.pairs.len(), 1);
+        assert!(
+            (res.pairs[0].distance_error_mm - 2.0).abs() < 1e-6,
+            "distance_error_mm = {} should be 2.0",
+            res.pairs[0].distance_error_mm
         );
     }
 

@@ -32,6 +32,7 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             method,
             seed_matrix,
         } => eval(mode, &dataset, &method, seed_matrix),
+        VisualCmd::CompareKnown { report, known } => compare_known(mode, &report, &known),
         VisualCmd::Calibrate {
             project_path,
             screen_id,
@@ -331,6 +332,26 @@ fn eval(mode: Mode, dataset: &str, method: &str, seed_matrix: Vec<i64>) -> i32 {
                 p.max_size_error_mm,
                 p.max_distance_error_mm,
                 p.max_angle_error_deg
+            );
+        }),
+        Err(e) => output::err(mode, ApiError::from(e)),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// compare_known
+// ---------------------------------------------------------------------------
+
+fn compare_known(mode: Mode, report: &str, known: &str) -> i32 {
+    // compare-known is write_safe (reads two JSON files, writes nothing) — no gate.
+    match lmt_app::visual::run_compare_known(Path::new(report), Path::new(known)) {
+        Ok(r) => output::ok(mode, r, |p| {
+            let _ = writeln!(
+                std::io::stdout(),
+                "compare-known: passed={} ({} cabinets, {} pairs)",
+                p.passed,
+                p.cabinets.len(),
+                p.pairs.len()
             );
         }),
         Err(e) => output::err(mode, ApiError::from(e)),

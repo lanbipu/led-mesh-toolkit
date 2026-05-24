@@ -266,6 +266,36 @@ pub struct EvalResult {
     pub seeds: Vec<i64>,
 }
 
+/// Per-cabinet size reconciliation: reconstructed size (from corners) vs known.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CabinetSizeCheck {
+    pub cabinet_id: String,
+    pub size_error_mm: f64,
+    #[serde(rename = "pass")]
+    pub pass: bool,
+}
+
+/// Per-pair distance/angle reconciliation against known monitor geometry.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PairCheck {
+    pub a: String,
+    pub b: String,
+    pub distance_error_mm: f64,
+    pub angle_error_deg: f64,
+    pub distance_pass: bool,
+    pub angle_pass: bool,
+}
+
+/// Result of reconciling a cabinet_pose_report against known monitor geometry
+/// (size from corners, distance from positions, angle from normals).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CompareKnownResult {
+    pub cabinets: Vec<CabinetSizeCheck>,
+    pub pairs: Vec<PairCheck>,
+    pub passed: bool,
+    pub thresholds: BTreeMap<String, f64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CalibrateResult {
     pub intrinsics_path: String,

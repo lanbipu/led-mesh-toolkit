@@ -67,6 +67,9 @@ pub fn dump_all() -> Value {
     add!("VisualReconstructResult", dto::VisualReconstructResult);
     add!("SimulateResult", dto::SimulateResult);
     add!("EvalResult", dto::EvalResult);
+    add!("CompareKnownResult", dto::CompareKnownResult);
+    add!("CabinetSizeCheck", dto::CabinetSizeCheck);
+    add!("PairCheck", dto::PairCheck);
     add!("CalibrateResult", dto::CalibrateResult);
     add!("GeneratePatternResult", dto::GeneratePatternResult);
 
@@ -119,6 +122,7 @@ mod tests {
             "Operation",
             "VisualReconstructResult",
             "EvalResult",
+            "CompareKnownResult",
         ] {
             assert!(types.contains_key(expected), "missing schema for {expected}");
         }

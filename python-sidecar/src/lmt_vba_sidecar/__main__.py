@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from lmt_vba_sidecar.io_utils import write_event
 from lmt_vba_sidecar.ipc import (
     CalibrateInput,
+    CompareKnownInput,
     ErrorEvent,
     EvalInput,
     GeneratePatternInput,
@@ -36,6 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("reconstruct")
     sub.add_parser("simulate")
     sub.add_parser("eval")
+    sub.add_parser("compare_known")
     args = parser.parse_args(argv)
 
     try:
@@ -55,6 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         "reconstruct": "lmt_vba_sidecar.reconstruct",
         "simulate": "lmt_vba_sidecar.simulate_cmd",
         "eval": "lmt_vba_sidecar.eval_cmd",
+        "compare_known": "lmt_vba_sidecar.compare_known_cmd",
     }
     SUBCOMMAND_ENTRYPOINTS = {
         "calibrate": ("run_calibrate", CalibrateInput),
@@ -62,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         "reconstruct": ("run_reconstruct", ReconstructInput),
         "simulate": ("run_simulate", SimulateInput),
         "eval": ("run_eval", EvalInput),
+        "compare_known": ("run_compare_known", CompareKnownInput),
     }
 
     try:

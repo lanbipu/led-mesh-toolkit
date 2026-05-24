@@ -320,6 +320,14 @@ pub enum VisualCmd {
         #[arg(long, value_delimiter = ',', default_values_t = vec![0i64])]
         seed_matrix: Vec<i64>,
     },
+    /// 重建 pose report 对账已知监视器几何(尺寸/距离/角度误差)。side_effect: write_safe
+    #[command(name = "compare-known")]
+    CompareKnown {
+        /// cabinet_pose_report.json 路径(reconstruct 输出)。
+        report: String,
+        /// known_geometry.json 路径(用户填的真值)。
+        known: String,
+    },
 }
 
 impl Cli {
