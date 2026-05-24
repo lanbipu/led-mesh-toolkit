@@ -70,6 +70,9 @@ pub enum Command {
 
     /// dump lmt-shared 全部公开 DTO / error / envelope 的 JSON Schema。
     Schema,
+
+    /// dump Contract Manifest —— 全部 operation 的清单(operation_id / cli / side_effect)。
+    Manifest,
 }
 
 #[derive(Debug, Subcommand)]

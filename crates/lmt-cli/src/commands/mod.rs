@@ -2,6 +2,7 @@
 //! 再把结果 / 错误转成 [`crate::output`] 的 envelope 形态。
 
 mod export;
+mod manifest;
 mod measurements;
 mod project;
 mod reconstruct;
@@ -32,6 +33,7 @@ pub fn dispatch(cli: Cli) -> i32 {
     let dry_run = cli.dry_run;
     match cli.command {
         Command::Schema => schema_cmd::run(mode),
+        Command::Manifest => manifest::run(mode),
         Command::Project(cmd) => project::run(cmd, mode, db, yes, dry_run),
         Command::Measurements(cmd) => measurements::run(cmd, mode),
         Command::TotalStation(cmd) => total_station::run(cmd, mode, yes, dry_run),

@@ -76,6 +76,28 @@ fn schema_json_envelope_has_known_types() {
     }
 }
 
+// ── manifest ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn manifest_json_lists_operations_with_ids() {
+    let out = lmt().args(["--json", "manifest"]).assert().success().get_output().clone();
+    let env: Value = serde_json::from_slice(&out.stdout).expect("stdout must be JSON envelope");
+    assert_eq!(env["ok"], true);
+    let ops = env["data"]["operations"].as_array().expect("operations array");
+    let ids: Vec<&str> = ops.iter().map(|o| o["operation_id"].as_str().unwrap()).collect();
+    assert!(ids.contains(&"reconstruct.surface"), "ids: {ids:?}");
+    assert!(ids.contains(&"project.list_recent"), "ids: {ids:?}");
+    assert_eq!(env["data"]["contract_version"], "1.0");
+}
+
+#[test]
+fn manifest_human_mode_is_text_not_json() {
+    let out = lmt().arg("manifest").assert().success().get_output().clone();
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(serde_json::from_str::<Value>(&s).is_err(), "human mode should not be JSON: {s}");
+    assert!(s.contains("reconstruct.surface"), "stdout: {s}");
+}
+
 // ── --timeout 未实现 ─────────────────────────────────────────────────────────
 
 #[test]
