@@ -1,0 +1,222 @@
+{
+  "contract_version": "1.0",
+  "schema_version": "1",
+  "operations": [
+    {
+      "operation_id": "schema",
+      "summary": "Dump JsonSchema of all public DTOs + envelope + error types",
+      "cli": "lmt schema",
+      "side_effect": "read_only",
+      "supports_dry_run": false,
+      "supports_stdin": false,
+      "idempotent": true,
+      "open_world": false,
+      "output_type": null,
+      "exit_codes": [
+        0
+      ]
+    },
+    {
+      "operation_id": "project.list_recent",
+      "summary": "List recent_projects rows",
+      "cli": "lmt project list-recent",
+      "side_effect": "read_only",
+      "supports_dry_run": false,
+      "supports_stdin": false,
+      "idempotent": true,
+      "open_world": false,
+      "output_type": "RecentProject",
+      "exit_codes": [
+        0,
+        2,
+        5
+      ]
+    },
+    {
+      "operation_id": "project.add_recent",
+      "summary": "Upsert a recent-projects row (normalized path)",
+      "cli": "lmt project add-recent <abs_path> <display_name>",
+      "side_effect": "write_safe",
+      "supports_dry_run": true,
+      "supports_stdin": false,
+      "idempotent": false,
+      "open_world": false,
+      "output_type": "RecentProject",
+      "exit_codes": [
+        0,
+        2,
+        4,
+        5
+      ]
+    },
+    {
+      "operation_id": "project.remove_recent",
+      "summary": "Delete a recent-projects row by id",
+      "cli": "lmt project remove-recent <id>",
+      "side_effect": "destructive",
+      "supports_dry_run": true,
+      "supports_stdin": false,
+      "idempotent": true,
+      "open_world": false,
+      "output_type": null,
+      "exit_codes": [
+        0,
+        2,
+        5
+      ]
+    },
+    {
+      "operation_id": "project.load",
+      "summary": "Read <dir>/project.yaml into ProjectConfig",
+      "cli": "lmt project load <abs_path>",
+      "side_effect": "read_only",
+      "supports_dry_run": false,
+      "supports_stdin": false,
+      "idempotent": true,
+      "open_world": false,
+      "output_type": "ProjectConfig",
+      "exit_codes": [
+        0,
+        2,
+        3,
+        6
+      ]
+    },
+    {
+      "operation_id": "project.save",
+      "summary": "Atomic write <dir>/project.yaml from YAML/JSON (stdin or --input)",
+      "cli": "lmt project save <abs_path> [--input <path>]",
+      "side_effect": "destructive",
+      "supports_dry_run": true,
+      "supports_stdin": true,
+      "idempotent": false,
+      "open_world": false,
+      "output_type": null,
+      "exit_codes": [
+        0,
+        2,
+        4,
+        6
+      ]
+    },
+    {
+      "operation_id": "measurements.load",
+      "summary": "Read a measured.yaml",
+      "cli": "lmt measurements load <path>",
+      "side_effect": "read_only",
+      "supports_dry_run": false,
+      "supports_stdin": false,
+      "idempotent": true,
+      "open_world": false,
+      "output_type": null,
+      "exit_codes": [
+        0,
+        2,
+        3,
+        6
+      ]
+    },
+    {
+      "operation_id": "total_station.import",
+      "summary": "Trimble CSV -> measurements/measured.yaml + import_report.json",
+      "cli": "lmt total-station import <project> <screen_id> <csv> [--mode grid|scatter] [--columns <spec>]",
+      "side_effect": "destructive",
+      "supports_dry_run": true,
+      "supports_stdin": false,
+      "idempotent": false,
+      "open_world": false,
+      "output_type": "TotalStationImportResult",
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "operation_id": "total_station.instruction_card",
+      "summary": "Render instruction-card HTML on stdout (no PDF)",
+      "cli": "lmt total-station instruction-card <project> <screen_id>",
+      "side_effect": "read_only",
+      "supports_dry_run": false,
+      "supports_stdin": false,
+      "idempotent": true,
+      "open_world": false,
+      "output_type": "InstructionCardResult",
+      "exit_codes": [
+        0,
+        2,
+        3
+      ]
+    },
+    {
+      "operation_id": "reconstruct.surface",
+      "summary": "Run reconstruction, write report.json + reconstruction_runs row",
+      "cli": "lmt reconstruct surface <project> <screen_id> <measurements_rel>",
+      "side_effect": "destructive",
+      "supports_dry_run": true,
+      "supports_stdin": false,
+      "idempotent": false,
+      "open_world": false,
+      "output_type": null,
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        5,
+        12
+      ]
+    },
+    {
+      "operation_id": "reconstruct.list_runs",
+      "summary": "List reconstruction_runs for a project",
+      "cli": "lmt reconstruct list-runs <project> [--screen-id <id>]",
+      "side_effect": "read_only",
+      "supports_dry_run": false,
+      "supports_stdin": false,
+      "idempotent": true,
+      "open_world": false,
+      "output_type": "ReconstructionRun",
+      "exit_codes": [
+        0,
+        2,
+        5
+      ]
+    },
+    {
+      "operation_id": "reconstruct.get_run_report",
+      "summary": "Return the full report.json for a run",
+      "cli": "lmt reconstruct get-run-report <run_id>",
+      "side_effect": "read_only",
+      "supports_dry_run": false,
+      "supports_stdin": false,
+      "idempotent": true,
+      "open_world": false,
+      "output_type": null,
+      "exit_codes": [
+        0,
+        2,
+        3,
+        5
+      ]
+    },
+    {
+      "operation_id": "export.obj",
+      "summary": "Write an OBJ for a run (target: disguise|unreal|neutral)",
+      "cli": "lmt export obj <run_id> <target> [--dst <path>]",
+      "side_effect": "destructive",
+      "supports_dry_run": true,
+      "supports_stdin": false,
+      "idempotent": false,
+      "open_world": false,
+      "output_type": null,
+      "exit_codes": [
+        0,
+        2,
+        3,
+        5
+      ]
+    }
+  ]
+}

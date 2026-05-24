@@ -21,6 +21,7 @@ lmt --db /path/to/lmt.sqlite project list-recent
 | Command | Side effect | Purpose |
 | --- | --- | --- |
 | `lmt schema` | read_only | Dump JsonSchema of all public DTOs + envelope + error types |
+| `lmt manifest` | read_only | Dump Contract Manifest: all operations with operation_id / cli / side_effect / exit_codes |
 | `lmt project list-recent` | read_only | List `recent_projects` table |
 | `lmt project add-recent <abs_path> <display_name>` | write_safe | Upsert a recent-projects row. Path is normalized (canonicalize if exists, else absolutize) before write so GUI and CLI hit the same UNIQUE key. |
 | `lmt project remove-recent <id>` | destructive | Delete a recent-projects row |
@@ -147,6 +148,14 @@ shaped as `{schema_version, types: {<TypeName>: <JsonSchema>}, incomplete: [...]
 `CabinetArray`) which deliberately do not derive `JsonSchema` to keep the core
 crate transport-free. If you need their shape, read the rendered
 `reports/<stamp>.json` from `get-run-report` directly.
+
+## Operation discovery
+
+Run `lmt --json manifest` to list every operation with its stable `operation_id`,
+canonical CLI string, `side_effect`, and possible exit codes. This is the
+machine-readable counterpart of the Command tree table above. A snapshot lives
+at `docs/contract-manifest.json`. When you add/remove a subcommand, regenerate
+the snapshot and update `lmt_shared::manifest::build()`.
 
 ## DB path convention
 
