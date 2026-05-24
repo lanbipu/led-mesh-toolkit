@@ -31,6 +31,20 @@
       ]
     },
     {
+      "operation_id": "version",
+      "summary": "Machine-readable version metadata (semver + schema/contract versions)",
+      "cli": "lmt version",
+      "side_effect": "read_only",
+      "supports_dry_run": false,
+      "supports_stdin": false,
+      "idempotent": true,
+      "open_world": false,
+      "output_type": null,
+      "exit_codes": [
+        0
+      ]
+    },
+    {
       "operation_id": "project.list_recent",
       "summary": "List recent_projects rows",
       "cli": "lmt project list-recent",

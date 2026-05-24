@@ -76,6 +76,18 @@ fn schema_json_envelope_has_known_types() {
     }
 }
 
+// ── version subcommand ────────────────────────────────────────────────────────
+
+#[test]
+fn version_subcommand_json_has_version_and_schema() {
+    let out = lmt().args(["--json", "version"]).assert().success().get_output().clone();
+    let env: Value = serde_json::from_slice(&out.stdout).expect("JSON envelope");
+    assert_eq!(env["ok"], true);
+    assert!(env["data"]["version"].as_str().unwrap().len() > 0);
+    assert_eq!(env["data"]["schema_version"], "1");
+    assert_eq!(env["data"]["contract_version"], "1.0");
+}
+
 // ── manifest ─────────────────────────────────────────────────────────────────
 
 #[test]

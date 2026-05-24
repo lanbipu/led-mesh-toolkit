@@ -89,6 +89,8 @@ pub fn build() -> ContractManifest {
            "lmt schema", ReadOnly, false, false, true, None, &[0]),
         op("manifest", "Dump the Contract Manifest (this operation list)",
            "lmt manifest", ReadOnly, false, false, true, Some("ContractManifest"), &[0]),
+        op("version", "Machine-readable version metadata (semver + schema/contract versions)",
+           "lmt version", ReadOnly, false, false, true, None, &[0]),
         op("project.list_recent", "List recent_projects rows",
            "lmt project list-recent", ReadOnly, false, false, true, Some("RecentProject"), &[0, 2, 5]),
         op("project.add_recent", "Upsert a recent-projects row (normalized path)",
@@ -136,6 +138,7 @@ mod tests {
         for expected in [
             "schema",
             "manifest",
+            "version",
             "project.list_recent",
             "project.add_recent",
             "project.remove_recent",
@@ -151,7 +154,7 @@ mod tests {
         ] {
             assert!(ids.contains(&expected), "manifest missing operation_id {expected}; got {ids:?}");
         }
-        assert_eq!(m.operations.len(), 14, "operation count changed — update both build() and this test");
+        assert_eq!(m.operations.len(), 15, "operation count changed — update both build() and this test");
     }
 
     #[test]

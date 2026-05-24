@@ -95,6 +95,9 @@ pub enum Command {
 
     /// dump Contract Manifest —— 全部 operation 的清单(operation_id / cli / side_effect)。
     Manifest,
+
+    /// 机器可读版本元信息(--version 是纯文本简版)。
+    Version,
 }
 
 #[derive(Debug, Subcommand)]

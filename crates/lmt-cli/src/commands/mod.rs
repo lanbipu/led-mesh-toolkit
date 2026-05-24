@@ -9,6 +9,7 @@ mod reconstruct;
 mod schema_cmd;
 mod total_station;
 mod util;
+mod version;
 
 use crate::cli::{Cli, Command};
 use crate::output::Mode;
@@ -34,6 +35,7 @@ pub fn dispatch(cli: Cli) -> i32 {
     match cli.command {
         Command::Schema => schema_cmd::run(mode),
         Command::Manifest => manifest::run(mode),
+        Command::Version => version::run(mode),
         Command::Project(cmd) => project::run(cmd, mode, db, yes, dry_run),
         Command::Measurements(cmd) => measurements::run(cmd, mode),
         Command::TotalStation(cmd) => total_station::run(cmd, mode, yes, dry_run),
