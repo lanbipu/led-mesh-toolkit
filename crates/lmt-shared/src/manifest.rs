@@ -83,6 +83,7 @@ pub fn build() -> ContractManifest {
     // 其余写操作都有副作用累积,标 false:add_recent 每次改 last_opened_at、
     // import 滚动 .bak + 重写 report、surface 插新 run row、save/export 覆盖写 +
     // 写 DB metadata。标 false 是为了防止将来 MCP/Skill 据此做错误的自动重试 / dedup。
+    // op(id, summary, cli, side_effect, dry_run, stdin, idempotent, output_type, exit_codes)
     let operations = vec![
         op("schema", "Dump JsonSchema of all public DTOs + envelope + error types",
            "lmt schema", ReadOnly, false, false, true, None, &[0]),
@@ -147,6 +148,7 @@ mod tests {
         ] {
             assert!(ids.contains(&expected), "manifest missing operation_id {expected}; got {ids:?}");
         }
+        assert_eq!(m.operations.len(), 13, "operation count changed — update both build() and this test");
     }
 
     #[test]
