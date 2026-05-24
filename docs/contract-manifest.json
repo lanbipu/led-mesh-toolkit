@@ -272,6 +272,101 @@
         3,
         4
       ]
+    },
+    {
+      "operation_id": "visual.calibrate",
+      "summary": "Checkerboard images -> camera intrinsics.json",
+      "cli": "lmt visual calibrate <project> <screen_id> <checkerboard_dir> [--square-mm <f>] [--inner <RxC>]",
+      "side_effect": "destructive",
+      "supports_dry_run": true,
+      "supports_stdin": false,
+      "idempotent": false,
+      "open_world": false,
+      "output_type": "CalibrateResult",
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        13,
+        16
+      ]
+    },
+    {
+      "operation_id": "visual.generate_pattern",
+      "summary": "Generate ChArUco pattern (per-cabinet PNGs + full_screen + pattern_meta)",
+      "cli": "lmt visual generate-pattern <project> <screen_id> [--method charuco]",
+      "side_effect": "destructive",
+      "supports_dry_run": true,
+      "supports_stdin": false,
+      "idempotent": false,
+      "open_world": false,
+      "output_type": "GeneratePatternResult",
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        6,
+        7
+      ]
+    },
+    {
+      "operation_id": "visual.reconstruct",
+      "summary": "Multi-view photos -> measured.yaml + cabinet_pose_report.json (model-constrained BA, zero total station)",
+      "cli": "lmt visual reconstruct <project> <screen_id> --capture-manifest <json> [--method charuco]",
+      "side_effect": "destructive",
+      "supports_dry_run": true,
+      "supports_stdin": false,
+      "idempotent": false,
+      "open_world": false,
+      "output_type": "VisualReconstructResult",
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        6,
+        7,
+        13,
+        14,
+        15,
+        16,
+        17
+      ]
+    },
+    {
+      "operation_id": "visual.simulate",
+      "summary": "Generate a synthetic geometry dataset (scene.npz) for BA validation",
+      "cli": "lmt visual simulate <config> --out <dir>",
+      "side_effect": "destructive",
+      "supports_dry_run": true,
+      "supports_stdin": false,
+      "idempotent": false,
+      "open_world": false,
+      "output_type": "SimulateResult",
+      "exit_codes": [
+        0,
+        2,
+        4,
+        6
+      ]
+    },
+    {
+      "operation_id": "visual.eval",
+      "summary": "Evaluate a method vs ground truth on a synthetic dataset (gauge-invariant metrics)",
+      "cli": "lmt visual eval <dataset> [--method charuco] [--seed-matrix <list>]",
+      "side_effect": "write_safe",
+      "supports_dry_run": false,
+      "supports_stdin": false,
+      "idempotent": true,
+      "open_world": false,
+      "output_type": "EvalResult",
+      "exit_codes": [
+        0,
+        2,
+        4
+      ]
     }
   ]
 }

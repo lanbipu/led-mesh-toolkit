@@ -117,6 +117,16 @@ pub fn build() -> ContractManifest {
            "lmt export obj <run_id> <target> [--dst <path>]", Destructive, true, false, false, None, &[0, 2, 3, 4, 5, 6]),
         op("seed_example", "Copy a built-in example project (curved-flat / curved-arc) into a directory",
            "lmt seed-example <name> <dst>", Destructive, true, false, false, None, &[0, 2, 3, 4]),
+        op("visual.calibrate", "Checkerboard images -> camera intrinsics.json",
+           "lmt visual calibrate <project> <screen_id> <checkerboard_dir> [--square-mm <f>] [--inner <RxC>]", Destructive, true, false, false, Some("CalibrateResult"), &[0, 2, 3, 4, 13, 16]),
+        op("visual.generate_pattern", "Generate ChArUco pattern (per-cabinet PNGs + full_screen + pattern_meta)",
+           "lmt visual generate-pattern <project> <screen_id> [--method charuco]", Destructive, true, false, false, Some("GeneratePatternResult"), &[0, 2, 3, 4, 6, 7]),
+        op("visual.reconstruct", "Multi-view photos -> measured.yaml + cabinet_pose_report.json (model-constrained BA, zero total station)",
+           "lmt visual reconstruct <project> <screen_id> --capture-manifest <json> [--method charuco]", Destructive, true, false, false, Some("VisualReconstructResult"), &[0, 2, 3, 4, 6, 7, 13, 14, 15, 16, 17]),
+        op("visual.simulate", "Generate a synthetic geometry dataset (scene.npz) for BA validation",
+           "lmt visual simulate <config> --out <dir>", Destructive, true, false, false, Some("SimulateResult"), &[0, 2, 4, 6]),
+        op("visual.eval", "Evaluate a method vs ground truth on a synthetic dataset (gauge-invariant metrics)",
+           "lmt visual eval <dataset> [--method charuco] [--seed-matrix <list>]", WriteSafe, false, false, true, Some("EvalResult"), &[0, 2, 4]),
     ];
 
     ContractManifest {
@@ -154,10 +164,15 @@ mod tests {
             "reconstruct.get_run_report",
             "export.obj",
             "seed_example",
+            "visual.calibrate",
+            "visual.generate_pattern",
+            "visual.reconstruct",
+            "visual.simulate",
+            "visual.eval",
         ] {
             assert!(ids.contains(&expected), "manifest missing operation_id {expected}; got {ids:?}");
         }
-        assert_eq!(m.operations.len(), 16, "operation count changed — update both build() and this test");
+        assert_eq!(m.operations.len(), 21, "operation count changed — update both build() and this test");
     }
 
     #[test]
@@ -196,6 +211,10 @@ mod tests {
             "reconstruct.surface",
             "export.obj",
             "seed_example",
+            "visual.calibrate",
+            "visual.generate_pattern",
+            "visual.reconstruct",
+            "visual.simulate",
         ] {
             assert!(!find(id).idempotent, "{id} mutates observable state -> not idempotent");
         }

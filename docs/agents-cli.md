@@ -37,6 +37,11 @@ lmt --db /path/to/lmt.sqlite project list-recent
 | `lmt reconstruct get-run-report <run_id>` | read_only | Return the full `report.json` for a run |
 | `lmt export obj <run_id> <target> [--dst path]` | destructive | Write an OBJ for a run; `target` ∈ `{disguise, unreal, neutral}` |
 | `lmt seed-example <name> <dst>` | destructive | Copy a built-in example (curved-flat / curved-arc) into `<dst>/<name>` |
+| `lmt visual calibrate <project> <screen_id> <checkerboard_dir> [--square-mm <f>] [--inner <RxC>]` | destructive | Checkerboard images → `calibration/<screen_id>_intrinsics.json` |
+| `lmt visual generate-pattern <project> <screen_id> [--method charuco]` | destructive | Generate ChArUco pattern — per-cabinet PNGs + `full_screen` + `pattern_meta` under `patterns/<screen_id>/` |
+| `lmt visual reconstruct <project> <screen_id> --capture-manifest <json> [--method charuco]` | destructive | Multi-view photos → `measurements/measured.yaml` + `measurements/<screen_id>_cabinet_pose_report.json` (model-constrained BA, zero total station) |
+| `lmt visual simulate <config> --out <dir>` | destructive | Generate a synthetic geometry dataset (`scene.npz` + `meta.json`) for BA validation |
+| `lmt visual eval <dataset> [--method charuco] [--seed-matrix <list>]` | write_safe | Evaluate a method vs ground truth on a synthetic dataset (gauge-invariant metrics) |
 
 ### Scatter import mode
 
@@ -141,6 +146,12 @@ Failure (`--json`):
 | `conflict` | 10 | Write conflict (reserved; current `cross-screen` import refusal still maps to `invalid_input` for API simplicity) |
 | `internal` | 11 | Uncategorized internal error |
 | `surface_fit_failed` | 12 | 散点曲面拟合失败：数据不成形 / inlier 比例 < 0.5 / 边界校验 reject |
+| `detection_failed` | 13 | ChArUco/checkerboard corner detection found too few corners in one or more frames |
+| `ba_diverged` | 14 | Bundle adjustment did not converge or final reprojection error exceeds threshold |
+| `procrustes_failed` | 15 | Procrustes alignment between estimated and model geometry failed (too few correspondences or degenerate configuration) |
+| `intrinsics_invalid` | 16 | Camera intrinsics are unusable (distortion overflow, focal length ≤ 0, or calibration not found) |
+| `observability_failed` | 17 | Insufficient visual overlap across views — one or more cabinets have no shared observations |
+| `decode_failed` | 18 | Image decode error or unsupported image format |
 | _unknown_ | 1 | Caller saw a code not in this table (forward-compat) |
 | _success_ | 0 | OK |
 
@@ -211,8 +222,8 @@ GUI 启动 / `add-recent` / `reconstruct surface` 之类的写命令都会触发
 | Class | Allowed without confirmation? | CLI commands |
 | --- | :---: | --- |
 | `read_only` | yes | `schema`, `project list-recent` / `load`, `measurements load`, `total-station instruction-card`, `reconstruct list-runs` / `get-run-report` |
-| `write_safe` | yes (no `--yes`) | `project add-recent` (still honors `--dry-run`) |
-| `destructive` | no (requires `--yes` or `--dry-run`) | `project remove-recent` / `save`, `total-station import`, `reconstruct surface`, `export obj` |
+| `write_safe` | yes (no `--yes`) | `project add-recent` (still honors `--dry-run`), `visual eval` |
+| `destructive` | no (requires `--yes` or `--dry-run`) | `project remove-recent` / `save`, `total-station import`, `reconstruct surface`, `export obj`, `visual calibrate`, `visual generate-pattern`, `visual reconstruct`, `visual simulate` |
 
 An MCP tool wrapper should propagate these as the tool's `side_effect`
 annotation and route `destructive` tools through a confirmation step.
