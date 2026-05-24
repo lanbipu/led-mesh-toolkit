@@ -8,9 +8,16 @@ from pydantic import ValidationError
 
 from lmt_vba_sidecar.ipc import (
     CabinetArray,
+    CabinetPose,
+    CabinetPoseReport,
+    CameraSamplingSpec,
     CoordinateFrame,
+    EvalInput,
+    NoiseSpec,
     ProgressEvent,
     ResultEvent,
+    SimulateInput,
+    SimulateScene,
     WarningEvent,
     ErrorEvent,
     MeasuredPoint,
@@ -167,3 +174,34 @@ def test_zero_image_size_rejected() -> None:
     raw["intrinsics"]["image_size"] = [0, 1080]
     with pytest.raises(ValidationError):
         ReconstructInput.model_validate(raw)
+
+
+def test_simulate_input_roundtrip():
+    inp = SimulateInput.model_validate({
+        "command": "simulate", "version": 1,
+        "scene": {"cabinet_array": {"cols": 2, "rows": 1, "cabinet_size_mm": [600, 340]},
+                  "shape_prior": "flat", "inter_board_angle_deg": 0.0},
+        "cameras": {"n_views": 20, "distance_mm_range": [1500, 3000],
+                    "yaw_deg_range": [-40, 40], "pitch_deg_range": [-20, 20]},
+        "intrinsics": {"K": [[2000,0,960],[0,2000,540],[0,0,1]],
+                       "dist_coeffs": [0,0,0,0,0], "image_size": [1920,1080]},
+        "noise": {"pixel_sigma": 0.3, "outlier_frac": 0.0,
+                  "visibility_frac": 0.8, "pixel_pitch_error_frac": 0.0},
+        "seed": 42,
+    })
+    assert inp.cameras.n_views == 20
+    assert inp.noise.pixel_sigma == 0.3
+
+def test_cabinet_pose_report_serializes():
+    rep = CabinetPoseReport(
+        schema_version="visual_pose_report.v1",
+        frame={"type": "screen_local", "gauge_strategy": "fix_root_cabinet",
+               "root_cabinet": [0, 0], "units": "mm", "handedness": "right", "z_axis": "outward"},
+        cabinet_poses=[CabinetPose(
+            cabinet_id="V000_R000", position_mm=[0,0,0],
+            rotation_matrix=[[1,0,0],[0,1,0],[0,0,1]], normal=[0,0,1],
+            corners_mm=[[-300,-170,0],[300,-170,0],[300,170,0],[-300,170,0]],
+            reprojection_rms_px=0.4, observed_views=7, observed_points=128, quality="ok")],
+    )
+    d = rep.model_dump()
+    assert d["cabinet_poses"][0]["cabinet_id"] == "V000_R000"

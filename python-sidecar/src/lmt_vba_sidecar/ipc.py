@@ -230,3 +230,75 @@ class ErrorEvent(BaseModel):
     ]
     message: str
     fatal: bool
+
+
+# ---------------------------------------------------------------------------
+# Camera-visual branch: simulate / eval / pose DTOs (zero total-station)
+# ---------------------------------------------------------------------------
+
+class CameraSamplingSpec(BaseModel):
+    n_views: int = Field(ge=2)
+    distance_mm_range: Annotated[list[float], Field(min_length=2, max_length=2)]
+    yaw_deg_range: Annotated[list[float], Field(min_length=2, max_length=2)]
+    pitch_deg_range: Annotated[list[float], Field(min_length=2, max_length=2)]
+
+
+class NoiseSpec(BaseModel):
+    pixel_sigma: float = Field(ge=0.0)
+    outlier_frac: float = Field(ge=0.0, le=1.0, default=0.0)
+    visibility_frac: float = Field(gt=0.0, le=1.0, default=1.0)
+    pixel_pitch_error_frac: float = Field(ge=0.0, default=0.0)
+
+
+class SimulateScene(BaseModel):
+    cabinet_array: CabinetArray
+    shape_prior: ShapePrior = "flat"
+    inter_board_angle_deg: float = 0.0  # inter-board angle for multi-panel rigs (monitor bench)
+
+
+class SimulateInput(BaseModel):
+    command: Literal["simulate"]
+    version: Literal[1]
+    scene: SimulateScene
+    cameras: CameraSamplingSpec
+    intrinsics: Intrinsics
+    noise: NoiseSpec
+    seed: int = 0
+    out_dir: str | None = None
+
+
+class EvalInput(BaseModel):
+    command: Literal["eval"]
+    version: Literal[1]
+    dataset_dir: str
+    method: Literal["free_point", "charuco", "structured_light"] = "charuco"
+    seed_matrix: Annotated[list[int], Field(min_length=1)] = Field(default_factory=lambda: [0])
+
+
+class FrameSpec(BaseModel):
+    type: Literal["screen_local"] = "screen_local"
+    gauge_strategy: Literal["fix_root_cabinet", "align_to_nominal"] = "fix_root_cabinet"
+    root_cabinet: Annotated[list[int], Field(min_length=2, max_length=2)] = Field(
+        default_factory=lambda: [0, 0]
+    )
+    units: Literal["mm"] = "mm"
+    handedness: Literal["right"] = "right"
+    z_axis: Literal["outward"] = "outward"
+
+
+class CabinetPose(BaseModel):
+    cabinet_id: str
+    position_mm: Vec3
+    rotation_matrix: Mat3
+    normal: Vec3
+    corners_mm: Annotated[list[Vec3], Field(min_length=4, max_length=4)]
+    reprojection_rms_px: float = Field(ge=0.0)
+    observed_views: int
+    observed_points: int
+    quality: Literal["ok", "low_observation", "high_residual"]
+
+
+class CabinetPoseReport(BaseModel):
+    schema_version: Literal["visual_pose_report.v1"]
+    frame: FrameSpec
+    cabinet_poses: list[CabinetPose]
