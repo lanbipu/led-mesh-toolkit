@@ -8,8 +8,11 @@ comparison isolates the accuracy difference of the optimisation model itself,
 not initialisation quality.
 """
 from __future__ import annotations
+from typing import Callable
 import numpy as np
-from lmt_vba_sidecar.model_constrained_ba import model_constrained_ba
+from lmt_vba_sidecar.ipc import SimulateInput
+from lmt_vba_sidecar.simulate import build_scene
+from lmt_vba_sidecar.model_constrained_ba import model_constrained_ba, Observation
 from lmt_vba_sidecar.evaluate import gauge_invariant_metrics
 from lmt_vba_sidecar.observability import check_observability
 from lmt_vba_sidecar import ba as legacy_ba
@@ -171,3 +174,95 @@ def _free_point_geometry(scene):
         est_s[j] = (float(proj[:, 0].ptp()), float(proj[:, 1].ptp()))
 
     return est_c, est_n, est_s
+
+
+def pitch_sweep(
+    input_builder: Callable[[float], SimulateInput],
+    pitches: list[float],
+) -> list[dict]:
+    """Sweep LED pixel-pitch error and measure the resulting reconstruction error.
+
+    Physical model (Task 3.1): a pitch error means the TRUE panel pitch differs
+    from the NOMINAL pitch that screen_mapping assumes. simulate.build_scene with
+    pixel_pitch_error_frac=p scales each cabinet's local corner grid by (1+p) and
+    projects pixels from that true (scaled) geometry. To make the error MANIFEST
+    (rather than cancel — the Task 0.6 finding), we reconstruct telling the BA the
+    corners are at their NOMINAL positions (the scene's scaled corners / (1+p)).
+    The optimiser then shrinks the whole scene by ~1/(1+p) to fit the pixels, so
+    the recovered inter-cabinet distance ≈ true_distance / (1+p), giving a
+    distance error ≈ true_distance · p / (1+p) that grows monotonically with p.
+
+    Args:
+        input_builder: maps a pitch error fraction -> SimulateInput whose
+            noise.pixel_pitch_error_frac equals that fraction. Use pixel_sigma=0
+            so the pitch mismatch is the only error source.
+        pitches: list of pixel-pitch error fractions to sweep (e.g. [0.0, 0.002]).
+
+    Returns:
+        one dict per pitch: {"pixel_pitch_error_frac": p, **gauge_invariant_metrics}.
+        Metrics compare the TRUE (pitch-scaled) geometry against the
+        NOMINAL-reconstructed geometry.
+    """
+    rows: list[dict] = []
+    for pitch in pitches:
+        scene = build_scene(input_builder(pitch))
+        scale = 1.0 + pitch
+
+        # Nominal local corners = scene's true (scaled) corners / (1+pitch).
+        # Uniform scaling makes this the clean per-corner mapping.
+        nominal_corners = {
+            j: scene.cabinet_corners_local[j] / scale
+            for j in range(scene.n_cabinets)
+        }
+        # Remap each observation's p_local to its nominal counterpart; keep pixel.
+        obs_nominal = [
+            Observation(
+                camera_idx=o.camera_idx,
+                cabinet_idx=o.cabinet_idx,
+                p_local=o.p_local / scale,
+                pixel=o.pixel,
+            )
+            for o in scene.observations
+        ]
+
+        check_observability(obs_nominal, scene.n_cabinets, min_views=2, min_points=8)
+
+        # Near-truth init, but cabinet translations rescaled to the nominal frame
+        # so the optimiser starts consistent with the shrunk geometry it must find.
+        init_cams = scene.true_camera_poses
+        init_cabs = {
+            j: (np.eye(3), scene.true_cabinet_poses[j][1].copy() / scale)
+            for j in range(scene.n_cabinets)
+        }
+        res = model_constrained_ba(
+            K=scene.K,
+            observations=obs_nominal,
+            n_cameras=scene.n_cameras,
+            n_cabinets=scene.n_cabinets,
+            root_cabinet_idx=0,
+            init_cameras=init_cams,
+            init_cabinets=init_cabs,
+            compute_covariance=False,  # no covariance needed for the scale-error sweep
+        )
+
+        # Estimated geometry: recovered poses over the NOMINAL corners.
+        est_c, est_n, est_s = {}, {}, {}
+        for j in range(scene.n_cabinets):
+            R, t = res.cabinet_poses[j]
+            c, n, s, _ = reconstruct_cabinet_geometry(R, t, nominal_corners[j])
+            est_c[j], est_n[j], est_s[j] = c, n, s
+
+        # True geometry: true poses over the TRUE (pitch-scaled) corners.
+        true_c, true_n, true_s = {}, {}, {}
+        for j in range(scene.n_cabinets):
+            R, t = scene.true_cabinet_poses[j]
+            c, n, s, _ = reconstruct_cabinet_geometry(
+                R, t, scene.cabinet_corners_local[j]
+            )
+            true_c[j], true_n[j], true_s[j] = c, n, s
+
+        metrics = gauge_invariant_metrics(
+            true_c, true_n, true_s, est_c, est_n, est_s
+        )
+        rows.append({"pixel_pitch_error_frac": pitch, **metrics})
+    return rows

@@ -53,3 +53,24 @@ def test_nominal_tier_thresholds():
     # assertion below is the genuinely meaningful accuracy check here.
     assert np.median(size_vals) < 2.0
     assert np.median(ang_vals) < 0.3
+
+
+def test_pitch_error_sweep_scale_error_monotonic():
+    from lmt_vba_sidecar.eval_runner import pitch_sweep
+    def _builder(pitch):
+        return SimulateInput.model_validate({
+            "command":"simulate","version":1,
+            "scene":{"cabinet_array":{"cols":2,"rows":1,"cabinet_size_mm":[600,340]},
+                     "shape_prior":"flat","inter_board_angle_deg":10.0},
+            "cameras":{"n_views":20,"distance_mm_range":[1500,3000],
+                       "yaw_deg_range":[-40,40],"pitch_deg_range":[-20,20]},
+            "intrinsics":{"K":[[2000,0,960],[0,2000,540],[0,0,1]],
+                          "dist_coeffs":[0,0,0,0,0],"image_size":[1920,1080]},
+            "noise":{"pixel_sigma":0.0,"visibility_frac":1.0,"pixel_pitch_error_frac":pitch},
+            "seed":7})
+    rows = pitch_sweep(_builder, [0.0, 0.002, 0.005])
+    d = [r["max_distance_error_mm"] for r in rows]
+    print(f"\npitch sweep max_distance_error_mm: {d}")
+    assert d[0] < d[1] < d[2]          # monotonic in pitch error
+    assert d[0] < 0.5                   # zero pitch → ~0 distance error
+    assert d[1] < 10.0                  # typical 0.002 stays within 10mm budget
