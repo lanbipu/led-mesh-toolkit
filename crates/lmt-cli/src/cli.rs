@@ -2,8 +2,16 @@
 //!
 //! 子命令一对一映射 lmt-app 的 use case,方便日后被 MCP wrapper 平移成 tool。
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "lowercase")]
+pub enum OutputFormat {
+    Text,
+    Json,
+    Ndjson,
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -13,9 +21,23 @@ use std::path::PathBuf;
     long_about = "Agent-friendly CLI. Use --json for machine-stable envelope output."
 )]
 pub struct Cli {
-    /// 切到稳定 JSON envelope 输出(stdout)。默认是 human-readable。
+    /// 输出格式:text(人类,默认)/ json(单 envelope)/ ndjson(每行一事件)。
+    #[arg(long, short = 'o', global = true, value_enum)]
+    pub output: Option<OutputFormat>,
+
+    /// [别名] 等价 `--output json`。保留兼容旧脚本。
     #[arg(long, global = true)]
     pub json: bool,
+
+    /// 禁用 ANSI 颜色(human 模式当前本就无色,接受为 no-op 以满足契约;
+    /// 同时尊重 NO_COLOR 环境变量)。
+    #[arg(long, global = true)]
+    pub no_color: bool,
+
+    /// 拒绝任何交互提示(本 CLI 不发起交互,destructive 仍需 --yes;
+    /// 接受此 flag 让 agent 调用显式无人值守)。
+    #[arg(long, global = true)]
+    pub no_input: bool,
 
     /// 显式 DB 路径。优先级:--db > LMT_DB_PATH env > OS 标准位置
     /// (即 Tauri GUI 用的 lmt.sqlite,默认共用)。
@@ -211,4 +233,16 @@ pub enum ExportCmd {
         #[arg(long, value_name = "PATH")]
         dst: Option<PathBuf>,
     },
+}
+
+impl Cli {
+    /// 综合 --output / --json 别名 / NO_COLOR env 解析最终输出模式。
+    /// 优先级:--output > --json > 默认 text。
+    pub fn resolved_format(&self) -> OutputFormat {
+        match self.output {
+            Some(f) => f,
+            None if self.json => OutputFormat::Json,
+            None => OutputFormat::Text,
+        }
+    }
 }

@@ -643,6 +643,45 @@ fn scatter_import_dryrun_bad_columns() {
     assert_eq!(env["error"]["code"], "invalid_input");
 }
 
+// ── --output flag + ndjson mode ───────────────────────────────────────────────
+
+#[test]
+fn output_json_is_alias_for_legacy_json_flag() {
+    let out = lmt().args(["--output", "json", "schema"]).assert().success().get_output().clone();
+    let env: Value = serde_json::from_slice(&out.stdout).expect("stdout JSON envelope");
+    assert_eq!(env["ok"], true);
+}
+
+#[test]
+fn output_ndjson_schema_emits_result_event() {
+    let out = lmt().args(["--output", "ndjson", "schema"]).assert().success().get_output().clone();
+    let line = String::from_utf8_lossy(&out.stdout);
+    let v: Value = serde_json::from_str(line.trim()).expect("one ndjson line");
+    assert_eq!(v["type"], "result");
+    assert_eq!(v["final"], true);
+}
+
+#[test]
+fn legacy_json_flag_still_works() {
+    lmt().args(["--json", "schema"]).assert().success();
+}
+
+#[test]
+fn no_color_and_no_input_flags_accepted() {
+    lmt().args(["--no-color", "--no-input", "schema"]).assert().success();
+}
+
+#[test]
+fn output_equals_json_invalid_flag_yields_envelope_on_stderr() {
+    // spec §3.1 要求 parser 接受 --key=value;machine 模式检测不能漏 --output=json,
+    // 否则 parse error 会 fallback 到 human clap 输出而非 JSON envelope。
+    let assert = lmt().args(["--output=json", "--bogus"]).assert().failure();
+    let out = assert.get_output();
+    assert_eq!(out.status.code(), Some(2));
+    let env: Value = serde_json::from_slice(&out.stderr).expect("stderr JSON envelope");
+    assert_eq!(env["ok"], false);
+}
+
 /// 4. 随机噪声散点 → import ok → reconstruct → exit 12 surface_fit_failed
 #[test]
 fn scatter_reconstruct_fit_failure_surface_fit_failed() {

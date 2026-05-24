@@ -7,17 +7,37 @@
 //! - 退出码语义化,见 `lmt_shared::exit_codes`。
 
 mod cli;
-mod output;
 mod commands;
+mod output;
 
 use clap::Parser;
 
+/// machine 模式信号:`--json`,或 `--output` / `-o` 指定 `json`|`ndjson`。
+/// 双 token(`--output json`)与单 token(`--output=json` / `-o=json`)都认。
+fn wants_machine_output(argv: &[std::ffi::OsString]) -> bool {
+    use std::ffi::OsStr;
+    let is_val = |s: &OsStr| s == OsStr::new("json") || s == OsStr::new("ndjson");
+    if argv.iter().any(|a| a == OsStr::new("--json")) {
+        return true;
+    }
+    argv.iter().enumerate().any(|(i, a)| {
+        if let Some(s) = a.to_str() {
+            if let Some(v) = s.strip_prefix("--output=").or_else(|| s.strip_prefix("-o=")) {
+                return v == "json" || v == "ndjson";
+            }
+        }
+        (a == OsStr::new("--output") || a == OsStr::new("-o"))
+            && argv.get(i + 1).map(|n| is_val(n)).unwrap_or(false)
+    })
+}
+
 fn main() {
-    // `--json` 模式下 stderr 是 ErrorEnvelope 的专属通道;tracing 也写 stderr
+    // `--json` / `--output json` 模式下 stderr 是 ErrorEnvelope 的专属通道;tracing 也写 stderr
     // 会让 agent 看到 log line + envelope 两份内容,解析失败。所以在 parse 前
-    // 先 peek 一下 `--json`,只在 human 模式启用 tracing。
+    // 先 peek 一下,只在 human 模式启用 tracing。
     // 用 args_os 是因为 args() 在非 UTF-8 argv 上会 panic。
-    let json_mode_early = std::env::args_os().any(|a| a == std::ffi::OsStr::new("--json"));
+    let argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let json_mode_early = wants_machine_output(&argv);
     if !json_mode_early {
         tracing_subscriber::fmt()
             .with_writer(std::io::stderr)
@@ -47,9 +67,8 @@ fn main() {
                 matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion);
             // 用 args_os 而非 args,Unix argv 可以是任意字节序列;遇到非 UTF-8
             // 参数时 std::env::args() 会 panic,把我们 envelope handler 也炸掉。
-            let json_flag = std::ffi::OsStr::new("--json");
             let wants_json =
-                !is_help_or_version && std::env::args_os().any(|a| a == json_flag);
+                !is_help_or_version && wants_machine_output(&std::env::args_os().collect::<Vec<_>>());
             if wants_json {
                 let api = lmt_shared::envelope::ApiError::new(
                     lmt_shared::envelope::error_codes::INVALID_INPUT,

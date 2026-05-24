@@ -14,7 +14,7 @@ use crate::cli::{Cli, Command};
 use crate::output::Mode;
 
 pub fn dispatch(cli: Cli) -> i32 {
-    let mode = Mode::from_flag(cli.json);
+    let mode = Mode::from_format(cli.resolved_format());
 
     // `--timeout` 是 cli_spec 要求的全局 flag,本版本暂未实现真正的 deadline。
     // 显式 reject 优于 silent ignore,避免 agent 以为调用有上限。
