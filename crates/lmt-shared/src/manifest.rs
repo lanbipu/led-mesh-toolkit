@@ -87,6 +87,8 @@ pub fn build() -> ContractManifest {
     let operations = vec![
         op("schema", "Dump JsonSchema of all public DTOs + envelope + error types",
            "lmt schema", ReadOnly, false, false, true, None, &[0]),
+        op("manifest", "Dump the Contract Manifest (this operation list)",
+           "lmt manifest", ReadOnly, false, false, true, Some("ContractManifest"), &[0]),
         op("project.list_recent", "List recent_projects rows",
            "lmt project list-recent", ReadOnly, false, false, true, Some("RecentProject"), &[0, 2, 5]),
         op("project.add_recent", "Upsert a recent-projects row (normalized path)",
@@ -94,11 +96,11 @@ pub fn build() -> ContractManifest {
         op("project.remove_recent", "Delete a recent-projects row by id",
            "lmt project remove-recent <id>", Destructive, true, false, true, None, &[0, 2, 5]),
         op("project.load", "Read <dir>/project.yaml into ProjectConfig",
-           "lmt project load <abs_path>", ReadOnly, false, false, true, Some("ProjectConfig"), &[0, 2, 3, 6]),
+           "lmt project load <abs_path>", ReadOnly, false, false, true, Some("ProjectConfig"), &[0, 2, 3, 4, 6]),
         op("project.save", "Atomic write <dir>/project.yaml from YAML/JSON (stdin or --input)",
            "lmt project save <abs_path> [--input <path>]", Destructive, true, true, false, None, &[0, 2, 4, 6]),
         op("measurements.load", "Read a measured.yaml",
-           "lmt measurements load <path>", ReadOnly, false, false, true, None, &[0, 2, 3, 6]),
+           "lmt measurements load <path>", ReadOnly, false, false, true, None, &[0, 2, 3, 4, 6]),
         op("total_station.import", "Trimble CSV -> measurements/measured.yaml + import_report.json",
            "lmt total-station import <project> <screen_id> <csv> [--mode grid|scatter] [--columns <spec>]", Destructive, true, false, false, Some("TotalStationImportResult"), &[0, 2, 3, 4]),
         op("total_station.instruction_card", "Render instruction-card HTML on stdout (no PDF)",
@@ -108,9 +110,9 @@ pub fn build() -> ContractManifest {
         op("reconstruct.list_runs", "List reconstruction_runs for a project",
            "lmt reconstruct list-runs <project> [--screen-id <id>]", ReadOnly, false, false, true, Some("ReconstructionRun"), &[0, 2, 5]),
         op("reconstruct.get_run_report", "Return the full report.json for a run",
-           "lmt reconstruct get-run-report <run_id>", ReadOnly, false, false, true, None, &[0, 2, 3, 5]),
+           "lmt reconstruct get-run-report <run_id>", ReadOnly, false, false, true, None, &[0, 2, 3, 4, 5]),
         op("export.obj", "Write an OBJ for a run (target: disguise|unreal|neutral)",
-           "lmt export obj <run_id> <target> [--dst <path>]", Destructive, true, false, false, None, &[0, 2, 3, 5]),
+           "lmt export obj <run_id> <target> [--dst <path>]", Destructive, true, false, false, None, &[0, 2, 3, 4, 5]),
     ];
 
     ContractManifest {
@@ -133,6 +135,7 @@ mod tests {
         let ids: Vec<&str> = m.operations.iter().map(|o| o.operation_id.as_str()).collect();
         for expected in [
             "schema",
+            "manifest",
             "project.list_recent",
             "project.add_recent",
             "project.remove_recent",
@@ -148,7 +151,7 @@ mod tests {
         ] {
             assert!(ids.contains(&expected), "manifest missing operation_id {expected}; got {ids:?}");
         }
-        assert_eq!(m.operations.len(), 13, "operation count changed — update both build() and this test");
+        assert_eq!(m.operations.len(), 14, "operation count changed — update both build() and this test");
     }
 
     #[test]

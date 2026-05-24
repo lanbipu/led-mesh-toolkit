@@ -17,6 +17,20 @@
       ]
     },
     {
+      "operation_id": "manifest",
+      "summary": "Dump the Contract Manifest (this operation list)",
+      "cli": "lmt manifest",
+      "side_effect": "read_only",
+      "supports_dry_run": false,
+      "supports_stdin": false,
+      "idempotent": true,
+      "open_world": false,
+      "output_type": "ContractManifest",
+      "exit_codes": [
+        0
+      ]
+    },
+    {
       "operation_id": "project.list_recent",
       "summary": "List recent_projects rows",
       "cli": "lmt project list-recent",
@@ -79,6 +93,7 @@
         0,
         2,
         3,
+        4,
         6
       ]
     },
@@ -113,6 +128,7 @@
         0,
         2,
         3,
+        4,
         6
       ]
     },
@@ -198,6 +214,7 @@
         0,
         2,
         3,
+        4,
         5
       ]
     },
@@ -215,6 +232,7 @@
         0,
         2,
         3,
+        4,
         5
       ]
     }

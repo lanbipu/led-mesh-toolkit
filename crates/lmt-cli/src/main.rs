@@ -25,6 +25,13 @@ fn wants_machine_output(argv: &[std::ffi::OsString]) -> bool {
             if let Some(v) = s.strip_prefix("--output=").or_else(|| s.strip_prefix("-o=")) {
                 return v == "json" || v == "ndjson";
             }
+            // compact short value: -ojson / -ondjson (clap accepts -o<value> without separator)
+            // Note: "-o=json".strip_prefix("-o") → "=json" (won't match below), already handled above.
+            if let Some(v) = s.strip_prefix("-o") {
+                if v == "json" || v == "ndjson" {
+                    return true;
+                }
+            }
         }
         (a == OsStr::new("--output") || a == OsStr::new("-o"))
             && argv.get(i + 1).map(|n| is_val(n)).unwrap_or(false)
