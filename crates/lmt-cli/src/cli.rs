@@ -113,6 +113,10 @@ pub enum Command {
         /// 目标父目录;会在其下创建 <name>/ 子目录。
         dst: std::path::PathBuf,
     },
+
+    /// 相机视觉测量(零全站仪):标定 / 生成 pattern / 重建 / 合成台。
+    #[command(subcommand)]
+    Visual(VisualCmd),
 }
 
 #[derive(Debug, Subcommand)]
@@ -250,6 +254,71 @@ pub enum ExportCmd {
         /// 目标 OBJ 绝对路径;省略走默认 `<project>/output/<screen>_<target>_run<id>.obj`。
         #[arg(long, value_name = "PATH")]
         dst: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum VisualCmd {
+    /// 棋盘格图像 → intrinsics.json。side_effect: destructive
+    Calibrate {
+        /// 项目根目录。
+        project_path: String,
+        /// screen id。
+        screen_id: String,
+        /// 棋盘格图像目录(png/jpg)。
+        checkerboard_dir: String,
+        /// 棋盘格方格边长(毫米)。
+        #[arg(long, default_value_t = 20.0)]
+        square_mm: f64,
+        /// 棋盘格内角点数,格式 WxH,如 `9x9`。
+        #[arg(long, default_value = "9x9")]
+        inner: String,
+    },
+    /// 生成 ChArUco pattern 三件套。side_effect: destructive
+    #[command(name = "generate-pattern")]
+    GeneratePattern {
+        /// 项目根目录。
+        project_path: String,
+        /// screen id。
+        screen_id: String,
+        /// Pattern 方法(目前只支持 charuco)。
+        #[arg(long, default_value = "charuco")]
+        method: String,
+    },
+    /// 多视角照片 → measured.yaml + cabinet_pose_report.json。side_effect: destructive
+    Reconstruct {
+        /// 项目根目录。
+        project_path: String,
+        /// screen id。
+        screen_id: String,
+        /// capture manifest JSON 路径(与 --images 二选一)。
+        #[arg(long)]
+        capture_manifest: Option<String>,
+        /// 图像目录(便利参数,暂未实现;请用 --capture-manifest)。
+        #[arg(long)]
+        images: Option<String>,
+        /// 重建方法(目前只支持 charuco)。
+        #[arg(long, default_value = "charuco")]
+        method: String,
+    },
+    /// 合成数据集生成。side_effect: destructive
+    Simulate {
+        /// simulate config JSON 文件路径。
+        config: String,
+        /// 输出目录。
+        #[arg(long)]
+        out: String,
+    },
+    /// 方法 vs 真值评估。side_effect: write_safe
+    Eval {
+        /// 数据集目录。
+        dataset: String,
+        /// 评估方法(目前只支持 charuco)。
+        #[arg(long, default_value = "charuco")]
+        method: String,
+        /// 评估用的 seed 列表(逗号分隔或重复传 --seed-matrix)。默认 [0]。
+        #[arg(long, value_delimiter = ',', default_values_t = vec![0i64])]
+        seed_matrix: Vec<i64>,
     },
 }
 

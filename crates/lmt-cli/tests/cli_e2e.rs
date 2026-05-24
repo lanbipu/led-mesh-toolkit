@@ -821,6 +821,72 @@ fn seed_example_refuses_existing_destination_and_leaves_it_intact() {
     assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "keep-me");
 }
 
+// ── visual subcommand smoke tests (Task 1.9) ──────────────────────────────────
+
+/// visual reconstruct with neither --capture-manifest nor --images →
+/// INVALID_INPUT (exit 2). The method check (charuco) passes first, then
+/// manifest resolution fails before gate_destructive is reached.
+#[test]
+fn visual_reconstruct_missing_manifest_is_invalid_input() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+
+    let assert = lmt()
+        .args([
+            "--json",
+            "visual",
+            "reconstruct",
+            proj.to_str().unwrap(),
+            "MAIN",
+            // no --capture-manifest, no --images, no --yes / --dry-run
+        ])
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    // invalid_input → exit 2
+    assert_eq!(out.status.code(), Some(2), "expected exit 2 (invalid_input)");
+    let stderr = std::str::from_utf8(&out.stderr).unwrap().trim_end();
+    let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "invalid_input");
+}
+
+/// visual reconstruct with --method structured-light → UNSUPPORTED (exit 7)
+/// regardless of other flags.
+#[test]
+fn visual_reconstruct_structured_light_is_unsupported() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    // Create a dummy manifest file so we get past the path check.
+    let manifest = tmp.path().join("manifest.json");
+    std::fs::write(&manifest, "{}").unwrap();
+
+    let assert = lmt()
+        .args([
+            "--json",
+            "visual",
+            "reconstruct",
+            proj.to_str().unwrap(),
+            "MAIN",
+            "--capture-manifest",
+            manifest.to_str().unwrap(),
+            "--method",
+            "structured-light",
+            "--yes",
+        ])
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    // unsupported → exit 7
+    assert_eq!(out.status.code(), Some(7), "expected exit 7 (unsupported)");
+    let stderr = std::str::from_utf8(&out.stderr).unwrap().trim_end();
+    let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "unsupported");
+}
+
 /// Fix 1 regression: name 含路径分量 (e.g. "curved-flat/measurements") 必须被
 /// 顶层白名单拒绝,execute 和 dry-run 都走同一个 not_found 路径 → exit 3,
 /// 且 dst 目录不写任何内容。

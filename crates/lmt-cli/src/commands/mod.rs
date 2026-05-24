@@ -12,6 +12,7 @@ mod seed;
 mod total_station;
 mod util;
 mod version;
+mod visual;
 
 use crate::cli::{Cli, Command};
 use crate::output::Mode;
@@ -45,5 +46,6 @@ pub fn dispatch(cli: Cli) -> i32 {
         Command::Export(cmd) => export::run(cmd, mode, db, yes, dry_run),
         Command::Completion { shell } => completion::run(shell),
         Command::SeedExample { name, dst } => seed::run(mode, &name, &dst, yes, dry_run),
+        Command::Visual(cmd) => visual::run(cmd, mode, yes, dry_run),
     }
 }
