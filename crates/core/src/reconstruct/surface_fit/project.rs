@@ -11,13 +11,27 @@ pub struct Projection {
 }
 
 pub fn project_cylinder(pts: &[Vector3<f64>], cyl: &CylinderFit) -> Projection {
-    // 假设安装弧度 < π。点云跨越 θ=±π 边界时 min/max 的 span 会偏大，是已知限制，后续处理。
     debug_assert!(!cyl.inliers.is_empty(), "project_cylinder needs inliers");
+    // 角度参考方向 = inlier 角度的圆形均值；每个角度相对它解缠绕到 (-π, π]，使
+    // 跨越 θ=±π 安装边界的弧得到连续的 [min, max] 区间。旧实现直接取 atan2 的
+    // min/max，弧的安装方位跨 ±π 时 span 会虚高到接近 2π（boundary check 误判屏宽
+    // 翻倍）。仍假设弧张角 < π —— 圆形均值对优弧(>π)会指向弧的反侧，超出设计范围。
+    let phi_c = {
+        let (mut sc, mut ss) = (0.0, 0.0);
+        for &i in &cyl.inliers {
+            let p = pts[i];
+            let t = (p.y - cyl.center_xy.y).atan2(p.x - cyl.center_xy.x);
+            sc += t.cos();
+            ss += t.sin();
+        }
+        ss.atan2(sc)
+    };
     let (mut min_t, mut max_t) = (f64::INFINITY, f64::NEG_INFINITY);
     let (mut min_h, mut max_h) = (f64::INFINITY, f64::NEG_INFINITY);
     for &i in &cyl.inliers {
         let p = pts[i];
-        let t = (p.y - cyl.center_xy.y).atan2(p.x - cyl.center_xy.x);
+        let raw = (p.y - cyl.center_xy.y).atan2(p.x - cyl.center_xy.x);
+        let t = phi_c + wrap_to_pi(raw - phi_c);
         let h = p.z;
         min_t = min_t.min(t);
         max_t = max_t.max(t);
@@ -25,6 +39,17 @@ pub fn project_cylinder(pts: &[Vector3<f64>], cyl: &CylinderFit) -> Projection {
         max_h = max_h.max(h);
     }
     Projection { range: [min_t, max_t, min_h, max_h], plane_basis: None }
+}
+
+/// 把角度规范到 (-π, π]。
+fn wrap_to_pi(a: f64) -> f64 {
+    use std::f64::consts::PI;
+    let x = (a + PI).rem_euclid(2.0 * PI) - PI;
+    if x <= -PI {
+        x + 2.0 * PI
+    } else {
+        x
+    }
 }
 
 /// 平面投影 + 定向：u 基取使 Δu:Δv 最接近 cols:rows 的方向，避免网格旋转/镜像。
@@ -92,6 +117,38 @@ mod tests {
         let p = project_cylinder(&pts, &cyl);
         assert!((p.range[1] - p.range[0] - 2.0).abs() < 0.05);
         assert!((p.range[3] - p.range[2] - 2.0).abs() < 0.05);
+    }
+
+    /// 弧居中于 θ=π（-x 方向），跨越 atan2 的 ±π 断点。旧实现直接取 min/max
+    /// 会得到接近 2π 的虚高 span；解缠绕后应恢复真实张角 2.8 rad。
+    /// 回归用例对应真实现场数据（崩铁弧屏安装方位恰好横跨 θ=±π）。
+    #[test]
+    fn cylinder_param_range_handles_pi_boundary() {
+        let r = 9.5_f64;
+        let (cx, cy) = (1.0_f64, 0.5_f64);
+        let center = std::f64::consts::PI;
+        let half = 1.4_f64; // 真实半张角；总张角 2.8 rad
+        let mut pts = vec![];
+        for k in 0..40 {
+            let t = center - half + 2.0 * half * (k as f64 / 39.0);
+            for &z in &[2.0_f64, 4.0_f64] {
+                pts.push(Vector3::new(cx + r * t.cos(), cy + r * t.sin(), z));
+            }
+        }
+        let cyl = fit_cylinder(&pts).unwrap();
+        let p = project_cylinder(&pts, &cyl);
+        let span = p.range[1] - p.range[0];
+        assert!(
+            (span - 2.8).abs() < 0.05,
+            "arc crossing θ=±π should yield real span ~2.8, got {span}"
+        );
+        // resample 出的顶点必须都落在拟合圆柱面上（span 错会撒到屏外）。
+        let verts =
+            crate::reconstruct::surface_fit::resample::resample_cylinder(&cyl, &p, 8, 4);
+        for v in &verts {
+            let d = ((v.x - cx).powi(2) + (v.y - cy).powi(2)).sqrt();
+            assert!((d - r).abs() < 1e-6, "off-surface vertex: d={d}");
+        }
     }
 
     #[test]
