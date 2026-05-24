@@ -2427,6 +2427,7 @@ dependencies = [
  "chrono",
  "include_dir",
  "lmt-adapter-total-station",
+ "lmt-adapter-visual-ba",
  "lmt-core",
  "lmt-shared",
  "nalgebra",
@@ -2437,6 +2438,7 @@ dependencies = [
  "serde_yaml",
  "tempfile",
  "thiserror 1.0.69",
+ "tokio",
  "tracing",
 ]
 

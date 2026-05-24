@@ -11,6 +11,8 @@ description = "LMT service layer: transport-agnostic run_* helpers consumed by T
 lmt-core = { path = "../core" }
 lmt-shared = { path = "../lmt-shared" }
 lmt-adapter-total-station = { path = "../adapter-total-station" }
+lmt-adapter-visual-ba = { path = "../adapter-visual-ba" }
+tokio.workspace = true
 nalgebra.workspace = true
 serde.workspace = true
 serde_json.workspace = true

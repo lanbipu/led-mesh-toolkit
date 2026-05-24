@@ -19,6 +19,18 @@ pub enum LmtError {
     InvalidInput(String),
     #[error("surface_fit_failed: {0}")]
     SurfaceFitFailed(String),
+    #[error("detection_failed: {0}")]
+    DetectionFailed(String),
+    #[error("ba_diverged: {0}")]
+    BaDiverged(String),
+    #[error("procrustes_failed: {0}")]
+    ProcrustesFailed(String),
+    #[error("intrinsics_invalid: {0}")]
+    IntrinsicsInvalid(String),
+    #[error("observability_failed: {0}")]
+    ObservabilityFailed(String),
+    #[error("decode_failed: {0}")]
+    DecodeFailed(String),
     #[error("{0}")]
     Other(String),
 }
@@ -115,4 +127,24 @@ mod tests {
         assert_eq!(s, r#"{"kind":"surface_fit_failed","message":"inlier ratio too low"}"#);
     }
 
+    #[test]
+    fn visual_variants_serialize_with_snake_case_kind() {
+        // The snake_case `kind` is the error-code contract: it must match the
+        // `error_codes::*` strings the envelope maps to (Task 1.6/1.8).
+        let cases = [
+            (LmtError::DetectionFailed("x".into()), "detection_failed"),
+            (LmtError::BaDiverged("x".into()), "ba_diverged"),
+            (LmtError::ProcrustesFailed("x".into()), "procrustes_failed"),
+            (LmtError::IntrinsicsInvalid("x".into()), "intrinsics_invalid"),
+            (
+                LmtError::ObservabilityFailed("x".into()),
+                "observability_failed",
+            ),
+            (LmtError::DecodeFailed("x".into()), "decode_failed"),
+        ];
+        for (err, kind) in cases {
+            let s = serde_json::to_string(&err).unwrap();
+            assert_eq!(s, format!(r#"{{"kind":"{kind}","message":"x"}}"#));
+        }
+    }
 }

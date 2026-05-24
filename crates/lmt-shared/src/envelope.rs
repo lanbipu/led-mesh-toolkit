@@ -141,6 +141,12 @@ impl From<crate::error::LmtError> for ApiError {
             E::NotFound(m) => (error_codes::NOT_FOUND, m.clone()),
             E::InvalidInput(m) => (error_codes::INVALID_INPUT, m.clone()),
             E::SurfaceFitFailed(m) => (error_codes::SURFACE_FIT_FAILED, m.clone()),
+            E::DetectionFailed(m) => (error_codes::DETECTION_FAILED, m.clone()),
+            E::BaDiverged(m) => (error_codes::BA_DIVERGED, m.clone()),
+            E::ProcrustesFailed(m) => (error_codes::PROCRUSTES_FAILED, m.clone()),
+            E::IntrinsicsInvalid(m) => (error_codes::INTRINSICS_INVALID, m.clone()),
+            E::ObservabilityFailed(m) => (error_codes::OBSERVABILITY_FAILED, m.clone()),
+            E::DecodeFailed(m) => (error_codes::DECODE_FAILED, m.clone()),
             E::Other(m) => (error_codes::INTERNAL, m.clone()),
         };
         ApiError::new(code, message)
@@ -211,6 +217,27 @@ mod tests {
             (
                 LmtError::SurfaceFitFailed("x".into()),
                 error_codes::SURFACE_FIT_FAILED,
+            ),
+            (
+                LmtError::DetectionFailed("x".into()),
+                error_codes::DETECTION_FAILED,
+            ),
+            (LmtError::BaDiverged("x".into()), error_codes::BA_DIVERGED),
+            (
+                LmtError::ProcrustesFailed("x".into()),
+                error_codes::PROCRUSTES_FAILED,
+            ),
+            (
+                LmtError::IntrinsicsInvalid("x".into()),
+                error_codes::INTRINSICS_INVALID,
+            ),
+            (
+                LmtError::ObservabilityFailed("x".into()),
+                error_codes::OBSERVABILITY_FAILED,
+            ),
+            (
+                LmtError::DecodeFailed("x".into()),
+                error_codes::DECODE_FAILED,
             ),
             (LmtError::Other("x".into()), error_codes::INTERNAL),
         ];
