@@ -7,26 +7,32 @@ use crate::reconstruct::surface_fit::FrameDerivation;
 
 /// M0.1 IR 坐标系：+X=列(周向)、+Y=法向(径向朝外)、+Z=行向上(竖直)。
 /// origin = θmin 对应弧面上 h_min 点（即屏左下角）。
+/// 定向基准用弧【中点】θ_mid（不是端点 θ0）——见函数内说明。
 ///
 /// basis 列序 [X, Y, Z]，det = X·(Y×Z) = +1 由数学保证：
-///   Y = radial = (cos θ0, sin θ0, 0)
+///   Y = radial = (cos θ_mid, sin θ_mid, 0)
 ///   Z = up     = (0, 0, 1)
-///   X = radial × up = (sin θ0, -cos θ0, 0)
-///   det = X·(Y×Z) = (sin θ0,−cos θ0,0)·(sin θ0,−cos θ0,0) = 1
+///   X = radial × up = (sin θ_mid, -cos θ_mid, 0)
+///   det = X·(Y×Z) = 1
 pub fn derive_cylinder_frame(
     cyl: &CylinderFit,
     proj: &Projection,
 ) -> (CoordinateFrame, FrameDerivation) {
-    let [t0, _t1, h0, _h1] = proj.range;
+    let [t0, t1, h0, _h1] = proj.range;
 
+    // origin 仍是 θmin/h_min 角点（屏左下角，M0.1 IR 约定）。
     let origin = Vector3::new(
         cyl.center_xy.x + cyl.radius_m * t0.cos(),
         cyl.center_xy.y + cyl.radius_m * t0.sin(),
         h0,
     );
 
-    // +Y：法向（径向朝外），单位向量
-    let radial = Vector3::new(t0.cos(), t0.sin(), 0.0);
+    // +Y：法向。定向基准用弧【中点】而非端点 θ0——用端点会让整屏朝向偏
+    // half_span（这份 165° 弧偏 ~82.6°，在 disguise 里表现为要手动绕竖直轴
+    // 纠正 ~90°）。用中点 → 屏中心法向对齐 model +Y（→ disguise -Z），屏正对
+    // 默认相机，且对任意张角的弧都成立。
+    let t_mid = 0.5 * (t0 + t1);
+    let radial = Vector3::new(t_mid.cos(), t_mid.sin(), 0.0);
     // +Z：竖直向上
     let up = Vector3::new(0.0, 0.0, 1.0);
     // +X：周向切线 = radial × up，保证右手系（det=+1）

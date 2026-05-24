@@ -1,5 +1,5 @@
 use crate::error::CoreError;
-use crate::export::adapt::{adapt_to_target, target_reverses_handedness};
+use crate::export::adapt::adapt_to_target;
 use crate::shape::CabinetArray;
 use crate::surface::{MeshOutput, ReconstructedSurface, TargetSoftware};
 use crate::triangulate::triangulate_grid;
@@ -22,8 +22,9 @@ pub const DISGUISE_VERTEX_LIMIT: usize = 200_000;
 /// 3. Remap triangle indices through the welding map; drop degenerate
 ///    triangles where two indices collapse onto the same welded vertex.
 /// 4. Apply the target software's coordinate-frame + unit adapter.
-/// 5. If `target_reverses_handedness(target)` (Unreal), swap each
-///    triangle's last two indices to preserve face orientation.
+/// 5. Disguise only: reverse winding + mirror UV U so the lit face lands on the
+///    concave (audience) side without left-right mirroring. Unreal/Neutral keep
+///    model winding (Unreal's facing is handled by its adapt transform).
 pub fn surface_to_mesh_output(
     surface: &ReconstructedSurface,
     cabinet_array: &CabinetArray,
@@ -105,10 +106,17 @@ pub fn surface_to_mesh_output(
         .map(|v| adapt_to_target(v, target))
         .collect();
 
-    // 5. Reverse winding if the transform reverses handedness.
-    if target_reverses_handedness(target) {
+    // 5. Disguise only: reverse winding so the lit face points to the concave
+    //    (audience) side, and mirror UV U to compensate the texture flip so
+    //    content isn't left-right mirrored. Unreal needs neither — its adapt
+    //    transform (convex normal → +X) already lands the lit face on the
+    //    concave side. Neutral keeps model winding for debugging.
+    if matches!(target, TargetSoftware::Disguise) {
         for t in triangles.iter_mut() {
             t.swap(1, 2);
+        }
+        for uv in uv_coords.iter_mut() {
+            uv.x = 1.0 - uv.x;
         }
     }
 

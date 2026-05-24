@@ -15,14 +15,15 @@ fn uv_corners_are_at_unit_square_corners() {
     let topo = GridTopology { cols: 4, rows: 3 };
     let uvs = compute_grid_uv(topo);
 
-    // bottom-left vertex (col=0, row=0) → V is flipped, so this is (0, 1)
-    assert_eq!(uvs[topo.vertex_index(0, 0)], Vector2::new(0.0, 1.0));
-    // top-right vertex (col=4, row=3) → (1, 0)
-    assert_eq!(uvs[topo.vertex_index(4, 3)], Vector2::new(1.0, 0.0));
-    // top-left (col=0, row=3) → (0, 0)
-    assert_eq!(uvs[topo.vertex_index(0, 3)], Vector2::new(0.0, 0.0));
-    // bottom-right (col=4, row=0) → (1, 1)
-    assert_eq!(uvs[topo.vertex_index(4, 0)], Vector2::new(1.0, 1.0));
+    // UV origin (0,0) at bottom-left; V increases upward (disguise / 3ds Max).
+    // bottom-left vertex (col=0, row=0) → (0, 0)
+    assert_eq!(uvs[topo.vertex_index(0, 0)], Vector2::new(0.0, 0.0));
+    // top-right vertex (col=4, row=3) → (1, 1)
+    assert_eq!(uvs[topo.vertex_index(4, 3)], Vector2::new(1.0, 1.0));
+    // top-left (col=0, row=3) → (0, 1)
+    assert_eq!(uvs[topo.vertex_index(0, 3)], Vector2::new(0.0, 1.0));
+    // bottom-right (col=4, row=0) → (1, 0)
+    assert_eq!(uvs[topo.vertex_index(4, 0)], Vector2::new(1.0, 0.0));
 }
 
 #[test]
@@ -36,8 +37,8 @@ fn uv_step_matches_cabinet_size() {
     let v01 = uvs[topo.vertex_index(0, 1)];
 
     assert!((v10.x - v00.x - 0.1).abs() < 1e-9);
-    // V flipped: row+1 means V decreases
-    assert!((v00.y - v01.y - 0.2).abs() < 1e-9);
+    // V increases with row: row+1 means V increases by 1/rows
+    assert!((v01.y - v00.y - 0.2).abs() < 1e-9);
 }
 
 #[test]

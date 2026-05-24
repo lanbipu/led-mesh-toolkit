@@ -116,19 +116,39 @@ fn surface_to_mesh_disguise_limit_rejected_before_allocation() {
 }
 
 #[test]
-fn unreal_target_reverses_triangle_winding() {
-    // Same surface as neutral, but with Unreal target → indices [a,b,c] should become [a,c,b].
+fn disguise_reverses_winding_and_mirrors_u() {
+    // Disguise: winding [a,b,c] → [a,c,b] so the lit face points to the concave
+    // (audience) side, and UV U mirrored to compensate the texture flip.
+    let s = sample_2x1_surface();
+    let cab = rect_2x1();
+    let neutral = surface_to_mesh_output(&s, &cab, TargetSoftware::Neutral, 0.001).unwrap();
+    let disguise = surface_to_mesh_output(&s, &cab, TargetSoftware::Disguise, 0.001).unwrap();
+
+    assert_eq!(neutral.triangles.len(), disguise.triangles.len());
+    for (n_tri, d_tri) in neutral.triangles.iter().zip(disguise.triangles.iter()) {
+        assert_eq!(n_tri[0], d_tri[0]);
+        assert_eq!(n_tri[1], d_tri[2]);
+        assert_eq!(n_tri[2], d_tri[1]);
+    }
+    // U mirrored, V unchanged.
+    for (n_uv, d_uv) in neutral.uv_coords.iter().zip(disguise.uv_coords.iter()) {
+        assert!((d_uv.x - (1.0 - n_uv.x)).abs() < 1e-9);
+        assert!((d_uv.y - n_uv.y).abs() < 1e-9);
+    }
+}
+
+#[test]
+fn unreal_keeps_model_winding() {
+    // Unreal does NOT reverse winding — its adapt transform (convex normal → +X)
+    // already lands the lit face on the concave side. Triangles + UV match neutral.
     let s = sample_2x1_surface();
     let cab = rect_2x1();
     let neutral = surface_to_mesh_output(&s, &cab, TargetSoftware::Neutral, 0.001).unwrap();
     let unreal = surface_to_mesh_output(&s, &cab, TargetSoftware::Unreal, 0.001).unwrap();
 
-    assert_eq!(neutral.triangles.len(), unreal.triangles.len());
-    // For each triangle, the winding should be reversed
-    for (n_tri, u_tri) in neutral.triangles.iter().zip(unreal.triangles.iter()) {
-        // [a, b, c] vs [a, c, b]
-        assert_eq!(n_tri[0], u_tri[0]);
-        assert_eq!(n_tri[1], u_tri[2]);
-        assert_eq!(n_tri[2], u_tri[1]);
+    assert_eq!(neutral.triangles, unreal.triangles);
+    for (n_uv, u_uv) in neutral.uv_coords.iter().zip(unreal.uv_coords.iter()) {
+        assert!((u_uv.x - n_uv.x).abs() < 1e-9);
+        assert!((u_uv.y - n_uv.y).abs() < 1e-9);
     }
 }
