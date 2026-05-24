@@ -27,12 +27,51 @@ lmt --db /path/to/lmt.sqlite project list-recent
 | `lmt project load <abs_path>` | read_only | Read `<abs_path>/project.yaml` |
 | `lmt project save <abs_path> [--input path|-]` | destructive | Atomic write `<abs_path>/project.yaml` from YAML/JSON on stdin or file |
 | `lmt measurements load <path>` | read_only | Read a `measured.yaml` |
-| `lmt total-station import <project> <screen_id> <csv>` | destructive | Trimble CSV → `measurements/measured.yaml` + `import_report.json` |
+| `lmt total-station import <project> <screen_id> <csv> [--mode grid\|scatter] [--columns x=C,y=C,z=C[,label=C]]` | destructive | Trimble CSV → `measurements/measured.yaml` + `import_report.json`. Default `--mode grid` runs full SOP grid import. `--mode scatter` stores raw scatter points (no SOP, fitting deferred to `reconstruct surface`). |
 | `lmt total-station instruction-card <project> <screen_id>` | read_only | Output instruction-card **HTML** on stdout (no PDF — see below) |
 | `lmt reconstruct surface <project> <screen_id> <measurements_rel>` | destructive | Run reconstruction, write `reports/<stamp>.json`, insert a `reconstruction_runs` row |
 | `lmt reconstruct list-runs <project> [--screen-id S]` | read_only | List runs for a project (raw + canonical path keys both searched) |
 | `lmt reconstruct get-run-report <run_id>` | read_only | Return the full `report.json` for a run |
 | `lmt export obj <run_id> <target> [--dst path]` | destructive | Write an OBJ for a run; `target` ∈ `{disguise, unreal, neutral}` |
+
+### Scatter import mode
+
+`lmt total-station import … --mode scatter` is a lightweight path for LED panels
+measured with a total station as unstructured (non-grid) scatter points. Key
+differences from the default `grid` mode:
+
+- **No SOP校验**: the command does not look at `coordinate_system:` in
+  `project.yaml` and does not require `origin_point` / `x_axis_point` /
+  `xy_plane_point` grid markers. The raw (x, y, z) coordinates are stored as-is
+  in `measured.yaml` with `sampling_mode: Scatter`.
+- **Cabinet / shape read from `project.yaml`**: `cabinet_count`, `cabinet_size_mm`,
+  and `shape_prior` are still read from the target screen's config and stored in
+  `measured.yaml` so that `reconstruct surface` can run without the GUI.
+- **Fitting and outlier detection happen at `reconstruct surface`**, not at import
+  time. The import step never fails due to bad geometry — it just stores the raw
+  points.
+- **`--columns x=C,y=C,z=C[,label=C]`** (1-based column numbers, optional):
+  explicitly maps CSV columns. Omit to let the adapter auto-detect from the CSV
+  header row. `x`, `y`, `z` are required; `label` is optional.
+
+#### Critical coordinate-unit requirement
+
+The scatter CSV **must use meters (m) as the unit for (x, y, z) coordinates**.
+This is a hard constraint imposed by the surface-fit algorithm:
+
+- The inlier threshold in `reconstruct surface` is **0.05 m** (5 cm). Points
+  further than 0.05 m from the fitted surface are treated as outliers.
+- If coordinates are in millimetres, every point is ≫ 0.05 from the surface and
+  the fit will either fail (`surface_fit_failed`) or produce nonsense output.
+- The boundary check compares the point cloud bounding box against the cabinet
+  physical dimensions. Cabinet dimensions in `project.yaml` are stored in mm
+  (`unit: mm`), so the boundary check internally converts them to metres before
+  comparison. A millimetre point cloud will match cabinet millimetre dimensions
+  and will therefore pass the boundary check — but the surface fit will still
+  fail downstream. **Do not confuse "boundary check passed" with "units are
+  correct".**
+- Trimble instruments typically output meters when the job is set up with a
+  metric datum. Verify the instrument job settings before exporting the CSV.
 
 ### Not exposed in CLI
 

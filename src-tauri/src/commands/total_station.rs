@@ -6,17 +6,50 @@ use std::path::Path;
 
 use crate::pdf_render::render_html_to_pdf;
 
+/// Import a total-station CSV into the project measurements.
+///
+/// - `mode` — `"grid"` (default / None) for Trimble SOP grid import,
+///   `"scatter"` for raw scatter points (no SOP, fitting deferred to
+///   `reconstruct surface`).
+/// - `columns` — only used when `mode == "scatter"`. Format:
+///   `"x=C,y=C,z=C[,label=C]"` (1-based column numbers). Omit to let
+///   the adapter auto-detect from the CSV header.
+///
+/// Transport translation only — business logic lives in `lmt_app`.
 #[tauri::command]
 pub fn import_total_station_csv(
     project_abs_path: String,
     csv_path: String,
     screen_id: String,
+    mode: Option<String>,
+    columns: Option<String>,
 ) -> LmtResult<TotalStationImportResult> {
-    run_import(
-        Path::new(&project_abs_path),
-        &screen_id,
-        Path::new(&csv_path),
-    )
+    match mode.as_deref().unwrap_or("grid") {
+        "grid" | "" => run_import(
+            Path::new(&project_abs_path),
+            &screen_id,
+            Path::new(&csv_path),
+        ),
+        "scatter" => {
+            let col_map = match columns.as_deref() {
+                Some(s) => {
+                    let cm = lmt_app::total_station::parse_column_map(s)
+                        .map_err(LmtError::InvalidInput)?;
+                    Some(cm)
+                }
+                None => None,
+            };
+            lmt_app::total_station::run_import_scatter(
+                Path::new(&project_abs_path),
+                &screen_id,
+                Path::new(&csv_path),
+                col_map,
+            )
+        }
+        other => Err(LmtError::InvalidInput(format!(
+            "unknown import mode '{other}'; expected 'grid' or 'scatter'"
+        ))),
+    }
 }
 
 #[tauri::command]

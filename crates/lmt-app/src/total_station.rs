@@ -239,6 +239,52 @@ pub fn run_save_pdf(
     Ok(dst.display().to_string())
 }
 
+/// 解析 `x=3,y=4,z=5[,label=1]` 格式的 columns 字符串（1-based 列号）。
+/// x/y/z 必填，label 可选，未知 key 或非数字值均报错。
+/// GUI Tauri shim 与 CLI 子命令共享同一份实现，不重复。
+pub fn parse_column_map(
+    s: &str,
+) -> Result<lmt_adapter_total_station::scatter_csv::ColumnMap, String> {
+    let mut x: Option<usize> = None;
+    let mut y: Option<usize> = None;
+    let mut z: Option<usize> = None;
+    let mut label: Option<usize> = None;
+
+    for segment in s.split(',') {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        let mut parts = segment.splitn(2, '=');
+        let key = parts.next().unwrap_or("").trim();
+        let val_str = parts.next().ok_or_else(|| format!("expected k=v, got '{segment}'"))?;
+        let val: usize = val_str
+            .trim()
+            .parse()
+            .map_err(|_| format!("column '{key}' value '{val_str}' is not a positive integer"))?;
+        if val == 0 {
+            return Err(format!("column '{key}' must be 1-based (got 0)"));
+        }
+        match key {
+            "x" => x = Some(val),
+            "y" => y = Some(val),
+            "z" => z = Some(val),
+            "label" => label = Some(val),
+            other => {
+                return Err(format!(
+                    "unknown column key '{other}' (allowed: x, y, z, label)"
+                ))
+            }
+        }
+    }
+
+    let x = x.ok_or("columns: 'x' is required")?;
+    let y = y.ok_or("columns: 'y' is required")?;
+    let z = z.ok_or("columns: 'z' is required")?;
+
+    Ok(lmt_adapter_total_station::scatter_csv::ColumnMap { x, y, z, label })
+}
+
 /// scatter 路径：不走 SOP 校验 / 网格命名。从 project.yaml 取 cabinet_array + shape_prior，
 /// 把散点原样存进 measured.yaml（identity frame、sampling_mode=Scatter）。
 pub fn run_import_scatter(
@@ -677,6 +723,47 @@ output: { target: disguise, obj_filename: "{screen_id}.obj", weld_vertices_toler
             serde_yaml::from_str(&std::fs::read_to_string(proj.join("measurements/measured.yaml")).unwrap()).unwrap();
         assert_eq!(mp.sampling_mode, SamplingMode::Scatter);
         assert_eq!(mp.points[0].name, "row1_LEDB-1");
+    }
+
+    // ── parse_column_map unit tests ──────────────────────────────────────────
+
+    #[test]
+    fn parse_column_map_happy_path() {
+        let cm = parse_column_map("x=3,y=4,z=5,label=1").unwrap();
+        assert_eq!(cm.x, 3);
+        assert_eq!(cm.y, 4);
+        assert_eq!(cm.z, 5);
+        assert_eq!(cm.label, Some(1));
+    }
+
+    #[test]
+    fn parse_column_map_no_label_ok() {
+        let cm = parse_column_map("x=1,y=2,z=3").unwrap();
+        assert_eq!(cm.label, None);
+    }
+
+    #[test]
+    fn parse_column_map_non_numeric_value_errors() {
+        let err = parse_column_map("x=abc,y=2,z=3").unwrap_err();
+        assert!(err.contains("abc"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_column_map_missing_x_errors() {
+        let err = parse_column_map("y=2,z=3").unwrap_err();
+        assert!(err.contains("'x'"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_column_map_zero_value_errors() {
+        let err = parse_column_map("x=0,y=2,z=3").unwrap_err();
+        assert!(err.contains("1-based"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_column_map_unknown_key_errors() {
+        let err = parse_column_map("x=1,y=2,z=3,foo=4").unwrap_err();
+        assert!(err.contains("foo"), "got: {err}");
     }
 
     #[test]
