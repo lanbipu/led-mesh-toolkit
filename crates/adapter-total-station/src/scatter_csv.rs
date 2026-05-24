@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::path::Path;
 
 use crate::error::AdapterError;
@@ -31,7 +30,6 @@ pub fn parse_scatter_csv(
         .map_err(|e| AdapterError::InvalidInput(format!("open csv: {e}")))?;
 
     let mut out = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
     for (ri, rec) in rdr.records().enumerate() {
         let rec = rec
             .map_err(|e| AdapterError::InvalidInput(format!("csv row {}: {e}", ri + 1)))?;
@@ -63,14 +61,9 @@ pub fn parse_scatter_csv(
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .unwrap_or("");
-        // Duplicate detection is on the label value: two points with the same
-        // label are ambiguous regardless of row position.
-        if !label.is_empty() && !seen.insert(label.to_owned()) {
-            let id = format!("row{}_{}", ri + 1, label);
-            return Err(AdapterError::InvalidInput(format!(
-                "duplicate point id {id}"
-            )));
-        }
+        // Row number guarantees a unique id; label only adds readability.
+        // Repeated or empty labels are legal independent measurements
+        // (robust fitting handles redundancy) so we never reject on label.
         let id = format!("row{}_{}", ri + 1, label);
         out.push(ScatterPoint { id, xyz });
     }
@@ -129,15 +122,37 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_ids() {
-        let f = write_tmp("A,,1.0,2.0,3.0\nA,,1.0,2.0,3.0\n");
+    fn same_label_rows_get_unique_row_ids() {
+        // Two measurements sharing the label "A" are legal redundant points;
+        // the row number keeps their ids distinct.
+        let f = write_tmp("A,,1.0,2.0,3.0\nA,,4.0,5.0,6.0\n");
         let cols = ColumnMap {
             x: 3,
             y: 4,
             z: 5,
             label: Some(1),
         };
-        let err = parse_scatter_csv(f.path(), Some(cols)).unwrap_err();
-        assert!(matches!(err, AdapterError::InvalidInput(_)));
+        let pts = parse_scatter_csv(f.path(), Some(cols)).unwrap();
+        assert_eq!(pts.len(), 2);
+        assert_eq!(pts[0].id, "row1_A");
+        assert_eq!(pts[1].id, "row2_A");
+    }
+
+    #[test]
+    fn empty_label_rows_parse() {
+        // Empty label columns are common in real CSVs; rows must still parse
+        // and stay distinct via the row number.
+        let f = write_tmp(",,1.0,2.0,3.0\n,,4.0,5.0,6.0\n,,7.0,8.0,9.0\n");
+        let cols = ColumnMap {
+            x: 3,
+            y: 4,
+            z: 5,
+            label: Some(1),
+        };
+        let pts = parse_scatter_csv(f.path(), Some(cols)).unwrap();
+        assert_eq!(pts.len(), 3);
+        assert_eq!(pts[0].id, "row1_");
+        assert_eq!(pts[1].id, "row2_");
+        assert_eq!(pts[2].id, "row3_");
     }
 }
