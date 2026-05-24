@@ -423,3 +423,252 @@ fn parse_error_with_json_yields_envelope_on_stderr() {
     assert_eq!(env["ok"], false);
     assert_eq!(env["error"]["code"], "invalid_input");
 }
+
+// ── scatter 模式 E2E ──────────────────────────────────────────────────────────
+
+/// 散点 fixture 的 project.yaml（curved 55×15，radius 9523mm）。
+fn write_scatter_project_yaml(dir: &Path) {
+    let yaml = r#"project: { name: ScatterArc, unit: mm }
+screens:
+  MAIN:
+    cabinet_count: [55, 15]
+    cabinet_size_mm: [500, 500]
+    pixels_per_cabinet: [256, 256]
+    shape_prior: { type: curved, radius_mm: 9523 }
+    shape_mode: rectangle
+    irregular_mask: []
+coordinate_system:
+  origin_point: MAIN_V001_R001
+  x_axis_point: MAIN_V055_R001
+  xy_plane_point: MAIN_V001_R015
+output:
+  target: neutral
+  obj_filename: "{screen_id}.obj"
+  weld_vertices_tolerance_mm: 1.0
+  triangulate: true
+"#;
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join("project.yaml"), yaml).unwrap();
+    std::fs::create_dir_all(dir.join("measurements")).unwrap();
+}
+
+/// 散点 CSV fixture 绝对路径（crates/lmt-cli/tests/fixtures/scatter_arc.csv）。
+fn scatter_csv_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/scatter_arc.csv")
+}
+
+/// 随机噪声散点：点散在 20m 立方体内，inlier < 50% → surface_fit_failed。
+fn write_noise_csv(path: &Path) {
+    use std::fmt::Write as _;
+    let mut s = String::new();
+    for i in 0..80 {
+        // 随机但确定性的坐标：完全不在圆柱面上
+        let x = (i as f64 * 1234.567 + 333.0) % 20000.0 - 10000.0;
+        let y = (i as f64 * 987.654 + 111.0) % 20000.0 - 10000.0;
+        let z = (i as f64 * 543.21 + 55.0) % 15000.0;
+        writeln!(s, "P{i},,{x:.3},{y:.3},{z:.3}").unwrap();
+    }
+    std::fs::write(path, s).unwrap();
+}
+
+/// 1. scatter import → reconstruct surface → list-runs → export obj（全链路 happy）
+#[test]
+fn scatter_import_reconstruct_export_happy() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("scatter-arc");
+    write_scatter_project_yaml(&proj);
+    let db = tmp.path().join("lmt.sqlite");
+    let csv = scatter_csv_path();
+
+    // import --mode scatter --columns x=3,y=4,z=5,label=1 --yes
+    lmt()
+        .args([
+            "--yes",
+            "--json",
+            "--db",
+            db.to_str().unwrap(),
+            "total-station",
+            "import",
+            "--mode",
+            "scatter",
+            "--columns",
+            "x=3,y=4,z=5,label=1",
+            proj.to_str().unwrap(),
+            "MAIN",
+            csv.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert!(proj.join("measurements/measured.yaml").is_file(), "measured.yaml must exist");
+
+    // reconstruct surface
+    let reconstruct = lmt()
+        .args([
+            "--yes",
+            "--json",
+            "--db",
+            db.to_str().unwrap(),
+            "reconstruct",
+            "surface",
+            proj.to_str().unwrap(),
+            "MAIN",
+            "measurements/measured.yaml",
+        ])
+        .assert()
+        .success();
+    let rec_env: Value = serde_json::from_slice(&reconstruct.get_output().stdout).unwrap();
+    let run_id = rec_env["data"]["run_id"].as_i64().expect("run_id in envelope");
+    assert!(run_id > 0);
+
+    // list-runs
+    let list = lmt()
+        .args([
+            "--json",
+            "--db",
+            db.to_str().unwrap(),
+            "reconstruct",
+            "list-runs",
+            proj.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let listed: Value = serde_json::from_slice(&list.get_output().stdout).unwrap();
+    assert_eq!(listed["data"][0]["id"].as_i64(), Some(run_id));
+
+    // export obj
+    let out_obj = tmp.path().join("out.obj");
+    let export = lmt()
+        .args([
+            "--yes",
+            "--json",
+            "--db",
+            db.to_str().unwrap(),
+            "export",
+            "obj",
+            &run_id.to_string(),
+            "neutral",
+            "--dst",
+            out_obj.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let exp_env: Value = serde_json::from_slice(&export.get_output().stdout).unwrap();
+    assert_eq!(exp_env["ok"], true);
+    assert!(out_obj.is_file(), "OBJ file should exist at {:?}", out_obj);
+}
+
+/// 2. scatter import 无 --yes → exit 2（refuse）
+#[test]
+fn scatter_import_refuses_without_yes() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("scatter-arc");
+    write_scatter_project_yaml(&proj);
+    let csv = scatter_csv_path();
+
+    let assert = lmt()
+        .args([
+            "total-station",
+            "import",
+            "--mode",
+            "scatter",
+            "--columns",
+            "x=3,y=4,z=5,label=1",
+            proj.to_str().unwrap(),
+            "MAIN",
+            csv.to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+    // INVALID_INPUT = 2（gate_destructive refuse）
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    // measured.yaml 不能被创建
+    assert!(
+        !proj.join("measurements/measured.yaml").is_file(),
+        "measured.yaml must not be created when refused"
+    );
+}
+
+/// 3. scatter dry-run + bad columns 格式 → exit 2（invalid_input，列号非数字）
+#[test]
+fn scatter_import_dryrun_bad_columns() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("scatter-arc");
+    write_scatter_project_yaml(&proj);
+    let csv = scatter_csv_path();
+
+    let assert = lmt()
+        .args([
+            "--dry-run",
+            "--json",
+            "total-station",
+            "import",
+            "--mode",
+            "scatter",
+            "--columns",
+            "x=abc",  // 列号非数字
+            proj.to_str().unwrap(),
+            "MAIN",
+            csv.to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    let stderr = std::str::from_utf8(&assert.get_output().stderr).unwrap().trim_end();
+    let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "invalid_input");
+}
+
+/// 4. 随机噪声散点 → import ok → reconstruct → exit 12 surface_fit_failed
+#[test]
+fn scatter_reconstruct_fit_failure_surface_fit_failed() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("scatter-noise");
+    write_scatter_project_yaml(&proj);
+    let db = tmp.path().join("lmt.sqlite");
+    let csv = tmp.path().join("noise.csv");
+    write_noise_csv(&csv);
+
+    // import（应成功，import 只存原始散点）
+    lmt()
+        .args([
+            "--yes",
+            "--db",
+            db.to_str().unwrap(),
+            "total-station",
+            "import",
+            "--mode",
+            "scatter",
+            "--columns",
+            "x=3,y=4,z=5",
+            proj.to_str().unwrap(),
+            "MAIN",
+            csv.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // reconstruct → 应该失败 exit 12
+    let reconstruct = lmt()
+        .args([
+            "--yes",
+            "--json",
+            "--db",
+            db.to_str().unwrap(),
+            "reconstruct",
+            "surface",
+            proj.to_str().unwrap(),
+            "MAIN",
+            "measurements/measured.yaml",
+        ])
+        .assert()
+        .failure();
+    let out = reconstruct.get_output();
+    assert_eq!(out.status.code(), Some(12), "exit code must be 12 (surface_fit_failed)");
+    let stderr = std::str::from_utf8(&out.stderr).unwrap().trim_end();
+    let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "surface_fit_failed");
+}

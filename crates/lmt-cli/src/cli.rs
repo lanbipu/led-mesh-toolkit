@@ -123,6 +123,15 @@ pub enum MeasurementsCmd {
     },
 }
 
+/// 采样模式：网格命名（grid，默认）或曲面拟合（scatter）。
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum ImportMode {
+    /// 标准网格 CSV（SOP 校验 + 网格命名）。
+    Grid,
+    /// 散点 CSV（跳过 SOP，直接存原始坐标，reconstruct 走曲面拟合）。
+    Scatter,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum TotalStationCmd {
     /// 把 Trimble CSV 导入 `<project>/measurements/measured.yaml`(+ import_report.json)。
@@ -135,6 +144,13 @@ pub enum TotalStationCmd {
         screen_id: String,
         /// Trimble CSV 绝对路径。
         csv_path: String,
+        /// 采样模式：grid（默认，网格命名）或 scatter（曲面拟合）。
+        #[arg(long, value_enum, default_value_t = ImportMode::Grid)]
+        mode: ImportMode,
+        /// scatter 模式列映射，1-based，形如 `x=3,y=4,z=5[,label=1]`。
+        /// 省略则自动推断末尾 3 数值列。
+        #[arg(long)]
+        columns: Option<String>,
     },
 
     /// 渲染指引卡 HTML(给 iframe 预览或外部 PDF 工具)。不输出 PDF。
