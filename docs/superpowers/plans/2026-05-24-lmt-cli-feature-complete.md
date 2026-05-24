@@ -15,6 +15,8 @@
 
 ---
 
+> **执行记录(subagent-driven 完成)**:本 plan 已按 subagent-driven-development 执行完毕,过程中经每 task 双 review(spec+quality)+ 2 轮 codex review + final code review + 一轮 max-effort code-review,对初稿做了若干契约校正。下文代码块为**初始指导**,与最终实现存在 review 级差异——**实际实现以 git branch `feat/lmt-cli-feature-complete` 为准**。主要差异:① manifest 增列 `manifest`/`version` operation(共 16);② `exit_codes` 补 `surface_fit_failed=12`、文件读写 `io=4`、serde `serialization=6`;③ machine-output 检测覆盖 `--output=json`/`-ojson` compact 形式;④ `seed_embedded_example` 加顶层白名单(防 path-component name)+ `ok_or_else`(防 panic)+ 原子 staging→rename+失败清理;⑤ `idempotent` 严格化(只 read-only + delete 为 true);⑥ seed e2e 加子目录递归断言。
+
 ## File Structure
 
 | 文件 | 责任 | 本 plan 动作 |
