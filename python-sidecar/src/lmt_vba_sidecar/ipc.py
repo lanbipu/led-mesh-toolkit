@@ -302,3 +302,33 @@ class CabinetPoseReport(BaseModel):
     schema_version: Literal["visual_pose_report.v1"]
     frame: FrameSpec
     cabinet_poses: list[CabinetPose]
+
+
+# ---------------------------------------------------------------------------
+# simulate / eval result events — separate from ResultData to avoid polluting
+# the reconstruct contract (which requires measured_points / ba_stats / etc.)
+# ---------------------------------------------------------------------------
+
+class SimulateResultData(BaseModel):
+    dataset_dir: str
+    n_views: int
+    n_observations: int
+    seed: int
+
+
+class SimulateResultEvent(BaseModel):
+    event: Literal["result"]
+    data: SimulateResultData
+
+
+class EvalResultData(BaseModel):
+    method: str
+    seeds: list[int]
+    max_size_error_mm: float
+    max_distance_error_mm: float
+    max_angle_error_deg: float
+
+
+class EvalResultEvent(BaseModel):
+    event: Literal["result"]
+    data: EvalResultData

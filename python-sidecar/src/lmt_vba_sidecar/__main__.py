@@ -12,8 +12,10 @@ from lmt_vba_sidecar.io_utils import write_event
 from lmt_vba_sidecar.ipc import (
     CalibrateInput,
     ErrorEvent,
+    EvalInput,
     GeneratePatternInput,
     ReconstructInput,
+    SimulateInput,
 )
 
 
@@ -32,6 +34,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("calibrate")
     sub.add_parser("generate_pattern")
     sub.add_parser("reconstruct")
+    sub.add_parser("simulate")
+    sub.add_parser("eval")
     args = parser.parse_args(argv)
 
     try:
@@ -49,11 +53,15 @@ def main(argv: list[str] | None = None) -> int:
         "calibrate": "lmt_vba_sidecar.calibrate",
         "generate_pattern": "lmt_vba_sidecar.pattern",
         "reconstruct": "lmt_vba_sidecar.reconstruct",
+        "simulate": "lmt_vba_sidecar.simulate_cmd",
+        "eval": "lmt_vba_sidecar.eval_cmd",
     }
     SUBCOMMAND_ENTRYPOINTS = {
         "calibrate": ("run_calibrate", CalibrateInput),
         "generate_pattern": ("run_generate_pattern", GeneratePatternInput),
         "reconstruct": ("run_reconstruct", ReconstructInput),
+        "simulate": ("run_simulate", SimulateInput),
+        "eval": ("run_eval", EvalInput),
     }
 
     try:

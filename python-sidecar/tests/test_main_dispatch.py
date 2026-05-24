@@ -83,6 +83,97 @@ def test_missing_subcommand_module_returns_not_implemented(tmp_path, monkeypatch
     assert "not yet implemented" in last["message"]
 
 
+def test_simulate_subcommand_writes_dataset(tmp_path) -> None:
+    payload = {
+        "command": "simulate",
+        "version": 1,
+        "scene": {
+            "cabinet_array": {"cols": 2, "rows": 1, "cabinet_size_mm": [600, 340]},
+            "shape_prior": "flat",
+            "inter_board_angle_deg": 0.0,
+        },
+        "cameras": {
+            "n_views": 8,
+            "distance_mm_range": [1500, 2500],
+            "yaw_deg_range": [-30, 30],
+            "pitch_deg_range": [-15, 15],
+        },
+        "intrinsics": {
+            "K": [[2000, 0, 960], [0, 2000, 540], [0, 0, 1]],
+            "dist_coeffs": [0, 0, 0, 0, 0],
+            "image_size": [1920, 1080],
+        },
+        "noise": {"pixel_sigma": 0.3},
+        "seed": 1,
+        "out_dir": str(tmp_path / "ds"),
+    }
+    p = subprocess.run(
+        [sys.executable, "-m", "lmt_vba_sidecar", "simulate"],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert p.returncode == 0
+    assert (tmp_path / "ds" / "scene.npz").exists()
+    last = json.loads(p.stdout.strip().splitlines()[-1])
+    assert last["event"] == "result"
+
+
+def test_eval_subcommand_after_simulate(tmp_path) -> None:
+    ds = str(tmp_path / "ds")
+    sim_payload = {
+        "command": "simulate",
+        "version": 1,
+        "scene": {
+            "cabinet_array": {"cols": 2, "rows": 1, "cabinet_size_mm": [600, 340]},
+            "shape_prior": "flat",
+            "inter_board_angle_deg": 10.0,
+        },
+        "cameras": {
+            "n_views": 20,
+            "distance_mm_range": [1500, 3000],
+            "yaw_deg_range": [-40, 40],
+            "pitch_deg_range": [-20, 20],
+        },
+        "intrinsics": {
+            "K": [[2000, 0, 960], [0, 2000, 540], [0, 0, 1]],
+            "dist_coeffs": [0, 0, 0, 0, 0],
+            "image_size": [1920, 1080],
+        },
+        "noise": {"pixel_sigma": 0.3, "visibility_frac": 0.8},
+        "seed": 2,
+        "out_dir": ds,
+    }
+    subprocess.run(
+        [sys.executable, "-m", "lmt_vba_sidecar", "simulate"],
+        input=json.dumps(sim_payload),
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    eval_payload = {
+        "command": "eval",
+        "version": 1,
+        "dataset_dir": ds,
+        "method": "charuco",
+        "seed_matrix": [2],
+    }
+    p = subprocess.run(
+        [sys.executable, "-m", "lmt_vba_sidecar", "eval"],
+        input=json.dumps(eval_payload),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert p.returncode == 0
+    last = json.loads(p.stdout.strip().splitlines()[-1])
+    assert last["event"] == "result"
+    assert last["data"]["max_distance_error_mm"] < 3.0
+    assert last["data"]["method"] == "charuco"
+
+
 def test_transitive_import_failure_does_not_say_not_implemented(tmp_path, monkeypatch) -> None:
     """A dependency import failure (different module name than the subcommand
     module) must propagate as internal_error with traceback, NOT as
