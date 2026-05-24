@@ -1461,8 +1461,10 @@ def test_compare_known_computes_errors(tmp_path):
 
 ### Task 2.3：执行台架测试（手动，用户）
 
-- [ ] 用户按 Task 2.2 协议实拍 + 跑工具链,填 `docs/poc/2026-MM-DD-monitor-bench-report.md`,提交。
-- [ ] **判定**:达标 → Phase 3;不达标 → 按 §11 风险表定位(标定 RMS?检测率?screen_mapping 尺寸?机位覆盖?),修复后重跑。**此为 manual checkpoint,Claude 不自动化。**
+> **[SKIPPED — 待用户线下实拍]** 本任务需要用户用两台物理显示器实拍多机位照片，Claude 无法自动化（无相机、无显示器硬件）。工具链已就绪：Task 2.2 的协议模板（`docs/poc/monitor-bench-report-template.md`）+ 示例配置（`examples/monitor-bench/`）+ `lmt visual calibrate/generate-pattern/reconstruct/compare-known` 全部可用。用户按协议实拍后即可跑。**关键提醒：ChArUco 必须显示在显示器的方形子区域，screen_mapping.active_size_mm 填该方形实测物理尺寸**（非方形会因 pattern.py 的 letterbox 破坏 local-mm 约定，见 Task 1.4 评审发现）。
+
+- [~] (skipped) 用户按 Task 2.2 协议实拍 + 跑工具链,填 `docs/poc/<date>-monitor-bench-report.md`,提交。— 待用户线下硬件实拍。
+- [~] (skipped) **判定**:达标 → Phase 3;不达标 → 按 §11 风险表定位(标定 RMS?检测率?screen_mapping 尺寸?机位覆盖?),修复后重跑。**此为 manual checkpoint,Claude 不自动化。**
 
 ---
 
