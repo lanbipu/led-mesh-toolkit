@@ -85,34 +85,20 @@ class PatternMeta(BaseModel):
 
 class ReconstructProject(BaseModel):
     screen_id: str
-    coordinate_frame: CoordinateFrame
     cabinet_array: CabinetArray
-    shape_prior: ShapePrior
-    frame_strategy: Literal["nominal_anchoring", "three_points"]
-    frame_anchors: list[FrameAnchor] | None = None
-
-    @model_validator(mode="after")
-    def _check_anchors_match_strategy(self) -> "ReconstructProject":
-        if self.frame_strategy == "three_points":
-            if self.frame_anchors is None or len(self.frame_anchors) != 3:
-                raise ValueError(
-                    "frame_strategy=three_points requires exactly 3 frame_anchors"
-                )
-        else:  # nominal_anchoring
-            if self.frame_anchors is not None:
-                raise ValueError(
-                    "frame_strategy=nominal_anchoring forbids frame_anchors (must be null)"
-                )
-        return self
+    shape_prior: ShapePrior = "flat"
 
 
 class ReconstructInput(BaseModel):
     command: Literal["reconstruct"]
     version: Literal[1]
     project: ReconstructProject
-    images: Annotated[list[str], Field(min_length=1)]
-    intrinsics: Intrinsics
-    pattern_meta: PatternMeta
+    capture_manifest_path: str
+    # Optional override of the manifest's screen_mapping reference; when null
+    # the sidecar uses the path the capture manifest points to.
+    screen_mapping_path: str | None = None
+    # If set, the sidecar writes cabinet_pose_report.json (spec §9) here.
+    pose_report_path: str | None = None
 
 
 class CalibrateInput(BaseModel):
@@ -223,6 +209,7 @@ class ErrorEvent(BaseModel):
         "invalid_input",
         "image_load_failed",
         "detection_failed",
+        "observability_failed",
         "ba_diverged",
         "procrustes_failed",
         "intrinsics_invalid",

@@ -98,16 +98,19 @@ def _sparsity(n_cams, nonroot, root, obs):
 def model_constrained_ba(*, K, observations, n_cameras, n_cabinets,
                          root_cabinet_idx, init_cameras, init_cabinets,
                          loss="huber", f_scale=2.0, max_nfev=200,
-                         compute_covariance=True) -> BAResult:
+                         x_scale="jac", compute_covariance=True) -> BAResult:
     nonroot = _nonroot_cabinets(n_cabinets, root_cabinet_idx)
     cabs0 = dict(init_cabinets)
     for j in nonroot:
         cabs0.setdefault(j, (np.eye(3), np.zeros(3)))
     x0 = _pack(init_cameras, cabs0, nonroot)
     sp = _sparsity(n_cameras, nonroot, root_cabinet_idx, observations)
+    # x_scale="jac" auto-scales parameters by Jacobian columns. Required because
+    # translations are in mm (~10^3) while rotations are radians (~1): without
+    # it, trf takes microscopic steps and stalls far from the optimum.
     sol = least_squares(
         _residuals, x0, jac_sparsity=sp, method="trf",
-        loss=loss, f_scale=f_scale, max_nfev=max_nfev, verbose=0,
+        loss=loss, f_scale=f_scale, max_nfev=max_nfev, x_scale=x_scale, verbose=0,
         args=(n_cameras, nonroot, root_cabinet_idx, K, observations),
     )
     cams, cabs = _unpack(sol.x, n_cameras, nonroot)

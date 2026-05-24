@@ -94,9 +94,10 @@ def nominal_cabinet_centers_model_frame(
 ) -> dict[tuple[int, int], tuple[float, float, float]]:
     """(col, row) → (x, y, z) cabinet center in model frame, meters.
 
-    Reconstruct aggregates BA points per cabinet using `pattern_meta` to
-    know which ArUco IDs belong to which cabinet, then aligns those
-    aggregated centroids to these nominals via Procrustes.
+    Reconstruct uses these as the per-cabinet translation seeds that
+    initialise model-constrained BA (the root cabinet fixes the gauge and BA
+    refines every other cabinet pose from these seeds). The earlier
+    Procrustes alignment of BA centroids to these nominals has been removed.
     """
     centers: dict[tuple[int, int], tuple[float, float, float]] = {}
     absent = set(tuple(c) for c in cab.absent_cells)
