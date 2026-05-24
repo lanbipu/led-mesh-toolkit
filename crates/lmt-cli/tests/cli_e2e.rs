@@ -887,6 +887,208 @@ fn visual_reconstruct_structured_light_is_unsupported() {
     assert_eq!(env["error"]["code"], "unsupported");
 }
 
+// ── visual subcommand E2E tests (Task 1.10) ───────────────────────────────────
+
+/// Build a sh wrapper at `<dir>/lmt-vba-sidecar` that execs the venv python as
+/// `python -m lmt_vba_sidecar "$@"`.  We canonicalize only the `.venv/bin` dir
+/// and re-append `python` so the symlink stays intact and `import lmt_vba_sidecar`
+/// resolves correctly via the venv's sys.path.
+///
+/// Returns `None` if the python interpreter does not exist (CI without venv).
+fn make_sidecar_wrapper(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../python-sidecar/.venv/bin");
+    let bin = bin.canonicalize().ok()?;
+    let python = bin.join("python");
+    if !python.is_file() {
+        return None;
+    }
+    let wrapper = dir.join("lmt-vba-sidecar");
+    let script = format!(
+        "#!/bin/sh\nexec \"{}\" -m lmt_vba_sidecar \"$@\"\n",
+        python.display()
+    );
+    std::fs::write(&wrapper, &script).expect("write sidecar wrapper");
+    let mut perms = std::fs::metadata(&wrapper).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&wrapper, perms).expect("chmod sidecar wrapper");
+    Some(wrapper)
+}
+
+/// Shared simulate config JSON (the `{scene, cameras, intrinsics, noise, seed}`
+/// object; run_simulate injects out_dir). Reused by simulate + eval happy tests.
+fn sim_config_json() -> &'static str {
+    r#"{"scene":{"cabinet_array":{"cols":2,"rows":1,"cabinet_size_mm":[600,340]},"shape_prior":"flat","inter_board_angle_deg":10.0},"cameras":{"n_views":20,"distance_mm_range":[1500,3000],"yaw_deg_range":[-40,40],"pitch_deg_range":[-20,20]},"intrinsics":{"K":[[2000,0,960],[0,2000,540],[0,0,1]],"dist_coeffs":[0,0,0,0,0],"image_size":[1920,1080]},"noise":{"pixel_sigma":0.3,"visibility_frac":0.8},"seed":2}"#
+}
+
+/// visual simulate — happy path (real sidecar).
+/// Writes a simulate config, runs `lmt --json --yes visual simulate`, asserts
+/// exit 0 + envelope ok + SimulateResult echo fields + scene.npz written to disk.
+#[test]
+fn visual_simulate_happy() {
+    let tmp = TempDir::new().unwrap();
+    let wrapper = match make_sidecar_wrapper(tmp.path()) {
+        Some(w) => w,
+        None => {
+            eprintln!("skipping visual_simulate_happy: python-sidecar venv not found");
+            return;
+        }
+    };
+
+    let config_path = tmp.path().join("sim_config.json");
+    std::fs::write(&config_path, sim_config_json()).unwrap();
+    let ds_dir = tmp.path().join("ds");
+
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &wrapper)
+        .args([
+            "--json",
+            "--yes",
+            "visual",
+            "simulate",
+            config_path.to_str().unwrap(),
+            "--out",
+            ds_dir.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true, "envelope ok: {env}");
+    // SimulateResult echo field: n_views must round-trip the config through
+    // output::ok wrapping (adapter-level test checks n_views==20 too).
+    assert_eq!(env["data"]["n_views"], 20, "n_views must echo config");
+    assert!(
+        ds_dir.join("scene.npz").is_file(),
+        "scene.npz must exist after simulate"
+    );
+}
+
+/// visual eval — happy path (real sidecar, chained after simulate).
+/// Runs simulate first to produce a dataset dir, then eval, asserting
+/// exit 0 + envelope ok + max_distance_error_mm < 3.0 + method == "charuco".
+#[test]
+fn visual_eval_happy() {
+    let tmp = TempDir::new().unwrap();
+    let wrapper = match make_sidecar_wrapper(tmp.path()) {
+        Some(w) => w,
+        None => {
+            eprintln!("skipping visual_eval_happy: python-sidecar venv not found");
+            return;
+        }
+    };
+
+    // Step 1: simulate to produce the dataset.
+    let config_path = tmp.path().join("sim_config.json");
+    std::fs::write(&config_path, sim_config_json()).unwrap();
+    let ds_dir = tmp.path().join("ds");
+
+    lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &wrapper)
+        .args([
+            "--yes",
+            "visual",
+            "simulate",
+            config_path.to_str().unwrap(),
+            "--out",
+            ds_dir.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Step 2: eval against the simulated dataset.
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &wrapper)
+        .args([
+            "--json",
+            "visual",
+            "eval",
+            ds_dir.to_str().unwrap(),
+            "--method",
+            "charuco",
+            "--seed-matrix",
+            "2",
+        ])
+        .assert()
+        .success();
+
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true, "envelope ok: {env}");
+    assert_eq!(env["data"]["method"], "charuco");
+    let max_dist = env["data"]["max_distance_error_mm"]
+        .as_f64()
+        .expect("max_distance_error_mm must be f64");
+    assert!(
+        max_dist < 3.0,
+        "max_distance_error_mm = {max_dist} should be < 3.0"
+    );
+}
+
+/// visual reconstruct dry-run — does NOT invoke the sidecar, does NOT write
+/// measured.yaml. Verifies: exit 0, envelope ok == true, data.dry_run == true.
+#[test]
+fn visual_reconstruct_dry_run_writes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    let manifest = tmp.path().join("manifest.json");
+    std::fs::write(&manifest, "{}").unwrap();
+
+    let assert = lmt()
+        .args([
+            "--json",
+            "--dry-run",
+            "visual",
+            "reconstruct",
+            proj.to_str().unwrap(),
+            "MAIN",
+            "--capture-manifest",
+            manifest.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true, "envelope ok: {env}");
+    assert_eq!(env["data"]["dry_run"], true);
+    // No measured.yaml must have been written.
+    assert!(
+        !proj.join("measurements/measured.yaml").exists(),
+        "dry-run must not write measured.yaml"
+    );
+}
+
+/// visual simulate refuse — no --yes and no --dry-run → gate_destructive
+/// refuses, exit 2 (invalid_input).
+#[test]
+fn visual_simulate_refuses_without_yes() {
+    let tmp = TempDir::new().unwrap();
+    let config_path = tmp.path().join("sim_config.json");
+    std::fs::write(&config_path, "{}").unwrap();
+    let ds_dir = tmp.path().join("ds");
+
+    let assert = lmt()
+        .args([
+            "--json",
+            "visual",
+            "simulate",
+            config_path.to_str().unwrap(),
+            "--out",
+            ds_dir.to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    // gate_destructive refuse → INVALID_INPUT = 2
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = std::str::from_utf8(&out.stderr).unwrap().trim_end();
+    let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "invalid_input");
+    assert!(!ds_dir.exists(), "ds dir must not be created when refused");
+}
+
 /// Fix 1 regression: name 含路径分量 (e.g. "curved-flat/measurements") 必须被
 /// 顶层白名单拒绝,execute 和 dry-run 都走同一个 not_found 路径 → exit 3,
 /// 且 dst 目录不写任何内容。
