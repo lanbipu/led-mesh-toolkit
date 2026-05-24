@@ -1288,13 +1288,13 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: 扩 manifest 测试**
 
-在 `manifest.rs` 的 `manifest_lists_all_known_operations_with_stable_ids` 测试的期望 id 数组里加 `"seed_example"`,并把 count 断言从 14 改为 15:
+在 `manifest.rs` 的 `manifest_lists_all_known_operations_with_stable_ids` 测试的期望 id 数组里加 `"seed_example"`,并把 count 断言从 15 改为 16:
 
 ```rust
             "export.obj",
             "seed_example",
 ```
-（数组末尾追加;同时把 `assert_eq!(m.operations.len(), 14, ...)` 改成 `15`。）
+（数组末尾追加;同时把 `assert_eq!(m.operations.len(), 15, ...)` 改成 `16`。）
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -1317,7 +1317,7 @@ Run:
 cargo test -p lmt-shared manifest:: 2>&1 | tail -10
 cargo build -p lmt-cli && ./target/debug/lmt --json manifest | jq .data > docs/contract-manifest.json
 ```
-Expected: manifest 测试绿;快照含 15 个 operation。
+Expected: manifest 测试绿;快照含 16 个 operation。
 
 在 `docs/agents-cli.md` 的 `### Not exposed in CLI` 段落里,把 `seed-example` 那条**移除**(它现在已暴露),并在 Command tree 表 `export obj` 行后加:
 
