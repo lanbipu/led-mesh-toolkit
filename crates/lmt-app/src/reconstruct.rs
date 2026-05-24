@@ -2,6 +2,9 @@ use crate::export::build_cabinet_array;
 use crate::measurements::load_measurements_from_path;
 use chrono::Utc;
 use lmt_core::reconstruct::auto_reconstruct;
+use lmt_core::reconstruct::surface_fit::SurfaceFitReconstructor;
+use lmt_core::reconstruct::Reconstructor;
+use lmt_core::sampling::SamplingMode;
 use lmt_shared::data::{runs, Db};
 use lmt_shared::dto::{ReconstructionReport, ReconstructionResult};
 use lmt_shared::error::{LmtError, LmtResult};
@@ -48,17 +51,31 @@ pub fn run_reconstruction(
         first_point = measurements.points.first().map(|p| p.name.as_str()).unwrap_or("(empty)"),
         "reconstruct: loaded measurements",
     );
-    let surface = auto_reconstruct(&measurements).map_err(|e| {
-        tracing::error!(
-            error = %e,
-            points_count = measurements.points.len(),
-            cabinet_cols = measurements.cabinet_array.cols,
-            cabinet_rows = measurements.cabinet_array.rows,
-            shape_prior = ?measurements.shape_prior,
-            "reconstruct: auto_reconstruct failed",
-        );
-        LmtError::from(e)
-    })?;
+    let surface = if measurements.sampling_mode == SamplingMode::Scatter {
+        SurfaceFitReconstructor.reconstruct(&measurements).map_err(|e| {
+            tracing::error!(
+                error = %e,
+                points_count = measurements.points.len(),
+                cabinet_cols = measurements.cabinet_array.cols,
+                cabinet_rows = measurements.cabinet_array.rows,
+                shape_prior = ?measurements.shape_prior,
+                "reconstruct: surface_fit failed",
+            );
+            LmtError::SurfaceFitFailed(e.to_string())
+        })?
+    } else {
+        auto_reconstruct(&measurements).map_err(|e| {
+            tracing::error!(
+                error = %e,
+                points_count = measurements.points.len(),
+                cabinet_cols = measurements.cabinet_array.cols,
+                cabinet_rows = measurements.cabinet_array.rows,
+                shape_prior = ?measurements.shape_prior,
+                "reconstruct: auto_reconstruct failed",
+            );
+            LmtError::from(e)
+        })?
+    };
     let metrics = surface.quality_metrics.clone();
 
     let now = Utc::now();
@@ -76,7 +93,7 @@ pub fn run_reconstruction(
         created_at: now.to_rfc3339(),
         cabinet_array,
         weld_tolerance_mm,
-        scatter_fit: None, // Task 14 会填充 scatter 路径的真实值
+        scatter_fit: surface.scatter_fit.clone().map(Into::into),
     };
     let json = serde_json::to_vec_pretty(&report)
         .map_err(|e| LmtError::Yaml(format!("json: {e}")))?;
@@ -149,4 +166,117 @@ pub fn read_run_report(db: Db, run_id: i64) -> LmtResult<serde_json::Value> {
     let report_abs = PathBuf::from(&project_path).join(&report_rel);
     let bytes = std::fs::read(&report_abs)?;
     serde_json::from_slice(&bytes).map_err(|e| LmtError::Yaml(format!("json: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lmt_shared::data;
+    use tempfile::tempdir;
+
+    /// Build a minimal project.yaml for a 55×15 curved screen.
+    fn write_project_yaml(proj: &std::path::Path) {
+        std::fs::write(
+            proj.join("project.yaml"),
+            r#"
+project: { name: T, unit: mm }
+screens:
+  MAIN:
+    cabinet_count: [55, 15]
+    cabinet_size_mm: [500, 500]
+    shape_prior: { type: curved, radius_mm: 9523 }
+    shape_mode: rectangle
+coordinate_system:
+  origin_point: MAIN_V001_R001
+  x_axis_point: MAIN_V055_R001
+  xy_plane_point: MAIN_V001_R015
+output: { target: disguise, obj_filename: "{screen_id}.obj", weld_vertices_tolerance_mm: 1.0, triangulate: true }
+"#,
+        )
+        .unwrap();
+    }
+
+    /// Build a scatter measured.yaml using serde_yaml (same path as run_import_scatter)
+    /// so the YAML format is always correct regardless of serde_yaml version.
+    fn write_scatter_measured_yaml(proj: &std::path::Path) {
+        use lmt_core::coordinate::CoordinateFrame;
+        use lmt_core::measured_points::MeasuredPoints;
+        use lmt_core::point::{MeasuredPoint, PointSource};
+        use lmt_core::sampling::SamplingMode;
+        use lmt_core::shape::{CabinetArray, ShapePrior};
+        use lmt_core::uncertainty::Uncertainty;
+        use nalgebra::Vector3;
+
+        let r = 9.523_f64;
+        let mut points = vec![];
+        for k in 0..60 {
+            let t = -1.4 + 2.8 * (k as f64 / 59.0);
+            for (li, &z) in [0.0_f64, 7.5].iter().enumerate() {
+                points.push(MeasuredPoint {
+                    name: format!("row{k}_{li}"),
+                    position: Vector3::new(r * t.cos(), r * t.sin(), z),
+                    uncertainty: Uncertainty::Isotropic(1.0),
+                    source: PointSource::TotalStation,
+                });
+            }
+        }
+        // One outlier point
+        points.push(MeasuredPoint {
+            name: "row999_CD1".into(),
+            position: Vector3::new(0.3, 0.0, 3.0),
+            uncertainty: Uncertainty::Isotropic(1.0),
+            source: PointSource::TotalStation,
+        });
+
+        let measured = MeasuredPoints {
+            screen_id: "MAIN".into(),
+            coordinate_frame: CoordinateFrame {
+                origin_world: [0.0, 0.0, 0.0],
+                basis: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            },
+            cabinet_array: CabinetArray::rectangle(55, 15, [500.0, 500.0]),
+            shape_prior: ShapePrior::Curved { radius_mm: 9523.0 },
+            points,
+            sampling_mode: SamplingMode::Scatter,
+        };
+
+        std::fs::create_dir_all(proj.join("measurements")).unwrap();
+        let yaml = serde_yaml::to_string(&measured).unwrap();
+        std::fs::write(proj.join("measurements/measured.yaml"), yaml).unwrap();
+    }
+
+    #[test]
+    fn reconstruct_scatter_fills_report_scatter_fit() {
+        let dir = tempdir().unwrap();
+        let proj = dir.path();
+
+        write_project_yaml(proj);
+        write_scatter_measured_yaml(proj);
+
+        let db = data::open(&proj.join("test.sqlite")).unwrap();
+        {
+            let mut conn = db.lock().unwrap();
+            data::schema::migrate(&mut conn).unwrap();
+        }
+        let res = run_reconstruction(db.clone(), proj, "MAIN", "measurements/measured.yaml")
+            .unwrap();
+
+        let report = read_run_report(db, res.run_id).unwrap();
+
+        // scatter_fit must be present and method must indicate surface_fit
+        let scatter_fit = &report["scatter_fit"];
+        assert!(
+            !scatter_fit.is_null(),
+            "report.scatter_fit should not be null for scatter reconstruction"
+        );
+        let method = report["quality_metrics"]["method"]
+            .as_str()
+            .unwrap_or("");
+        assert!(
+            method.starts_with("surface_fit_"),
+            "expected method starting with surface_fit_, got: {method}"
+        );
+        // Verify it's specifically a cylinder fit
+        assert_eq!(method, "surface_fit_cylinder");
+    }
 }
