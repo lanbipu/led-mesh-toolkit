@@ -2400,6 +2400,7 @@ dependencies = [
  "lmt-adapter-total-station",
  "lmt-core",
  "lmt-shared",
+ "nalgebra",
  "pretty_assertions",
  "rusqlite",
  "serde",

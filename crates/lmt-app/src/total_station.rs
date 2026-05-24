@@ -239,6 +239,86 @@ pub fn run_save_pdf(
     Ok(dst.display().to_string())
 }
 
+/// scatter 路径：不走 SOP 校验 / 网格命名。从 project.yaml 取 cabinet_array + shape_prior，
+/// 把散点原样存进 measured.yaml（identity frame、sampling_mode=Scatter）。
+pub fn run_import_scatter(
+    project_abs_path: &Path,
+    screen_id: &str,
+    csv_path: &Path,
+    columns: Option<lmt_adapter_total_station::scatter_csv::ColumnMap>,
+) -> LmtResult<lmt_shared::dto::TotalStationImportResult> {
+    use lmt_adapter_total_station::scatter_csv::parse_scatter_csv;
+    use lmt_core::coordinate::CoordinateFrame;
+    use lmt_core::measured_points::MeasuredPoints;
+    use lmt_core::point::{MeasuredPoint, PointSource};
+    use lmt_core::sampling::SamplingMode;
+    use lmt_core::uncertainty::Uncertainty;
+    use nalgebra::Vector3;
+
+    let cfg = load_project_yaml_from_path(project_abs_path)?;
+    let screen_cfg = cfg
+        .screens
+        .get(screen_id)
+        .ok_or_else(|| LmtError::NotFound(format!("screen '{screen_id}' not in project")))?;
+    let cabinet_array = crate::export::build_cabinet_array(screen_cfg)?;
+    let shape_prior = crate::export::build_shape_prior(screen_cfg)?;
+
+    let scatter = parse_scatter_csv(csv_path, columns)?;
+    let points: Vec<MeasuredPoint> = scatter
+        .iter()
+        .map(|p| MeasuredPoint {
+            name: p.id.clone(),
+            position: Vector3::new(p.xyz[0], p.xyz[1], p.xyz[2]),
+            uncertainty: Uncertainty::Isotropic(1.0),
+            source: PointSource::TotalStation,
+        })
+        .collect();
+
+    let measured = MeasuredPoints {
+        screen_id: screen_id.to_string(),
+        coordinate_frame: CoordinateFrame {
+            origin_world: [0.0, 0.0, 0.0],
+            basis: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        },
+        cabinet_array,
+        shape_prior,
+        points,
+        sampling_mode: SamplingMode::Scatter,
+    };
+
+    let measurements_dir = project_abs_path.join("measurements");
+    std::fs::create_dir_all(&measurements_dir)?;
+    let measured_yaml_path = measurements_dir.join("measured.yaml");
+    let backup_path = measurements_dir.join("measured.yaml.bak");
+
+    // cross-screen guard（与 grid import 一致）
+    check_import_no_screen_conflict(project_abs_path, screen_id)?;
+
+    // 备份上一份
+    if measured_yaml_path.exists() {
+        std::fs::rename(&measured_yaml_path, &backup_path)?;
+    }
+
+    // 原子写入：tmp + rename
+    let yaml = serde_yaml::to_string(&measured)?;
+    let tmp = measurements_dir.join("measured.yaml.tmp");
+    std::fs::write(&tmp, yaml)?;
+    std::fs::rename(&tmp, &measured_yaml_path)?;
+
+    Ok(lmt_shared::dto::TotalStationImportResult {
+        measurements_yaml_path: "measurements/measured.yaml".into(),
+        report_json_path: String::new(),
+        measured_count: measured.points.len(),
+        fabricated_count: 0,
+        outlier_count: 0,
+        missing_count: 0,
+        warnings: vec![
+            "scatter mode: points stored raw; fitting + outlier detection happen at reconstruct"
+                .into(),
+        ],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,6 +641,42 @@ name,x,y,z,note
         let pid_tmp =
             std::path::PathBuf::from(format!("{}.{}.tmp", dst.display(), std::process::id()));
         assert!(!pid_tmp.exists(), "leftover .tmp at {pid_tmp:?}");
+    }
+
+    #[test]
+    fn scatter_import_writes_measured_yaml_without_sop() {
+        use lmt_adapter_total_station::scatter_csv::ColumnMap;
+        use lmt_core::sampling::SamplingMode;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let proj = dir.path();
+        std::fs::write(proj.join("project.yaml"), r#"
+project: { name: T, unit: mm }
+screens:
+  MAIN:
+    cabinet_count: [55, 15]
+    cabinet_size_mm: [500, 500]
+    shape_prior: { type: curved, radius_mm: 9523 }
+    shape_mode: rectangle
+coordinate_system:
+  origin_point: MAIN_V001_R001
+  x_axis_point: MAIN_V055_R001
+  xy_plane_point: MAIN_V001_R015
+output: { target: disguise, obj_filename: "{screen_id}.obj", weld_vertices_tolerance_mm: 1.0, triangulate: true }
+"#).unwrap();
+        let csv = proj.join("s.csv");
+        std::fs::write(&csv, "LEDB-1,,1.0,2.0,3.0\nLEDB-2,,1.1,2.1,3.0\nLEDB-3,,1.2,2.0,3.0\n").unwrap();
+
+        let cols = ColumnMap { x: 3, y: 4, z: 5, label: Some(1) };
+        let r = run_import_scatter(proj, "MAIN", &csv, Some(cols)).unwrap();
+        assert_eq!(r.measured_count, 3);
+        assert_eq!(r.fabricated_count, 0);
+
+        let mp: lmt_core::measured_points::MeasuredPoints =
+            serde_yaml::from_str(&std::fs::read_to_string(proj.join("measurements/measured.yaml")).unwrap()).unwrap();
+        assert_eq!(mp.sampling_mode, SamplingMode::Scatter);
+        assert_eq!(mp.points[0].name, "row1_LEDB-1");
     }
 
     #[test]

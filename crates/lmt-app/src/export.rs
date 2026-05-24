@@ -16,6 +16,21 @@ fn parse_target(s: &str) -> LmtResult<TargetSoftware> {
     }
 }
 
+pub fn build_shape_prior(
+    screen_cfg: &lmt_shared::dto::ScreenConfig,
+) -> LmtResult<lmt_core::shape::ShapePrior> {
+    use lmt_shared::dto::ShapePriorConfig;
+    Ok(match &screen_cfg.shape_prior {
+        ShapePriorConfig::Flat => lmt_core::shape::ShapePrior::Flat,
+        ShapePriorConfig::Curved { radius_mm, .. } => {
+            lmt_core::shape::ShapePrior::Curved { radius_mm: *radius_mm }
+        }
+        ShapePriorConfig::Folded { fold_seams_at_columns } => lmt_core::shape::ShapePrior::Folded {
+            fold_seam_columns: fold_seams_at_columns.clone(),
+        },
+    })
+}
+
 pub fn build_cabinet_array(screen_cfg: &lmt_shared::dto::ScreenConfig) -> LmtResult<CabinetArray> {
     let [cols, rows] = screen_cfg.cabinet_count;
     let cabinet_size_mm = screen_cfg.cabinet_size_mm;
