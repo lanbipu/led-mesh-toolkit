@@ -21,6 +21,12 @@ pub const TIMEOUT: i32 = 9;
 pub const CONFLICT: i32 = 10;
 pub const INTERNAL: i32 = 11;
 pub const SURFACE_FIT_FAILED: i32 = 12;
+pub const DETECTION_FAILED: i32 = 13;
+pub const BA_DIVERGED: i32 = 14;
+pub const PROCRUSTES_FAILED: i32 = 15;
+pub const INTRINSICS_INVALID: i32 = 16;
+pub const OBSERVABILITY_FAILED: i32 = 17;
+pub const DECODE_FAILED: i32 = 18;
 
 /// 把 [`crate::envelope::ApiError`] 的 string code 转成退出码;未知 code
 /// 一律 [`UNKNOWN`],方便老 CLI / 老 agent 在新版本里至少能识别"出错了"。
@@ -37,6 +43,12 @@ pub fn from_api_error_code(code: &str) -> i32 {
         c if c == ec::TIMEOUT => TIMEOUT,
         c if c == ec::CONFLICT => CONFLICT,
         c if c == ec::SURFACE_FIT_FAILED => SURFACE_FIT_FAILED,
+        c if c == ec::DETECTION_FAILED => DETECTION_FAILED,
+        c if c == ec::BA_DIVERGED => BA_DIVERGED,
+        c if c == ec::PROCRUSTES_FAILED => PROCRUSTES_FAILED,
+        c if c == ec::INTRINSICS_INVALID => INTRINSICS_INVALID,
+        c if c == ec::OBSERVABILITY_FAILED => OBSERVABILITY_FAILED,
+        c if c == ec::DECODE_FAILED => DECODE_FAILED,
         c if c == ec::INTERNAL => INTERNAL,
         _ => UNKNOWN,
     }
@@ -61,6 +73,12 @@ mod tests {
             (ec::CONFLICT, CONFLICT),
             (ec::INTERNAL, INTERNAL),
             (ec::SURFACE_FIT_FAILED, SURFACE_FIT_FAILED),
+            (ec::DETECTION_FAILED, DETECTION_FAILED),
+            (ec::BA_DIVERGED, BA_DIVERGED),
+            (ec::PROCRUSTES_FAILED, PROCRUSTES_FAILED),
+            (ec::INTRINSICS_INVALID, INTRINSICS_INVALID),
+            (ec::OBSERVABILITY_FAILED, OBSERVABILITY_FAILED),
+            (ec::DECODE_FAILED, DECODE_FAILED),
         ];
         // 顺带反推 distinct,防止哪天有人复制粘贴写错把两个 code 映射到同一个数字。
         let mut seen = std::collections::HashSet::new();

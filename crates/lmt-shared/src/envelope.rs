@@ -116,6 +116,18 @@ pub mod error_codes {
     pub const INTERNAL: &str = "internal";
     /// 散点曲面拟合失败(数据不成形 / inlier 太少 / 边界 reject)——与 invalid_input 区分。
     pub const SURFACE_FIT_FAILED: &str = "surface_fit_failed";
+    /// ChArUco / structured-light corner detection produced too few usable corners.
+    pub const DETECTION_FAILED: &str = "detection_failed";
+    /// Bundle adjustment failed to converge.
+    pub const BA_DIVERGED: &str = "ba_diverged";
+    /// Rigid alignment (procrustes) degenerate / failed.
+    pub const PROCRUSTES_FAILED: &str = "procrustes_failed";
+    /// Camera intrinsics invalid (calibration RMS / coverage gate failed).
+    pub const INTRINSICS_INVALID: &str = "intrinsics_invalid";
+    /// Observation graph not connected / per-cabinet coverage insufficient.
+    pub const OBSERVABILITY_FAILED: &str = "observability_failed";
+    /// Structured-light Gray-code decode failed.
+    pub const DECODE_FAILED: &str = "decode_failed";
 }
 
 impl From<crate::error::LmtError> for ApiError {

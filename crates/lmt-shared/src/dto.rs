@@ -227,6 +227,59 @@ pub struct TotalStationImportResult {
     pub warnings: Vec<String>,
 }
 
+// ── Visual reconstruction (camera-branch) DTO types ──────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CabinetPoseSummary {
+    pub cabinet_id: String,
+    pub position_mm: [f64; 3],
+    pub normal: [f64; 3],
+    pub reprojection_rms_px: f64,
+    pub observed_views: u32,
+    pub quality: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct VisualReconstructResult {
+    pub screen_id: String,
+    pub measured_yaml_path: String,
+    pub pose_report_path: String,
+    pub cabinet_count: usize,
+    pub ba_rms_px: f64,
+    pub cabinets: Vec<CabinetPoseSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SimulateResult {
+    pub dataset_dir: String,
+    pub n_views: u32,
+    pub n_observations: u32,
+    pub seed: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EvalResult {
+    pub method: String,
+    pub max_size_error_mm: f64,
+    pub max_distance_error_mm: f64,
+    pub max_angle_error_deg: f64,
+    pub seeds: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CalibrateResult {
+    pub intrinsics_path: String,
+    pub reproj_error_px: f64,
+    pub frames_used: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GeneratePatternResult {
+    pub output_dir: String,
+    pub cabinet_count: usize,
+    pub markers_per_cabinet: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct InstructionCardResult {
@@ -238,6 +291,94 @@ pub struct InstructionCardResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visual_dtos_roundtrip() {
+        // VisualReconstructResult
+        let cabinet = CabinetPoseSummary {
+            cabinet_id: "MAIN_V001_R001".into(),
+            position_mm: [100.0, 200.0, 300.0],
+            normal: [0.0, 0.0, 1.0],
+            reprojection_rms_px: 0.42,
+            observed_views: 8,
+            quality: "good".into(),
+        };
+        let vr = VisualReconstructResult {
+            screen_id: "MAIN".into(),
+            measured_yaml_path: "measurements/measured.yaml".into(),
+            pose_report_path: "measurements/pose_report.json".into(),
+            cabinet_count: 1,
+            ba_rms_px: 0.35,
+            cabinets: vec![cabinet],
+        };
+        let json = serde_json::to_string(&vr).unwrap();
+        assert!(json.contains("\"screen_id\":\"MAIN\""));
+        assert!(json.contains("\"ba_rms_px\":0.35"));
+        let back: VisualReconstructResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.screen_id, "MAIN");
+        assert_eq!(back.cabinets[0].cabinet_id, "MAIN_V001_R001");
+        assert_eq!(back.cabinets[0].observed_views, 8);
+
+        // SimulateResult
+        let sim = SimulateResult {
+            dataset_dir: "/tmp/sim".into(),
+            n_views: 12,
+            n_observations: 480,
+            seed: 42,
+        };
+        let sim_json = serde_json::to_string(&sim).unwrap();
+        let sim_back: SimulateResult = serde_json::from_str(&sim_json).unwrap();
+        assert_eq!(sim_back.seed, 42);
+
+        // EvalResult
+        let eval = EvalResult {
+            method: "visual".into(),
+            max_size_error_mm: 1.5,
+            max_distance_error_mm: 2.0,
+            max_angle_error_deg: 0.3,
+            seeds: vec![1, 2, 3],
+        };
+        let eval_json = serde_json::to_string(&eval).unwrap();
+        let eval_back: EvalResult = serde_json::from_str(&eval_json).unwrap();
+        assert_eq!(eval_back.seeds, vec![1, 2, 3]);
+
+        // CalibrateResult
+        let cal = CalibrateResult {
+            intrinsics_path: "intrinsics.yaml".into(),
+            reproj_error_px: 0.25,
+            frames_used: 30,
+        };
+        let cal_json = serde_json::to_string(&cal).unwrap();
+        let cal_back: CalibrateResult = serde_json::from_str(&cal_json).unwrap();
+        assert_eq!(cal_back.frames_used, 30);
+
+        // GeneratePatternResult
+        let gp = GeneratePatternResult {
+            output_dir: "/tmp/patterns".into(),
+            cabinet_count: 12,
+            markers_per_cabinet: 4,
+        };
+        let gp_json = serde_json::to_string(&gp).unwrap();
+        let gp_back: GeneratePatternResult = serde_json::from_str(&gp_json).unwrap();
+        assert_eq!(gp_back.cabinet_count, 12);
+
+        // Verify schemas are generated without panic (schemars::schema_for! is compile-time;
+        // exercising dump_all() covers this at runtime).
+        let dump = crate::schema::dump_all();
+        for name in [
+            "VisualReconstructResult",
+            "CabinetPoseSummary",
+            "SimulateResult",
+            "EvalResult",
+            "CalibrateResult",
+            "GeneratePatternResult",
+        ] {
+            assert!(
+                dump["types"][name].is_object(),
+                "schema missing for {name}"
+            );
+        }
+    }
 
     #[test]
     fn scatter_fit_info_from_core_roundtrips_and_has_schema() {

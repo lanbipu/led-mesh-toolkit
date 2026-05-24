@@ -62,6 +62,14 @@ pub fn dump_all() -> Value {
     add!("TotalStationImportResult", dto::TotalStationImportResult);
     add!("InstructionCardResult", dto::InstructionCardResult);
 
+    // Visual reconstruction (camera-branch)
+    add!("CabinetPoseSummary", dto::CabinetPoseSummary);
+    add!("VisualReconstructResult", dto::VisualReconstructResult);
+    add!("SimulateResult", dto::SimulateResult);
+    add!("EvalResult", dto::EvalResult);
+    add!("CalibrateResult", dto::CalibrateResult);
+    add!("GeneratePatternResult", dto::GeneratePatternResult);
+
     // 错误模型
     add!("LmtError", error::LmtError);
     add!("ApiError", envelope::ApiError);
@@ -109,6 +117,8 @@ mod tests {
             "ErrorEnvelope",
             "ContractManifest",
             "Operation",
+            "VisualReconstructResult",
+            "EvalResult",
         ] {
             assert!(types.contains_key(expected), "missing schema for {expected}");
         }
