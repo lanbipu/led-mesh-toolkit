@@ -6,13 +6,13 @@ import pathlib
 import cv2
 import numpy as np
 
-from lmt_vba_sidecar.detect import detect_charuco_observations
+from lmt_vba_sidecar.detect import detect_charuco_corners, detect_charuco_observations
 from lmt_vba_sidecar.ipc import (
     CabinetArray,
     GeneratePatternInput,
     GeneratePatternProject,
 )
-from lmt_vba_sidecar.pattern import run_generate_pattern
+from lmt_vba_sidecar.pattern import generate_cabinet_png, run_generate_pattern
 
 
 def test_detect_finds_markers_on_rendered_pattern(tmp_out: pathlib.Path) -> None:
@@ -46,3 +46,14 @@ def test_detect_handles_unreadable_path(tmp_out: pathlib.Path) -> None:
     fake = tmp_out / "nonexistent.png"
     obs = detect_charuco_observations(image_paths=[str(fake)])
     assert obs[str(fake)] == []
+
+
+def test_charuco_corners_detected_on_rendered_board(tmp_out: pathlib.Path) -> None:
+    p = tmp_out / "V000_R000.png"
+    generate_cabinet_png(out_path=p, cabinet_pixel_size=(900, 510), aruco_id_start=0)
+    out = detect_charuco_corners([str(p)], board_lookup_for_test=True)
+    corners = out[str(p)]
+    assert len(corners) >= 32  # at least half of the 64 inner corners
+    assert all("charuco_id" in c and "corner_px" in c for c in corners)
+    assert all("cabinet" in c for c in corners)
+    assert corners[0]["cabinet"] == (0, 0)
