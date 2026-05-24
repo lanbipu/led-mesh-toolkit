@@ -32,7 +32,10 @@ fn parse_result_event_with_visual_ba_source() {
     }"#;
     match serde_json::from_str::<Event>(raw).unwrap() {
         Event::Result(r) => {
-            let pt = &r.data.measured_points[0];
+            // r.data is now raw JSON; deserialize into the reconstruct result type.
+            let data: lmt_adapter_visual_ba::ipc::ResultData =
+                serde_json::from_value(r.data).unwrap();
+            let pt = &data.measured_points[0];
             assert_eq!(pt.name, "MAIN_V001_R001");
             assert_eq!(pt.source.visual_ba.camera_count, 5);
         }
@@ -42,24 +45,26 @@ fn parse_result_event_with_visual_ba_source() {
 
 #[test]
 fn serialize_reconstruct_input_round_trip() {
+    // New capture-manifest payload shape: project has no coordinate_frame /
+    // frame_strategy / frame_anchors; references live at the top level.
     let json = serde_json::json!({
         "command":"reconstruct",
         "version":1,
         "project":{
             "screen_id":"MAIN",
-            "coordinate_frame":{"origin_world":[0,0,0],"basis":[[1,0,0],[0,1,0],[0,0,1]]},
             "cabinet_array":{"cols":4,"rows":4,"cabinet_size_mm":[500,500]},
-            "shape_prior":"flat",
-            "frame_strategy":"nominal_anchoring",
-            "frame_anchors":null
+            "shape_prior":"flat"
         },
-        "images":["/a.jpg"],
-        "intrinsics":{"K":[[1,0,0],[0,1,0],[0,0,1]],"dist_coeffs":[0,0,0,0,0],"image_size":[1920,1080]},
-        "pattern_meta":{"aruco_dict":"DICT_6X6_1000","markers_per_cabinet":64,"checkerboard_inner_corners":8,"cabinets":[]}
+        "capture_manifest_path":"/cap/manifest.json",
+        "screen_mapping_path":"/cap/screen_mapping.json",
+        "pose_report_path":"/cap/pose_report.json"
     });
     let parsed: ReconstructInput = serde_json::from_value(json.clone()).unwrap();
     let round = serde_json::to_value(&parsed).unwrap();
-    assert_eq!(round["project"]["frame_strategy"], "nominal_anchoring");
+    assert_eq!(round["project"]["screen_id"], "MAIN");
+    assert_eq!(round["capture_manifest_path"], "/cap/manifest.json");
+    assert_eq!(round["screen_mapping_path"], "/cap/screen_mapping.json");
+    assert_eq!(round["pose_report_path"], "/cap/pose_report.json");
 }
 
 #[test]

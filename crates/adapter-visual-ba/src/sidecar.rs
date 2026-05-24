@@ -10,7 +10,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::error::{VbaError, VbaResult};
-use crate::ipc::{Event, ResultData};
+use crate::ipc::Event;
 use crate::locate::locate_sidecar;
 
 pub struct SidecarRequest {
@@ -37,13 +37,15 @@ async fn write_payload(child: &mut Child, payload: &Value) -> VbaResult<()> {
 async fn read_events(
     child: &mut Child,
     progress_tx: Option<mpsc::Sender<Event>>,
-) -> VbaResult<Option<ResultData>> {
+) -> VbaResult<Option<Value>> {
     let stdout = child
         .stdout
         .take()
         .ok_or_else(|| VbaError::SpawnFailed(std::io::Error::other("stdout missing")))?;
     let mut lines = BufReader::new(stdout).lines();
-    let mut last_result: Option<ResultData> = None;
+    // Keep the raw `data` payload of the last `result` event. Each subcommand
+    // emits a different `data` shape, so callers deserialize it themselves.
+    let mut last_result: Option<Value> = None;
     while let Some(line) = lines.next_line().await? {
         if line.trim().is_empty() {
             continue;
@@ -109,7 +111,10 @@ fn stderr_tail(buf: &Option<Arc<Mutex<Vec<u8>>>>) -> String {
         .unwrap_or_default()
 }
 
-pub async fn run_sidecar(req: SidecarRequest) -> VbaResult<ResultData> {
+/// Run the sidecar and return the raw `data` of its `result` event. Each
+/// subcommand emits a different result shape, so the caller deserializes the
+/// returned [`Value`] into the concrete type it expects.
+pub async fn run_sidecar(req: SidecarRequest) -> VbaResult<Value> {
     let exe: PathBuf = locate_sidecar()?;
     let mut cmd = Command::new(&exe);
     cmd.arg(&req.subcommand)

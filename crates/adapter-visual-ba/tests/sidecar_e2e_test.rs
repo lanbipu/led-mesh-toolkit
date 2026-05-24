@@ -43,7 +43,8 @@ async fn mock_sidecar_round_trip() {
         events.push(ev);
     }
 
-    let result = task.await.unwrap().unwrap();
+    let value = task.await.unwrap().unwrap();
+    let result: lmt_adapter_visual_ba::ipc::ResultData = serde_json::from_value(value).unwrap();
     assert!(events
         .iter()
         .any(|e| matches!(e, lmt_adapter_visual_ba::Event::Progress(_))));
@@ -99,11 +100,12 @@ async fn slow_progress_consumer_does_not_block_stdout() {
     });
 
     // Don't drain rx during the run — simulating a slow consumer.
-    let result = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+    let value = tokio::time::timeout(std::time::Duration::from_secs(5), task)
         .await
         .expect("must not hang on slow consumer")
         .expect("task panicked")
         .expect("sidecar should still complete");
+    let result: lmt_adapter_visual_ba::ipc::ResultData = serde_json::from_value(value).unwrap();
     assert_eq!(
         result.frame_strategy_used,
         lmt_adapter_visual_ba::FrameStrategy::NominalAnchoring

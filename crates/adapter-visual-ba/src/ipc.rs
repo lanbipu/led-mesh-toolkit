@@ -90,11 +90,13 @@ pub enum FrameStrategy {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReconstructProject {
     pub screen_id: String,
-    pub coordinate_frame: CoordinateFrame,
     pub cabinet_array: CabinetArray,
+    #[serde(default = "default_flat_shape")]
     pub shape_prior: ShapePrior,
-    pub frame_strategy: FrameStrategy,
-    pub frame_anchors: Option<Vec<FrameAnchor>>,
+}
+
+fn default_flat_shape() -> ShapePrior {
+    ShapePrior::Flat(FlatTag::Flat)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,9 +104,11 @@ pub struct ReconstructInput {
     pub command: String,
     pub version: u32,
     pub project: ReconstructProject,
-    pub images: Vec<String>,
-    pub intrinsics: Intrinsics,
-    pub pattern_meta: PatternMeta,
+    pub capture_manifest_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_mapping_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pose_report_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,7 +173,45 @@ pub struct WarningEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResultEnvelope {
-    pub data: ResultData,
+    /// Raw result payload. The sidecar emits different `data` shapes per
+    /// subcommand (reconstruct/calibrate/generate_pattern → `ResultData`,
+    /// simulate → `SimulateResultData`, eval → `EvalResultData`), so we keep
+    /// it untyped here and let each `api` fn deserialize into its concrete
+    /// result type.
+    pub data: serde_json::Value,
+}
+
+// --- Per-subcommand result-data mirrors (match the Python sidecar's IPC
+// `SimulateResultData` / `EvalResultData`; see python-sidecar/.../ipc.py). ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulateResultData {
+    pub dataset_dir: String,
+    pub n_views: u32,
+    pub n_observations: u32,
+    pub seed: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalResultData {
+    pub method: String,
+    pub seeds: Vec<i64>,
+    pub max_size_error_mm: f64,
+    pub max_distance_error_mm: f64,
+    pub max_angle_error_deg: f64,
+}
+
+/// One cabinet entry from the sidecar's `cabinet_pose_report.json`
+/// (`CabinetPose` in python-sidecar/.../ipc.py). The adapter reads only the
+/// summary fields it surfaces to lmt-app; the full report stays on disk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CabinetSummary {
+    pub cabinet_id: String,
+    pub position_mm: [f64; 3],
+    pub normal: [f64; 3],
+    pub reprojection_rms_px: f64,
+    pub observed_views: u32,
+    pub quality: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
