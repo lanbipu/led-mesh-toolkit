@@ -28,7 +28,9 @@ pub fn seed_embedded_example(name: &str, target_dir: &Path) -> LmtResult<PathBuf
             embedded_example_names()
         )));
     }
-    let src = EXAMPLES.get_dir(name).expect("name validated against embedded_example_names");
+    let src = EXAMPLES.get_dir(name).ok_or_else(|| {
+        LmtError::NotFound(format!("example '{name}' not found; available: {:?}", embedded_example_names()))
+    })?;
     let dst = target_dir.join(name);
     if dst.exists() {
         return Err(LmtError::InvalidInput(format!(

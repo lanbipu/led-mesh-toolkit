@@ -778,6 +778,8 @@ fn seed_example_yes_writes_project_yaml() {
         .arg(dst)
         .assert().success();
     assert!(dst.join("curved-flat/project.yaml").is_file(), "expected seeded project.yaml");
+    assert!(dst.join("curved-flat/measurements/measured.yaml").is_file(), "subdir file should be seeded recursively");
+    assert!(dst.join("curved-flat/measurements/raw.csv").is_file(), "subdir file should be seeded recursively");
 }
 
 #[test]
