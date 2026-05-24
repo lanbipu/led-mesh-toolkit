@@ -1,6 +1,7 @@
 //! 各子命令的实现。每个子命令把入参映射到 lmt-app 的 run_* helper,
 //! 再把结果 / 错误转成 [`crate::output`] 的 envelope 形态。
 
+mod completion;
 mod export;
 mod manifest;
 mod measurements;
@@ -41,5 +42,6 @@ pub fn dispatch(cli: Cli) -> i32 {
         Command::TotalStation(cmd) => total_station::run(cmd, mode, yes, dry_run),
         Command::Reconstruct(cmd) => reconstruct::run(cmd, mode, db, yes, dry_run),
         Command::Export(cmd) => export::run(cmd, mode, db, yes, dry_run),
+        Command::Completion { shell } => completion::run(shell),
     }
 }

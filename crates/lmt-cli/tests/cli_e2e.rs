@@ -694,6 +694,15 @@ fn output_equals_json_invalid_flag_yields_envelope_on_stderr() {
     assert_eq!(env["ok"], false);
 }
 
+// ── completion ────────────────────────────────────────────────────────────────
+
+#[test]
+fn completion_bash_emits_script_to_stdout() {
+    let out = lmt().args(["completion", "bash"]).assert().success().get_output().clone();
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("lmt"), "bash completion should mention lmt: first 80 = {:?}", &s[..s.len().min(80)]);
+}
+
 /// 4. 随机噪声散点 → import ok → reconstruct → exit 12 surface_fit_failed
 #[test]
 fn scatter_reconstruct_fit_failure_surface_fit_failed() {

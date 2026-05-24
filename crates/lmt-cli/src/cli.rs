@@ -98,6 +98,12 @@ pub enum Command {
 
     /// 机器可读版本元信息(--version 是纯文本简版)。
     Version,
+
+    /// 生成 shell 补全脚本到 stdout(bash / zsh / fish / powershell / elvish)。
+    Completion {
+        /// 目标 shell。
+        shell: clap_complete::Shell,
+    },
 }
 
 #[derive(Debug, Subcommand)]
