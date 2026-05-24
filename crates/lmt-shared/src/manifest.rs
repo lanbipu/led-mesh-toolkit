@@ -115,6 +115,8 @@ pub fn build() -> ContractManifest {
            "lmt reconstruct get-run-report <run_id>", ReadOnly, false, false, true, None, &[0, 2, 3, 4, 5]),
         op("export.obj", "Write an OBJ for a run (target: disguise|unreal|neutral)",
            "lmt export obj <run_id> <target> [--dst <path>]", Destructive, true, false, false, None, &[0, 2, 3, 4, 5]),
+        op("seed_example", "Copy a built-in example project (curved-flat / curved-arc) into a directory",
+           "lmt seed-example <name> <dst>", Destructive, true, false, false, None, &[0, 2, 3, 4]),
     ];
 
     ContractManifest {
@@ -151,10 +153,11 @@ mod tests {
             "reconstruct.list_runs",
             "reconstruct.get_run_report",
             "export.obj",
+            "seed_example",
         ] {
             assert!(ids.contains(&expected), "manifest missing operation_id {expected}; got {ids:?}");
         }
-        assert_eq!(m.operations.len(), 15, "operation count changed — update both build() and this test");
+        assert_eq!(m.operations.len(), 16, "operation count changed — update both build() and this test");
     }
 
     #[test]
@@ -192,6 +195,7 @@ mod tests {
             "total_station.import",
             "reconstruct.surface",
             "export.obj",
+            "seed_example",
         ] {
             assert!(!find(id).idempotent, "{id} mutates observable state -> not idempotent");
         }

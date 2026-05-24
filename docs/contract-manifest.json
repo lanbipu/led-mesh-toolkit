@@ -249,6 +249,23 @@
         4,
         5
       ]
+    },
+    {
+      "operation_id": "seed_example",
+      "summary": "Copy a built-in example project (curved-flat / curved-arc) into a directory",
+      "cli": "lmt seed-example <name> <dst>",
+      "side_effect": "destructive",
+      "supports_dry_run": true,
+      "supports_stdin": false,
+      "idempotent": false,
+      "open_world": false,
+      "output_type": null,
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4
+      ]
     }
   ]
 }

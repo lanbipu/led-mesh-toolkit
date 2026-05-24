@@ -34,6 +34,7 @@ lmt --db /path/to/lmt.sqlite project list-recent
 | `lmt reconstruct list-runs <project> [--screen-id S]` | read_only | List runs for a project (raw + canonical path keys both searched) |
 | `lmt reconstruct get-run-report <run_id>` | read_only | Return the full `report.json` for a run |
 | `lmt export obj <run_id> <target> [--dst path]` | destructive | Write an OBJ for a run; `target` ∈ `{disguise, unreal, neutral}` |
+| `lmt seed-example <name> <dst>` | destructive | Copy a built-in example (curved-flat / curved-arc) into `<dst>/<name>` |
 
 ### Scatter import mode
 
@@ -80,9 +81,6 @@ This is a hard constraint imposed by the surface-fit algorithm:
   native WebView (WKWebView on macOS, WebView2 on Windows) and only works inside
   the Tauri GUI process. CLI agents can get the HTML from `instruction-card`
   and run their own renderer (headless Chrome, wkhtmltopdf, etc.).
-- **`seed-example`** — pulls examples from the Tauri bundle's `resource_dir`,
-  which doesn't exist for a headless CLI. Agents working from a checkout can
-  copy `examples/<name>/` themselves.
 
 ## Global flags
 
