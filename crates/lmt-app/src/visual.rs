@@ -47,8 +47,9 @@ fn map_vba_err(e: lmt_adapter_visual_ba::error::VbaError) -> LmtError {
             "internal_error" | "internal" => LmtError::Other(message),
             other => LmtError::Other(format!("{other}: {message}")),
         },
-        // Proper cancel propagation is Task 3.3; today the adapter never gets a
-        // cancel token from these sync helpers, so this arm is defensive only.
+        // The sync run_* helpers never pass a cancel token, so this arm is
+        // permanently defensive — cancel is only reachable from async (Tauri)
+        // callers.
         V::Cancelled => LmtError::Other("cancelled".into()),
         V::InvalidInput(m) => LmtError::InvalidInput(m),
         other => LmtError::Other(other.to_string()),

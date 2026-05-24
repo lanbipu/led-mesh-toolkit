@@ -1225,3 +1225,161 @@ fn visual_compare_known_missing_file_is_invalid_input() {
     assert_eq!(env["ok"], false);
     assert_eq!(env["error"]["code"], "invalid_input");
 }
+
+// ── visual error-code envelope coverage (Task 3.3) ────────────────────────────
+//
+// Deterministic E2E for the sidecar→adapter→lmt-app→CLI error chain:
+//   sidecar emits {"event":"error","code":<X>,...} → adapter Protocol{code:X}
+//   → map_vba_err → LmtError::<Variant> → ApiError{code:X}
+//   → exit_codes::from_api_error_code → process exit N → ErrorEnvelope on stderr.
+// A MOCK sidecar emits each code, so no fragile real-image construction is
+// needed. The adapter returns the Protocol error as soon as it reads the error
+// event (before checking exit status), so the mock just emits one line + exits.
+
+/// Write an executable `lmt-vba-sidecar` mock at `<dir>` that drains stdin
+/// (so the adapter's payload write doesn't SIGPIPE), emits a single fatal
+/// error event with the given code, and exits 1. Returns the script path for
+/// `LMT_VBA_SIDECAR_PATH`.
+fn write_error_mock(dir: &std::path::Path, code: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let wrapper = dir.join("lmt-vba-sidecar");
+    // `cat > /dev/null` consumes the whole stdin payload before we emit + exit.
+    let script = format!(
+        "#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' '{{\"event\":\"error\",\"code\":\"{code}\",\"message\":\"mock {code}\",\"fatal\":true}}'\nexit 1\n"
+    );
+    std::fs::write(&wrapper, &script).expect("write error mock");
+    let mut perms = std::fs::metadata(&wrapper).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&wrapper, perms).expect("chmod error mock");
+    wrapper
+}
+
+/// Minimal valid project.yaml with a single `MAIN` screen — enough for
+/// `run_reconstruct` / `run_calibrate` to pass `load_screen` before reaching
+/// the sidecar. (calibrate doesn't read the screen, but reconstruct does.)
+fn write_visual_project(dir: &std::path::Path) {
+    let yaml = r#"project: { name: VisualErr, unit: mm }
+screens:
+  MAIN:
+    cabinet_count: [2, 1]
+    cabinet_size_mm: [600, 340]
+    pixels_per_cabinet: [256, 256]
+    shape_prior: { type: flat }
+    shape_mode: rectangle
+    irregular_mask: []
+coordinate_system:
+  origin_point: MAIN_V001_R001
+  x_axis_point: MAIN_V002_R001
+  xy_plane_point: MAIN_V001_R001
+output:
+  target: neutral
+  obj_filename: "{screen_id}.obj"
+  weld_vertices_tolerance_mm: 1.0
+  triangulate: true
+"#;
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join("project.yaml"), yaml).unwrap();
+}
+
+/// Drive `visual reconstruct` against an error-emitting mock and assert the
+/// CLI exit code + ErrorEnvelope code. Used for detection_failed / ba_diverged
+/// / observability_failed (reconstruct is a natural source; map_vba_err maps
+/// the code regardless of op).
+fn assert_reconstruct_error_code(code: &str, expected_exit: i32) {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_visual_project(&proj);
+    let manifest = tmp.path().join("manifest.json");
+    std::fs::write(&manifest, "{}").unwrap();
+    let mock = write_error_mock(tmp.path(), code);
+
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &mock)
+        .args([
+            "--json",
+            "visual",
+            "reconstruct",
+            proj.to_str().unwrap(),
+            "MAIN",
+            "--capture-manifest",
+            manifest.to_str().unwrap(),
+            "--yes",
+        ])
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    assert_eq!(
+        out.status.code(),
+        Some(expected_exit),
+        "code '{code}' should map to exit {expected_exit}"
+    );
+    let stderr = std::str::from_utf8(&out.stderr).unwrap().trim_end();
+    let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], code, "envelope code mismatch");
+}
+
+/// detection_failed → exit 13.
+#[test]
+fn visual_reconstruct_detection_failed_exit_13() {
+    assert_reconstruct_error_code("detection_failed", 13);
+}
+
+/// ba_diverged → exit 14.
+#[test]
+fn visual_reconstruct_ba_diverged_exit_14() {
+    assert_reconstruct_error_code("ba_diverged", 14);
+}
+
+/// observability_failed → exit 17.
+#[test]
+fn visual_reconstruct_observability_failed_exit_17() {
+    assert_reconstruct_error_code("observability_failed", 17);
+}
+
+/// procrustes_failed → exit 15.
+#[test]
+fn visual_reconstruct_procrustes_failed_exit_15() {
+    assert_reconstruct_error_code("procrustes_failed", 15);
+}
+
+/// decode_failed → exit 18.
+#[test]
+fn visual_reconstruct_decode_failed_exit_18() {
+    assert_reconstruct_error_code("decode_failed", 18);
+}
+
+/// intrinsics_invalid → exit 16, driven via `visual calibrate` (its natural
+/// source). calibrate requires a real checkerboard dir with >=1 image before
+/// reaching the sidecar, so we seed one png (content irrelevant — the mock
+/// ignores stdin and emits the error immediately).
+#[test]
+fn visual_calibrate_intrinsics_invalid_exit_16() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_visual_project(&proj);
+    let cb_dir = tmp.path().join("checkerboard");
+    std::fs::create_dir_all(&cb_dir).unwrap();
+    std::fs::write(cb_dir.join("img0.png"), b"not-a-real-png").unwrap();
+    let mock = write_error_mock(tmp.path(), "intrinsics_invalid");
+
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &mock)
+        .args([
+            "--json",
+            "visual",
+            "calibrate",
+            proj.to_str().unwrap(),
+            "MAIN",
+            cb_dir.to_str().unwrap(),
+            "--yes",
+        ])
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    assert_eq!(out.status.code(), Some(16), "intrinsics_invalid → exit 16");
+    let stderr = std::str::from_utf8(&out.stderr).unwrap().trim_end();
+    let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "intrinsics_invalid");
+}
