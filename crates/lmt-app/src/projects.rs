@@ -20,12 +20,15 @@ pub fn embedded_example_names() -> Vec<String> {
 /// 损坏的 example;要重新 seed 须自己先删目标。
 /// transport-free:CLI 与未来 MCP server 共用这一份。
 pub fn seed_embedded_example(name: &str, target_dir: &Path) -> LmtResult<PathBuf> {
-    let src = EXAMPLES.get_dir(name).ok_or_else(|| {
-        LmtError::NotFound(format!(
+    // Fix 1: validate against top-level whitelist FIRST so execute and dry-run
+    // both reject path components (e.g. "curved-flat/measurements") identically.
+    if !embedded_example_names().iter().any(|n| n == name) {
+        return Err(LmtError::NotFound(format!(
             "example '{name}' not found; available: {:?}",
             embedded_example_names()
-        ))
-    })?;
+        )));
+    }
+    let src = EXAMPLES.get_dir(name).expect("name validated against embedded_example_names");
     let dst = target_dir.join(name);
     if dst.exists() {
         return Err(LmtError::InvalidInput(format!(
@@ -42,11 +45,16 @@ pub fn seed_embedded_example(name: &str, target_dir: &Path) -> LmtResult<PathBuf
         write_embedded_dir_contents(src, &staging)
     })();
     match staged {
-        Ok(()) => {
-            std::fs::rename(&staging, &dst)
-                .map_err(|e| LmtError::Io(format!("finalize seed rename: {e}")))?;
-            Ok(dst)
-        }
+        // Fix 2: if rename fails (race: dst created after exists() check, or
+        // parent removed), clean up staging before returning the error so no
+        // .name.seed.<pid>.tmp dir is left behind.
+        Ok(()) => match std::fs::rename(&staging, &dst) {
+            Ok(()) => Ok(dst),
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&staging);
+                Err(LmtError::Io(format!("finalize seed rename: {e}")))
+            }
+        },
         Err(e) => {
             let _ = std::fs::remove_dir_all(&staging);
             Err(e)

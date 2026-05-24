@@ -22,6 +22,8 @@ lmt --db /path/to/lmt.sqlite project list-recent
 | --- | --- | --- |
 | `lmt schema` | read_only | Dump JsonSchema of all public DTOs + envelope + error types |
 | `lmt manifest` | read_only | Dump Contract Manifest: all operations with operation_id / cli / side_effect / exit_codes |
+| `lmt version` | read_only | Machine-readable version metadata (version string, schema_version, contract_version) |
+| `lmt completion <shell>` | read_only | Generate shell completion script to stdout (raw script, not an envelope — see note below) |
 | `lmt project list-recent` | read_only | List `recent_projects` table |
 | `lmt project add-recent <abs_path> <display_name>` | write_safe | Upsert a recent-projects row. Path is normalized (canonicalize if exists, else absolutize) before write so GUI and CLI hit the same UNIQUE key. |
 | `lmt project remove-recent <id>` | destructive | Delete a recent-projects row |
@@ -75,6 +77,13 @@ This is a hard constraint imposed by the surface-fit algorithm:
 - Trimble instruments typically output meters when the job is set up with a
   metric datum. Verify the instrument job settings before exporting the CSV.
 
+### `completion` is not in the Contract Manifest
+
+`lmt completion <shell>` emits a raw shell script to stdout — not a JSON
+envelope. It is therefore intentionally excluded from `lmt manifest` and the
+Contract Manifest snapshot. Agents that need completions should capture stdout
+directly and not expect `{"ok": true, ...}` wrapping.
+
 ### Not exposed in CLI
 
 - **`save-pdf`** — instruction-card PDF rendering goes through the platform
@@ -86,7 +95,10 @@ This is a hard constraint imposed by the surface-fit algorithm:
 
 | Flag | Meaning |
 | --- | --- |
-| `--json` | Emit machine-stable envelope output. Success → stdout; failure → stderr; nothing else gets mixed in (no tracing, no colors). |
+| `--output text\|json\|ndjson` (`-o`) | Output format. `json` and `ndjson` are machine modes (envelope / event stream). `--json` is a legacy alias for `--output json`. |
+| `--json` | Legacy alias for `--output json`. Emit machine-stable envelope output. Success → stdout; failure → stderr; nothing else gets mixed in (no tracing, no colors). |
+| `--no-color` | Disable ANSI color. Human mode currently has no ANSI color anyway, so this flag is accepted as a no-op to satisfy callers that always pass it. |
+| `--no-input` | Refuse interactive prompts. The CLI never prompts interactively; this flag is accepted as a no-op so agents can pass it unconditionally. Destructive commands still require `--yes`. |
 | `--db <path>` | SQLite path override. Env fallback: `LMT_DB_PATH`. Final fallback: OS-standard `app_data_dir/com.lanbipu.lmt/lmt.sqlite` — the **same file** the Tauri GUI uses. |
 | `--dry-run` | Preview a destructive command. Side effects are skipped; output reports `{dry_run: true, would_*: ...}`. DB is opened read-only (no `--db` creation), so dry-run never mutates state. |
 | `--yes` | Confirm a destructive command. Required unless `--dry-run` is set. |

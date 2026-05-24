@@ -818,3 +818,46 @@ fn seed_example_refuses_existing_destination_and_leaves_it_intact() {
     assert_eq!(assert.get_output().status.code(), Some(2));
     assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "keep-me");
 }
+
+/// Fix 1 regression: name 含路径分量 (e.g. "curved-flat/measurements") 必须被
+/// 顶层白名单拒绝,execute 和 dry-run 都走同一个 not_found 路径 → exit 3,
+/// 且 dst 目录不写任何内容。
+#[test]
+fn seed_example_rejects_path_component_name() {
+    // -- execute path (--yes) --
+    let tmp = TempDir::new().unwrap();
+    let dst = tmp.path();
+    let assert_yes = lmt()
+        .args(["--json", "--yes", "seed-example", "curved-flat/measurements"])
+        .arg(dst)
+        .assert()
+        .failure();
+    let out_yes = assert_yes.get_output();
+    // not_found -> exit 3
+    assert_eq!(out_yes.status.code(), Some(3), "--yes path: expected exit 3");
+    let stderr_yes = std::str::from_utf8(&out_yes.stderr).unwrap().trim_end();
+    let env_yes: Value = serde_json::from_str(stderr_yes).expect("--yes path: stderr must be JSON envelope");
+    assert_eq!(env_yes["ok"], false);
+    assert_eq!(env_yes["error"]["code"], "not_found");
+    // nothing written
+    assert!(
+        std::fs::read_dir(dst).unwrap().next().is_none(),
+        "--yes path: dst must be empty after rejection"
+    );
+
+    // -- dry-run path --
+    let tmp2 = TempDir::new().unwrap();
+    let dst2 = tmp2.path();
+    let assert_dry = lmt()
+        .args(["--json", "--dry-run", "seed-example", "curved-flat/measurements"])
+        .arg(dst2)
+        .assert()
+        .failure();
+    let out_dry = assert_dry.get_output();
+    // dry-run preflight also returns not_found -> exit 3
+    assert_eq!(out_dry.status.code(), Some(3), "--dry-run path: expected exit 3");
+    let stderr_dry = std::str::from_utf8(&out_dry.stderr).unwrap().trim_end();
+    let env_dry: Value = serde_json::from_str(stderr_dry).expect("--dry-run path: stderr must be JSON envelope");
+    assert_eq!(env_dry["ok"], false);
+    assert_eq!(env_dry["error"]["code"], "not_found");
+}

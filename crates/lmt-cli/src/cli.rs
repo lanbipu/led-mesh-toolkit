@@ -29,8 +29,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
-    /// 禁用 ANSI 颜色(human 模式当前本就无色,接受为 no-op 以满足契约;
-    /// 同时尊重 NO_COLOR 环境变量)。
+    /// 禁用 ANSI 颜色(human 模式当前本就无色,接受为 no-op 以满足契约)。
     #[arg(long, global = true)]
     pub no_color: bool,
 
@@ -255,7 +254,7 @@ pub enum ExportCmd {
 }
 
 impl Cli {
-    /// 综合 --output / --json 别名 / NO_COLOR env 解析最终输出模式。
+    /// 综合 --output / --json 别名解析最终输出模式。
     /// 优先级:--output > --json > 默认 text。
     pub fn resolved_format(&self) -> OutputFormat {
         match self.output {
