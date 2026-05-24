@@ -162,20 +162,31 @@ fn import(
                     return output::err(mode, ApiError::from(e));
                 }
             }
-            let payload = serde_json::json!({
-                "dry_run": true,
-                "mode": match import_mode { ImportMode::Grid => "grid", ImportMode::Scatter => "scatter" },
-                "would_write": [
+            // scatter 只写 measured.yaml；grid 还会写 import_report.json。
+            let would_write = match import_mode {
+                ImportMode::Grid => vec![
                     format!("{}/measurements/measured.yaml", project_abs_path),
                     format!("{}/measurements/import_report.json", project_abs_path),
                 ],
+                ImportMode::Scatter => {
+                    vec![format!("{}/measurements/measured.yaml", project_abs_path)]
+                }
+            };
+            let human_artifacts = match import_mode {
+                ImportMode::Grid => "measured.yaml + import_report.json",
+                ImportMode::Scatter => "measured.yaml",
+            };
+            let payload = serde_json::json!({
+                "dry_run": true,
+                "mode": match import_mode { ImportMode::Grid => "grid", ImportMode::Scatter => "scatter" },
+                "would_write": would_write,
                 "screen_id": screen_id,
                 "csv_path": csv_path,
             });
             output::ok(mode, payload, |_| {
                 let _ = writeln!(
                     std::io::stdout(),
-                    "[dry-run] would write measured.yaml + import_report.json for screen {screen_id}"
+                    "[dry-run] would write {human_artifacts} for screen {screen_id}"
                 );
             })
         }
