@@ -104,6 +104,16 @@ pub enum Command {
         /// 目标 shell。
         shell: clap_complete::Shell,
     },
+
+    /// 把内置 example(curved-flat / curved-arc)拷贝到目标目录。
+    /// side_effect: destructive(写文件,需 --yes 或 --dry-run)。
+    #[command(name = "seed-example")]
+    SeedExample {
+        /// example 名:curved-flat / curved-arc。
+        name: String,
+        /// 目标父目录;会在其下创建 <name>/ 子目录。
+        dst: std::path::PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]

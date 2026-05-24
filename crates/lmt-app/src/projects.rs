@@ -1,6 +1,73 @@
+use include_dir::{include_dir, Dir};
 use lmt_shared::dto::ProjectConfig;
 use lmt_shared::error::{LmtError, LmtResult};
 use std::path::{Path, PathBuf};
+
+// examples/ 在编译期嵌入(相对 crates/lmt-app -> ../../examples)。
+static EXAMPLES: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../examples");
+
+/// 内置 example 名列表(供 dry-run 校验 / 错误提示)。
+pub fn embedded_example_names() -> Vec<String> {
+    EXAMPLES
+        .dirs()
+        .filter_map(|d| d.path().file_name().and_then(|n| n.to_str()).map(String::from))
+        .collect()
+}
+
+/// 把内置 example 释放到 `target_dir/<name>`。原子语义:先写到目标同级的
+/// staging 目录,成功后 `rename` 到目标;任何一步失败都清掉 staging,目标保持
+/// 不存在(无半成品残留)。**拒绝覆盖已存在目标**——避免与既有文件混合成
+/// 损坏的 example;要重新 seed 须自己先删目标。
+/// transport-free:CLI 与未来 MCP server 共用这一份。
+pub fn seed_embedded_example(name: &str, target_dir: &Path) -> LmtResult<PathBuf> {
+    let src = EXAMPLES.get_dir(name).ok_or_else(|| {
+        LmtError::NotFound(format!(
+            "example '{name}' not found; available: {:?}",
+            embedded_example_names()
+        ))
+    })?;
+    let dst = target_dir.join(name);
+    if dst.exists() {
+        return Err(LmtError::InvalidInput(format!(
+            "destination already exists: {} (remove it first to re-seed)",
+            dst.display()
+        )));
+    }
+    std::fs::create_dir_all(target_dir)?;
+    // staging 放在目标同一父目录下,保证 rename 不跨文件系统(/tmp 会 EXDEV)。
+    let staging = target_dir.join(format!(".{name}.seed.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_dir_all(&staging);
+    let staged = (|| -> LmtResult<()> {
+        std::fs::create_dir_all(&staging)?;
+        write_embedded_dir_contents(src, &staging)
+    })();
+    match staged {
+        Ok(()) => {
+            std::fs::rename(&staging, &dst)
+                .map_err(|e| LmtError::Io(format!("finalize seed rename: {e}")))?;
+            Ok(dst)
+        }
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            Err(e)
+        }
+    }
+}
+
+/// 把 include_dir 的某个 Dir 的内容(剥掉自身名字前缀)递归写到 `out_dir`。
+fn write_embedded_dir_contents(dir: &Dir, out_dir: &Path) -> LmtResult<()> {
+    for f in dir.files() {
+        let name = f.path().file_name().expect("embedded file has a name");
+        std::fs::write(out_dir.join(name), f.contents())?;
+    }
+    for sub in dir.dirs() {
+        let name = sub.path().file_name().expect("embedded dir has a name");
+        let sub_out = out_dir.join(name);
+        std::fs::create_dir_all(&sub_out)?;
+        write_embedded_dir_contents(sub, &sub_out)?;
+    }
+    Ok(())
+}
 
 /// Pure helper used by command + integration tests.
 pub fn seed_example_to_dir(

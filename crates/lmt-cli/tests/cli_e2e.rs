@@ -754,3 +754,67 @@ fn scatter_reconstruct_fit_failure_surface_fit_failed() {
     assert_eq!(env["ok"], false);
     assert_eq!(env["error"]["code"], "surface_fit_failed");
 }
+
+// ── seed-example ──────────────────────────────────────────────────────────────
+
+#[test]
+fn seed_example_dry_run_does_not_write() {
+    let tmp = TempDir::new().unwrap();
+    let dst = tmp.path();
+    let out = lmt()
+        .args(["--json", "--dry-run", "seed-example", "curved-flat"])
+        .arg(dst)
+        .assert().success().get_output().clone();
+    let env: Value = serde_json::from_slice(&out.stdout).expect("JSON envelope");
+    assert_eq!(env["data"]["dry_run"], true);
+    assert!(!dst.join("curved-flat/project.yaml").exists(), "dry-run must not write");
+}
+
+#[test]
+fn seed_example_yes_writes_project_yaml() {
+    let tmp = TempDir::new().unwrap();
+    let dst = tmp.path();
+    lmt().args(["--json", "--yes", "seed-example", "curved-flat"])
+        .arg(dst)
+        .assert().success();
+    assert!(dst.join("curved-flat/project.yaml").is_file(), "expected seeded project.yaml");
+}
+
+#[test]
+fn seed_example_unknown_name_is_not_found() {
+    let tmp = TempDir::new().unwrap();
+    let assert = lmt()
+        .args(["--json", "--yes", "seed-example", "does-not-exist"])
+        .arg(tmp.path())
+        .assert().failure();
+    // not_found -> exit 3
+    assert_eq!(assert.get_output().status.code(), Some(3));
+}
+
+#[test]
+fn seed_example_dry_run_unknown_name_fails_fast() {
+    // dry-run preflight 必须对未知 name 失败,而不是报 ok 让 agent 误以为安全。
+    let tmp = TempDir::new().unwrap();
+    let assert = lmt()
+        .args(["--json", "--dry-run", "seed-example", "does-not-exist"])
+        .arg(tmp.path())
+        .assert().failure();
+    assert_eq!(assert.get_output().status.code(), Some(3));
+}
+
+#[test]
+fn seed_example_refuses_existing_destination_and_leaves_it_intact() {
+    let tmp = TempDir::new().unwrap();
+    let dst = tmp.path();
+    // 第一次 seed 成功
+    lmt().args(["--json", "--yes", "seed-example", "curved-flat"]).arg(dst).assert().success();
+    // 在目标里放一个 sentinel,证明第二次 seed 不碰它
+    let sentinel = dst.join("curved-flat/SENTINEL.txt");
+    std::fs::write(&sentinel, "keep-me").unwrap();
+    // 第二次 seed 同目标 -> 拒绝(invalid_input -> exit 2),sentinel 原样保留
+    let assert = lmt()
+        .args(["--json", "--yes", "seed-example", "curved-flat"]).arg(dst)
+        .assert().failure();
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "keep-me");
+}

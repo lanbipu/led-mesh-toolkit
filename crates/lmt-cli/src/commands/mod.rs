@@ -8,6 +8,7 @@ mod measurements;
 mod project;
 mod reconstruct;
 mod schema_cmd;
+mod seed;
 mod total_station;
 mod util;
 mod version;
@@ -43,5 +44,6 @@ pub fn dispatch(cli: Cli) -> i32 {
         Command::Reconstruct(cmd) => reconstruct::run(cmd, mode, db, yes, dry_run),
         Command::Export(cmd) => export::run(cmd, mode, db, yes, dry_run),
         Command::Completion { shell } => completion::run(shell),
+        Command::SeedExample { name, dst } => seed::run(mode, &name, &dst, yes, dry_run),
     }
 }

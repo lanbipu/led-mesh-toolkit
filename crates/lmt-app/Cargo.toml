@@ -19,6 +19,7 @@ thiserror.workspace = true
 rusqlite.workspace = true
 chrono.workspace = true
 tracing.workspace = true
+include_dir = "0.7"
 
 [dev-dependencies]
 tempfile.workspace = true
