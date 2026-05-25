@@ -144,80 +144,90 @@ def _resolve_cabinet_specs(
     } for (col, row) in present]
 
 
-def _assemble_screen(
-    *,
-    out_path: pathlib.Path,
-    cabinets_dir: pathlib.Path,
-    cabinet_array,
-    cabinet_pixel_size: tuple[int, int],
-    screen_resolution: tuple[int, int],
-) -> None:
-    full = np.full(
-        (screen_resolution[1], screen_resolution[0]),
-        ABSENT_CELL_FILL,
-        dtype=np.uint8,
-    )
-    cw, ch = cabinet_pixel_size
-    for col in range(cabinet_array.cols):
-        for row in range(cabinet_array.rows):
-            tile_path = cabinets_dir / f"V{col:03d}_R{row:03d}.png"
-            if not tile_path.exists():
-                continue
-            tile = cv2.imread(str(tile_path), cv2.IMREAD_GRAYSCALE)
-            x0 = col * cw
-            y0 = row * ch
-            full[y0:y0 + ch, x0:x0 + cw] = tile
+def _assemble_screen(*, out_path, cabinets_dir, specs, screen_resolution) -> None:
+    sw, sh = screen_resolution
+    full = np.full((sh, sw), ABSENT_CELL_FILL, dtype=np.uint8)
+    for s in specs:
+        tile_path = cabinets_dir / f"V{s['col']:03d}_R{s['row']:03d}.png"
+        if not tile_path.exists():
+            continue
+        tile = cv2.imread(str(tile_path), cv2.IMREAD_GRAYSCALE)
+        th, tw = tile.shape
+        rx, ry, rw, rh = s["input_rect_px"]        # placement rect (DD6)
+        x0 = rx + (rw - tw) // 2                    # center board in its rect
+        y0 = ry + (rh - th) // 2
+        full[y0:y0 + th, x0:x0 + tw] = tile
     cv2.imwrite(str(out_path), full)
 
 
-ARUCO_DICT_CAPACITY = 1000  # DICT_6X6_1000 has 1000 markers
 ATOMIC_BACKUP_SUFFIX = ".lmt-vba-old"
-
-
-def _preflight_capacity(cols: int, rows: int, absent: set, inner_corners: int) -> int | None:
-    """Return required marker count if it fits, else emit error + return None."""
-    n_present = sum(
-        1 for col in range(cols) for row in range(rows) if (col, row) not in absent
-    )
-    markers_each = _markers_per_board(inner_corners)
-    required = n_present * markers_each
-    if required > ARUCO_DICT_CAPACITY:
-        write_event(ErrorEvent(
-            event="error",
-            code="invalid_input",
-            message=(
-                f"grid requires {required} ArUco IDs ({n_present} cabinets × "
-                f"{markers_each} markers) which exceeds {DEFAULT_ARUCO_DICT} capacity "
-                f"({ARUCO_DICT_CAPACITY}); reduce inner_corners or split into screens"
-            ),
-            fatal=True,
-        ))
-        return None
-    return required
 
 
 def run_generate_pattern(cmd: GeneratePatternInput) -> int:
     out_dir = pathlib.Path(cmd.output_dir)
-
     cols = cmd.project.cabinet_array.cols
     rows = cmd.project.cabinet_array.rows
     absent = set(tuple(c) for c in cmd.project.cabinet_array.absent_cells)
-    total_cells = cols * rows
-    completed = 0
-
     sw, sh = cmd.screen_resolution
-    if sw % cols != 0 or sh % rows != 0:
-        write_event(ErrorEvent(
-            event="error",
-            code="invalid_input",
-            message=f"screen_resolution {sw}x{sh} must divide evenly by cabinet grid {cols}x{rows}",
-            fatal=True,
-        ))
-        return 1
-    cabinet_pixel_size = (sw // cols, sh // rows)
 
-    if _preflight_capacity(cols, rows, absent, DEFAULT_INNER_CORNERS) is None:
+    # Optional per-cabinet geometry from screen_mapping (single source of truth).
+    screen_mapping = None
+    if cmd.screen_mapping_path is not None:
+        from lmt_vba_sidecar.screen_mapping import ScreenMapping
+        screen_mapping = ScreenMapping.model_validate_json(
+            pathlib.Path(cmd.screen_mapping_path).read_text())
+
+    # Even-divisibility only constrains the UNIFORM path; in --screen-mapping
+    # mode the per-cabinet input_rect_px defines placement (DD6), so divisibility
+    # is irrelevant.
+    if screen_mapping is None and (sw % cols != 0 or sh % rows != 0):
+        write_event(ErrorEvent(event="error", code="invalid_input",
+            message=f"screen_resolution {sw}x{sh} must divide evenly by grid {cols}x{rows}",
+            fatal=True))
         return 1
+
+    # Resolve specs; exact-coverage / bad-mapping errors -> invalid_input (DD1a).
+    try:
+        specs = _resolve_cabinet_specs(
+            cols=cols, rows=rows, absent=absent,
+            screen_resolution=(sw, sh), screen_mapping=screen_mapping,
+            cabinet_size_mm=list(cmd.project.cabinet_array.cabinet_size_mm),
+        )
+    except ValueError as exc:
+        write_event(ErrorEvent(event="error", code="invalid_input",
+            message=str(exc), fatal=True))
+        return 1
+
+    # Choose per-cabinet board shape and run the capacity check on the real total.
+    from lmt_vba_sidecar.board_layout import choose_board_shape, markers_per_board
+    for s in specs:
+        s["squares_x"], s["squares_y"], s["square_px"] = choose_board_shape(
+            resolution_px=s["resolution_px"])
+    total_markers = sum(markers_per_board(s["squares_x"], s["squares_y"]) for s in specs)
+    if total_markers > ARUCO_DICT_CAPACITY:
+        write_event(ErrorEvent(event="error", code="invalid_input",
+            message=(f"grid needs {total_markers} ArUco IDs across {len(specs)} cabinets, "
+                     f"exceeds {DEFAULT_ARUCO_DICT} capacity ({ARUCO_DICT_CAPACITY}); "
+                     f"use fewer/larger cabinets or structured light"),
+            fatal=True))
+        return 1
+
+    # DD6: every board must fit inside its placement rect, and every rect inside
+    # the screen. Catches a board wider than its input_rect or rects that spill
+    # past screen_resolution before any file is written.
+    for s in specs:
+        bw, bh = s["squares_x"] * s["square_px"], s["squares_y"] * s["square_px"]
+        rx, ry, rw, rh = s["input_rect_px"]
+        if bw > rw or bh > rh:
+            write_event(ErrorEvent(event="error", code="invalid_input",
+                message=(f"cabinet V{s['col']:03d}_R{s['row']:03d} board {bw}x{bh}px "
+                         f"does not fit its input_rect {rw}x{rh}px"), fatal=True))
+            return 1
+        if rx < 0 or ry < 0 or rx + rw > sw or ry + rh > sh:
+            write_event(ErrorEvent(event="error", code="invalid_input",
+                message=(f"cabinet V{s['col']:03d}_R{s['row']:03d} input_rect "
+                         f"[{rx},{ry},{rw},{rh}] spills past screen {sw}x{sh}"), fatal=True))
+            return 1
 
     # Generate into a sibling temp dir and atomically swap on success so a
     # mid-run failure leaves the existing output_dir untouched.
@@ -232,43 +242,29 @@ def run_generate_pattern(cmd: GeneratePatternInput) -> int:
     try:
         cabinets_meta: list[PatternMetaCabinet] = []
         next_id = 0
-        for row in range(rows):
-            for col in range(cols):
-                if (col, row) in absent:
-                    completed += 1
-                    continue
-                tile = cabinets_dir / f"V{col:03d}_R{row:03d}.png"
-                id_start = next_id
-                next_id = generate_cabinet_png(
-                    out_path=tile,
-                    cabinet_pixel_size=cabinet_pixel_size,
-                    aruco_id_start=id_start,
-                )
-                cabinets_meta.append(
-                    PatternMetaCabinet(col=col, row=row, aruco_id_start=id_start, aruco_id_end=next_id - 1)
-                )
-                completed += 1
-                write_event(ProgressEvent(
-                    event="progress",
-                    stage="output",
-                    percent=completed / total_cells,
-                    message=f"cabinet V{col:03d}_R{row:03d}",
-                ))
+        total = len(specs)
+        for i, s in enumerate(specs):
+            col, row = s["col"], s["row"]
+            tile = cabinets_dir / f"V{col:03d}_R{row:03d}.png"
+            id_start = next_id
+            next_id = generate_cabinet_png(
+                out_path=tile, aruco_id_start=id_start,
+                squares_x=s["squares_x"], squares_y=s["squares_y"], square_px=s["square_px"])
+            cabinets_meta.append(PatternMetaCabinet(
+                col=col, row=row, aruco_id_start=id_start, aruco_id_end=next_id - 1,
+                squares_x=s["squares_x"], squares_y=s["squares_y"], square_px=s["square_px"],
+                pixel_pitch_mm=[s["pixel_pitch_mm"][0], s["pixel_pitch_mm"][1]]))
+            write_event(ProgressEvent(event="progress", stage="output",
+                percent=(i + 1) / total, message=f"cabinet V{col:03d}_R{row:03d}"))
 
         _assemble_screen(
             out_path=staging / "full_screen.png",
             cabinets_dir=cabinets_dir,
-            cabinet_array=cmd.project.cabinet_array,
-            cabinet_pixel_size=cabinet_pixel_size,
+            specs=specs,
             screen_resolution=(sw, sh),
         )
 
-        meta = PatternMeta(
-            aruco_dict=DEFAULT_ARUCO_DICT,
-            markers_per_cabinet=_markers_per_board(DEFAULT_INNER_CORNERS),
-            checkerboard_inner_corners=DEFAULT_INNER_CORNERS,
-            cabinets=cabinets_meta,
-        )
+        meta = PatternMeta(schema_version=2, aruco_dict=DEFAULT_ARUCO_DICT, cabinets=cabinets_meta)
         (staging / "pattern_meta.json").write_text(meta.model_dump_json(indent=2))
 
         # Atomic publish: move existing out_dir aside, rename staging into place.
