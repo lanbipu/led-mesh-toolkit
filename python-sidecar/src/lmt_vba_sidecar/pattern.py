@@ -28,7 +28,6 @@ from lmt_vba_sidecar.ipc import (
 
 
 DEFAULT_ARUCO_DICT = "DICT_6X6_1000"
-DEFAULT_INNER_CORNERS = 8  # 8×8 inner corners → 9×9 squares (per spec §5.2)
 ABSENT_CELL_FILL = 255  # white block for missing cabinets
 ARUCO_DICT_CAPACITY = 1000  # DICT_6X6_1000 has 1000 markers
 

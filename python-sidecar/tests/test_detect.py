@@ -50,7 +50,8 @@ def test_detect_handles_unreadable_path(tmp_out: pathlib.Path) -> None:
 
 def test_charuco_corners_detected_on_rendered_board(tmp_out: pathlib.Path) -> None:
     p = tmp_out / "V000_R000.png"
-    generate_cabinet_png(out_path=p, cabinet_pixel_size=(900, 510), aruco_id_start=0)
+    # board_lookup_for_test substitutes a 9x9 board, so render a 9x9 PNG to match.
+    generate_cabinet_png(out_path=p, aruco_id_start=0, squares_x=9, squares_y=9, square_px=60)
     out = detect_charuco_corners([str(p)], board_lookup_for_test=True)
     corners = out[str(p)]
     assert len(corners) >= 32  # at least half of the 64 inner corners

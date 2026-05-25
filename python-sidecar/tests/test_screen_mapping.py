@@ -29,8 +29,8 @@ def _mapping():
 def test_charuco_corner_local_mm_centered():
     """p0 and p63 must be symmetric about center (physical ChArUco convention)."""
     m = _mapping()
-    p0 = m.charuco_corner_local_mm("V000_R000", 0, inner=8)
-    p_last = m.charuco_corner_local_mm("V000_R000", 63, inner=8)
+    p0 = m.charuco_corner_local_mm("V000_R000", 0, squares_x=9, squares_y=9, square_px=60)
+    p_last = m.charuco_corner_local_mm("V000_R000", 63, squares_x=9, squares_y=9, square_px=60)
     assert np.allclose(p0[:2], -p_last[:2], atol=1e-6), (
         f"Not symmetric: p0={p0[:2]}, p_last={p_last[:2]}"
     )
@@ -42,23 +42,23 @@ def test_charuco_corner_local_mm_z_is_zero():
     """z component is always 0 (flat screen plane)."""
     m = _mapping()
     for cid in [0, 15, 31, 63]:
-        p = m.charuco_corner_local_mm("V000_R000", cid, inner=8)
+        p = m.charuco_corner_local_mm("V000_R000", cid, squares_x=9, squares_y=9, square_px=60)
         assert p[2] == 0.0, f"z != 0 for charuco_id={cid}"
 
 
-def test_charuco_corner_local_mm_physical_spacing():
+def test_charuco_corner_local_mm_pitch_based_spacing():
     """
-    Physical ChArUco convention: squareLength = active_w / (inner+1).
-    For inner=8, active_w=600 → squareLength=600/9≈66.67.
-    Corner (r=0,c=0) → x = 66.67 - 300 = -233.33.
-    Corner (r=7,c=7) → x = 8*66.67 - 300 = +233.33.
+    Pitch-based convention (v2): corner (r, c) sits at board-pixel
+    ((c+1)*square_px, (r+1)*square_px); mm = (px - board_px/2) * pixel_pitch.
+    For a 9x9 board at square_px=60 (board 540px) with pitch 0.667:
+      corner (0,0) -> x = (60 - 270)*0.667 = -140.07
     """
     m = _mapping()
-    p0 = m.charuco_corner_local_mm("V000_R000", 0, inner=8)
-    expected_x = 600 * (1 / 9 - 0.5)  # -233.333...
-    expected_y = 340 * (1 / 9 - 0.5)  # -132.222...
+    p0 = m.charuco_corner_local_mm("V000_R000", 0, squares_x=9, squares_y=9, square_px=60)
+    expected_x = (1 * 60 - 9 * 60 / 2) * 0.667  # -140.07
+    expected_y = (1 * 60 - 9 * 60 / 2) * 0.667
     assert np.allclose(p0[:2], [expected_x, expected_y], atol=1e-6), (
-        f"Physical spacing mismatch: got {p0[:2]}, expected [{expected_x:.4f}, {expected_y:.4f}]"
+        f"Pitch-based spacing mismatch: got {p0[:2]}, expected [{expected_x:.4f}, {expected_y:.4f}]"
     )
 
 
@@ -66,7 +66,7 @@ def test_charuco_corner_local_mm_unknown_cabinet():
     """Raises ScreenMappingError for unknown cabinet_id."""
     m = _mapping()
     with pytest.raises(ScreenMappingError):
-        m.charuco_corner_local_mm("NONEXISTENT", 0, inner=8)
+        m.charuco_corner_local_mm("NONEXISTENT", 0, squares_x=9, squares_y=9, square_px=60)
 
 
 def test_charuco_corner_local_mm_rotation_guard():
@@ -88,7 +88,7 @@ def test_charuco_corner_local_mm_rotation_guard():
     }
     m = ScreenMapping.model_validate(data)
     with pytest.raises(ScreenMappingError, match="rotation/mirror"):
-        m.charuco_corner_local_mm("C90", 0, inner=8)
+        m.charuco_corner_local_mm("C90", 0, squares_x=9, squares_y=9, square_px=60)
 
 
 def test_charuco_corner_local_mm_mirror_x_guard():
@@ -110,7 +110,7 @@ def test_charuco_corner_local_mm_mirror_x_guard():
     }
     m = ScreenMapping.model_validate(data)
     with pytest.raises(ScreenMappingError, match="rotation/mirror"):
-        m.charuco_corner_local_mm("CM", 0, inner=8)
+        m.charuco_corner_local_mm("CM", 0, squares_x=9, squares_y=9, square_px=60)
 
 
 # ---------------------------------------------------------------------------
