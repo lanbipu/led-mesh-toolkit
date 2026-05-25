@@ -56,6 +56,9 @@ pub fn run_import(
     // 4b. 若已有 measured.yaml，rename 成 .bak（覆盖上一次的 .bak）。
     //     保留 .bak 作为上一版本快照——不在成功后删除，给用户一份 recovery copy。
     let did_backup = if measured_yaml_path.exists() {
+        // Remove any prior .bak first: std::fs::rename fails on Windows when the
+        // destination exists (POSIX silently overwrites). Matches the comment above.
+        let _ = std::fs::remove_file(&backup_path);
         std::fs::rename(&measured_yaml_path, &backup_path)?;
         true
     } else {
@@ -340,8 +343,9 @@ pub fn run_import_scatter(
     // cross-screen guard（与 grid import 一致）
     check_import_no_screen_conflict(project_abs_path, screen_id)?;
 
-    // 备份上一份
+    // 备份上一份（先删旧 .bak：Windows 上 rename 在目标已存在时会失败，POSIX 则静默覆盖）
     if measured_yaml_path.exists() {
+        let _ = std::fs::remove_file(&backup_path);
         std::fs::rename(&measured_yaml_path, &backup_path)?;
     }
 
