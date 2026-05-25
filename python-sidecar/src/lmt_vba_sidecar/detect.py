@@ -6,29 +6,32 @@ pixel coordinate plus its ArUco ID, ready for bundle adjustment.
 from __future__ import annotations
 
 import cv2
+import numpy as np
 
 
 def _aruco_dict():
     return cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_1000)
 
 
-def _charuco_board(aruco_id_start: int, inner_corners: int) -> cv2.aruco.CharucoBoard:
-    """Reconstruct the same CharucoBoard that generate_cabinet_png() produced.
+def _charuco_board(aruco_id_start: int, squares_x: int, squares_y: int) -> cv2.aruco.CharucoBoard:
+    """Reconstruct the per-cabinet CharucoBoard generate_cabinet_png() produced.
 
-    Mirrors pattern.py's construction exactly:
-      - sub-dict slice: bytesList[start : start + n_markers]
-      - board size: (inner+1, inner+1)
+    Mirrors pattern.py:
+      - sub-dict slice: bytesList[start : start + markers_per_board]
+      - board size: (squares_x, squares_y) — may be non-square
       - squareLength=1.0, markerLength=0.7
+    The sub-dict re-indexes this cabinet's markers to local ids 0..n-1, so callers
+    must localize global marker ids (global - aruco_id_start) before interpolation.
     """
+    from lmt_vba_sidecar.board_layout import markers_per_board
     aruco_dict = _aruco_dict()
-    squares = inner_corners + 1
-    n_markers = (squares * squares) // 2  # _markers_per_board formula
+    n_markers = markers_per_board(squares_x, squares_y)
     sub_dict = cv2.aruco.Dictionary(
         aruco_dict.bytesList[aruco_id_start:aruco_id_start + n_markers],
         aruco_dict.markerSize,
     )
     return cv2.aruco.CharucoBoard(
-        size=(squares, squares),
+        size=(squares_x, squares_y),
         squareLength=1.0,
         markerLength=0.7,
         dictionary=sub_dict,
@@ -41,7 +44,13 @@ def detect_charuco_corners(
     boards: list[dict] | None = None,
     board_lookup_for_test: bool = False,
 ) -> dict[str, list[dict]]:
-    """Detect ChArUco board corners across a set of images.
+    """Detect ChArUco corners across images with ONE detectMarkers pass per image.
+
+    One `cv2.aruco.detectMarkers(img, DICT_6X6_1000)` per image; each detected
+    marker is routed to its cabinet via a precomputed marker_id->cabinet map; then
+    per cabinet `interpolateCornersCharuco` recovers sub-pixel checkerboard corners
+    from the routed marker subset. Replaces the old O(N_cabinets) full-image
+    detectBoard re-scan.
 
     Each returned observation:
       {"cabinet": (col, row), "charuco_id": int, "corner_px": [x, y]}
@@ -49,31 +58,37 @@ def detect_charuco_corners(
     Parameters
     ----------
     image_paths:
-        Paths to input images (grayscale or colour; read as grayscale internally).
+        Paths to input images (read as grayscale internally).
     boards:
-        List of board descriptors used in real operation (Task 1.4 reconstruct):
-          {"cabinet": (col, row), "aruco_id_start": int, "inner_corners": int}
-        Each descriptor recreates the CharucoBoard that generate_cabinet_png()
-        produced for that cabinet.
+        Board descriptors (from pattern_meta v2 via reconstruct):
+          {"cabinet": (col, row), "aruco_id_start": int, "aruco_id_end": int,
+           "squares_x": int, "squares_y": int}
     board_lookup_for_test:
-        When True, ignore `boards` and substitute a single default board
-        {"cabinet": (0,0), "aruco_id_start": 0, "inner_corners": 8}
+        When True, ignore `boards` and substitute a single default 9x9 board
         for unit-test use without a real pattern_meta.json.
 
     Unreadable images yield an empty list (not an exception), matching the
     tolerance of detect_charuco_observations.
     """
+    from lmt_vba_sidecar.board_layout import build_marker_routing
     if board_lookup_for_test:
-        boards = [{"cabinet": (0, 0), "aruco_id_start": 0, "inner_corners": 8}]
+        boards = [{"cabinet": (0, 0), "aruco_id_start": 0, "aruco_id_end": 39,
+                   "squares_x": 9, "squares_y": 9}]
     if not boards:
         return {path: [] for path in image_paths}
 
-    # Pre-build (board_obj, detector, cabinet) tuples once — reused per image.
-    board_detectors: list[tuple[cv2.aruco.CharucoBoard, cv2.aruco.CharucoDetector, tuple]] = []
-    for desc in boards:
-        board = _charuco_board(desc["aruco_id_start"], desc["inner_corners"])
-        detector = cv2.aruco.CharucoDetector(board)
-        board_detectors.append((board, detector, tuple(desc["cabinet"])))
+    routing = build_marker_routing(boards)  # global marker_id -> (col, row)
+    # Per cabinet: a local board + the global id offset (to localize marker ids).
+    cab_board: dict[tuple, dict] = {}
+    for b in boards:
+        cr = tuple(b["cabinet"])
+        cab_board[cr] = {
+            "board": _charuco_board(b["aruco_id_start"], b["squares_x"], b["squares_y"]),
+            "offset": b["aruco_id_start"],
+        }
+
+    dictionary = _aruco_dict()
+    detector = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
 
     out: dict[str, list[dict]] = {}
     for path in image_paths:
@@ -81,21 +96,31 @@ def detect_charuco_corners(
         if img is None:
             out[path] = []
             continue
-
+        corners, ids, _ = detector.detectMarkers(img)  # ONE scan
         observations: list[dict] = []
-        for _board, detector, cabinet in board_detectors:
-            charuco_corners, charuco_ids, _marker_corners, _marker_ids = detector.detectBoard(img)
-            if charuco_ids is None:
-                continue
-            # charucoCorners: (N,1,2) float32; charucoIds: (N,1) int32
-            flat_ids = charuco_ids.flatten()
-            flat_corners = charuco_corners.reshape(-1, 2)
-            for cid, (cx, cy) in zip(flat_ids, flat_corners):
-                observations.append({
-                    "cabinet": cabinet,
-                    "charuco_id": int(cid),
-                    "corner_px": [float(cx), float(cy)],
-                })
+        if ids is not None:
+            # Bucket detected markers by cabinet using the routing map.
+            buckets: dict[tuple, tuple[list, list]] = {}
+            for mc, mid in zip(corners, ids.flatten()):
+                cr = routing.get(int(mid))
+                if cr is None:
+                    continue
+                local_id = int(mid) - cab_board[cr]["offset"]
+                buckets.setdefault(cr, ([], []))
+                buckets[cr][0].append(mc)
+                buckets[cr][1].append(local_id)
+            for cr, (mcs, lids) in buckets.items():
+                board = cab_board[cr]["board"]
+                _n, ch_corners, ch_ids = cv2.aruco.interpolateCornersCharuco(
+                    mcs, np.array(lids, dtype=np.int32).reshape(-1, 1), img, board)
+                if ch_ids is None:
+                    continue
+                for cid, (cx, cy) in zip(ch_ids.flatten(), ch_corners.reshape(-1, 2)):
+                    observations.append({
+                        "cabinet": cr,
+                        "charuco_id": int(cid),
+                        "corner_px": [float(cx), float(cy)],
+                    })
         out[path] = observations
     return out
 
