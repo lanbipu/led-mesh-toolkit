@@ -284,6 +284,10 @@ pub enum VisualCmd {
         /// Pattern 方法(目前只支持 charuco)。
         #[arg(long, default_value = "charuco")]
         method: String,
+        /// 可选 screen_mapping.json:提供后按每箱体尺寸/点间距生成专属棋盘
+        /// (支持非正方形 / 不等尺寸箱体),而非均匀网格。相对路径按项目根解析。
+        #[arg(long)]
+        screen_mapping: Option<String>,
     },
     /// 多视角照片 → measured.yaml + cabinet_pose_report.json。side_effect: destructive
     Reconstruct {

@@ -70,13 +70,17 @@ pub struct PatternMetaCabinet {
     pub row: u32,
     pub aruco_id_start: u32,
     pub aruco_id_end: u32,
+    // v2: per-cabinet board geometry (pitch-matched generation)
+    pub squares_x: u32,
+    pub squares_y: u32,
+    pub square_px: u32,
+    pub pixel_pitch_mm: [f64; 2],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatternMeta {
+    pub schema_version: u32,
     pub aruco_dict: String,
-    pub markers_per_cabinet: u32,
-    pub checkerboard_inner_corners: u32,
     pub cabinets: Vec<PatternMetaCabinet>,
 }
 

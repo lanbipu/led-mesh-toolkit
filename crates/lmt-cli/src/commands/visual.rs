@@ -53,7 +53,11 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             project_path,
             screen_id,
             method,
-        } => generate_pattern(mode, &project_path, &screen_id, &method, yes, dry_run),
+            screen_mapping,
+        } => generate_pattern(
+            mode, &project_path, &screen_id, &method,
+            screen_mapping.as_deref(), yes, dry_run,
+        ),
     }
 }
 
@@ -222,6 +226,7 @@ fn generate_pattern(
     project_path: &str,
     screen_id: &str,
     method: &str,
+    screen_mapping: Option<&str>,
     yes: bool,
     dry_run: bool,
 ) -> i32 {
@@ -260,13 +265,14 @@ fn generate_pattern(
                 Path::new(project_path),
                 screen_id,
                 method,
+                screen_mapping.map(Path::new),
             ) {
                 Ok(r) => output::ok(mode, r, |p| {
                     let _ = writeln!(
                         std::io::stdout(),
-                        "generated {} cabinets × {} markers → {}",
+                        "generated {} cabinets, {} total markers → {}",
                         p.cabinet_count,
-                        p.markers_per_cabinet,
+                        p.total_markers,
                         p.output_dir
                     );
                 }),

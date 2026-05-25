@@ -307,7 +307,8 @@ pub struct CalibrateResult {
 pub struct GeneratePatternResult {
     pub output_dir: String,
     pub cabinet_count: usize,
-    pub markers_per_cabinet: u32,
+    /// Total ArUco markers across all cabinets (per-cabinet counts vary in v2).
+    pub total_markers: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -386,7 +387,7 @@ mod tests {
         let gp = GeneratePatternResult {
             output_dir: "/tmp/patterns".into(),
             cabinet_count: 12,
-            markers_per_cabinet: 4,
+            total_markers: 480,
         };
         let gp_json = serde_json::to_string(&gp).unwrap();
         let gp_back: GeneratePatternResult = serde_json::from_str(&gp_json).unwrap();

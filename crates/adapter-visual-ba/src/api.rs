@@ -249,6 +249,9 @@ pub struct GeneratePatternArgs {
     pub cabinet_array: IpcCabinetArray,
     pub output_dir: String,
     pub screen_resolution: [u32; 2],
+    /// When set, per-cabinet board geometry (size/pitch) is read from this
+    /// screen_mapping.json instead of the uniform grid.
+    pub screen_mapping_path: Option<String>,
     pub progress_tx: Option<mpsc::Sender<Event>>,
     pub cancel: Option<oneshot::Receiver<()>>,
 }
@@ -257,11 +260,14 @@ pub struct GeneratePatternArgs {
 pub struct GeneratePatternOut {
     pub output_dir: String,
     pub cabinet_count: u32,
-    pub markers_per_cabinet: u32,
+    /// Total ArUco markers across all cabinets. Per-cabinet counts vary in v2
+    /// (non-square / pitch-matched boards), so a single per-cabinet number is no
+    /// longer meaningful — the total is the unambiguous summary.
+    pub total_markers: u32,
 }
 
 pub async fn generate_pattern(args: GeneratePatternArgs) -> VbaResult<GeneratePatternOut> {
-    let payload = json!({
+    let mut payload = json!({
         "command": "generate_pattern",
         "version": 1,
         "project": {
@@ -271,6 +277,10 @@ pub async fn generate_pattern(args: GeneratePatternArgs) -> VbaResult<GeneratePa
         "output_dir": &args.output_dir,
         "screen_resolution": args.screen_resolution,
     });
+    // Omit screen_mapping_path when None so the sidecar uses uniform generation.
+    if let Some(p) = &args.screen_mapping_path {
+        payload["screen_mapping_path"] = json!(p);
+    }
 
     // generate_pattern's result event is an empty ResultData; the real product
     // is the files on disk. Run for the side effects + error surfacing, then
@@ -290,10 +300,15 @@ pub async fn generate_pattern(args: GeneratePatternArgs) -> VbaResult<GeneratePa
     )
     .map_err(|e| VbaError::InvalidInput(format!("pattern_meta.json decode failed: {e}")))?;
 
+    let total_markers: u32 = meta
+        .cabinets
+        .iter()
+        .map(|c| c.aruco_id_end - c.aruco_id_start + 1)
+        .sum();
     Ok(GeneratePatternOut {
         output_dir: args.output_dir,
         cabinet_count: meta.cabinets.len() as u32,
-        markers_per_cabinet: meta.markers_per_cabinet,
+        total_markers,
     })
 }
 

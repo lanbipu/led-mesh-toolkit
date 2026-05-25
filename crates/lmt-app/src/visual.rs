@@ -311,6 +311,7 @@ pub fn run_generate_pattern(
     project_path: &Path,
     screen_id: &str,
     method: &str,
+    screen_mapping_path: Option<&Path>,
 ) -> LmtResult<GeneratePatternResult> {
     if method != "charuco" {
         return Err(LmtError::InvalidInput(format!(
@@ -322,15 +323,51 @@ pub fn run_generate_pattern(
     let screen_cfg = load_screen(&cfg, screen_id)?;
     let cabinet_array = ipc_cabinet_array(screen_cfg);
 
-    // screen_resolution = pixels_per_cabinet × cabinet_count. pixels_per_cabinet
-    // is optional in the schema, so it's required for pattern generation.
-    let ppc = screen_cfg.pixels_per_cabinet.ok_or_else(|| {
-        LmtError::InvalidInput(format!(
-            "screen '{screen_id}' has no pixels_per_cabinet; required for pattern generation"
-        ))
-    })?;
-    let [cols, rows] = screen_cfg.cabinet_count;
-    let screen_resolution = [ppc[0] * cols, ppc[1] * rows];
+    // Resolve the screen_mapping path (project-root-relative if not absolute).
+    let sm_abs = screen_mapping_path.map(|p| {
+        if p.is_absolute() { p.to_path_buf() } else { project_path.join(p) }
+    });
+
+    // In --screen-mapping mode the framebuffer size is the bounding box of the
+    // per-cabinet input_rect_px (cabinets may be unequal / gapped); pixels_per_
+    // cabinet is not used. In uniform mode it is pixels_per_cabinet × cabinet_count.
+    let screen_resolution = match &sm_abs {
+        Some(p) => {
+            let txt = std::fs::read_to_string(p).map_err(|e| {
+                LmtError::InvalidInput(format!("screen_mapping '{}' unreadable: {e}", p.display()))
+            })?;
+            let v: serde_json::Value = serde_json::from_str(&txt).map_err(|e| {
+                LmtError::InvalidInput(format!("screen_mapping '{}' invalid JSON: {e}", p.display()))
+            })?;
+            let cabs = v.get("cabinets").and_then(|c| c.as_array()).ok_or_else(|| {
+                LmtError::InvalidInput("screen_mapping has no cabinets[]".into())
+            })?;
+            let (mut max_w, mut max_h) = (0u32, 0u32);
+            for c in cabs {
+                let r = c.get("input_rect_px").and_then(|r| r.as_array()).ok_or_else(|| {
+                    LmtError::InvalidInput("screen_mapping cabinet missing input_rect_px".into())
+                })?;
+                if r.len() != 4 {
+                    return Err(LmtError::InvalidInput(
+                        "input_rect_px must be [x, y, w, h]".into(),
+                    ));
+                }
+                let g = |i: usize| r[i].as_u64().unwrap_or(0) as u32;
+                max_w = max_w.max(g(0) + g(2));
+                max_h = max_h.max(g(1) + g(3));
+            }
+            [max_w, max_h]
+        }
+        None => {
+            let ppc = screen_cfg.pixels_per_cabinet.ok_or_else(|| {
+                LmtError::InvalidInput(format!(
+                    "screen '{screen_id}' has no pixels_per_cabinet; required for uniform pattern generation"
+                ))
+            })?;
+            let [cols, rows] = screen_cfg.cabinet_count;
+            [ppc[0] * cols, ppc[1] * rows]
+        }
+    };
 
     let output_dir = project_path.join("patterns").join(screen_id);
     std::fs::create_dir_all(&output_dir)?;
@@ -340,6 +377,7 @@ pub fn run_generate_pattern(
         cabinet_array,
         output_dir: output_dir.display().to_string(),
         screen_resolution,
+        screen_mapping_path: sm_abs.map(|p| p.display().to_string()),
         progress_tx: None,
         cancel: None,
     };
@@ -349,7 +387,7 @@ pub fn run_generate_pattern(
     Ok(GeneratePatternResult {
         output_dir: out.output_dir,
         cabinet_count: out.cabinet_count as usize,
-        markers_per_cabinet: out.markers_per_cabinet,
+        total_markers: out.total_markers,
     })
 }
 
@@ -721,7 +759,7 @@ output:
     fn generate_pattern_rejects_non_charuco_method() {
         let dir = tempdir().unwrap();
         seed_project(dir.path());
-        let err = run_generate_pattern(dir.path(), "MAIN", "gray_code").unwrap_err();
+        let err = run_generate_pattern(dir.path(), "MAIN", "gray_code", None).unwrap_err();
         assert!(matches!(err, LmtError::InvalidInput(_)), "got: {err:?}");
         assert!(format!("{err}").contains("charuco"), "got: {err}");
     }
@@ -730,7 +768,7 @@ output:
     fn generate_pattern_unknown_screen_is_not_found() {
         let dir = tempdir().unwrap();
         seed_project(dir.path());
-        let err = run_generate_pattern(dir.path(), "FLOOR", "charuco").unwrap_err();
+        let err = run_generate_pattern(dir.path(), "FLOOR", "charuco", None).unwrap_err();
         assert!(matches!(err, LmtError::NotFound(_)), "got: {err:?}");
     }
 
