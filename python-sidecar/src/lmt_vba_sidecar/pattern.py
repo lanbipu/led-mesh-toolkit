@@ -83,6 +83,67 @@ def generate_cabinet_png(
     return aruco_id_start + n_markers
 
 
+def _resolve_cabinet_specs(
+    *, cols: int, rows: int, absent: set,
+    screen_resolution: tuple[int, int],
+    screen_mapping,  # ScreenMapping | None
+    cabinet_size_mm: list[float],
+) -> list[dict]:
+    """Return per-cabinet specs in row-major order.
+
+    Each: {"col","row","resolution_px":(w,h),"pixel_pitch_mm":(px,py),
+           "input_rect_px":(x,y,w,h)}.
+
+    --screen-mapping mode (screen_mapping is not None): per-cabinet geometry +
+    placement rect come from screen_mapping, with EXACT coverage (DD1a) — every
+    present grid cabinet must be in the mapping and every mapping cabinet_id must
+    be a present grid cell, else ValueError (caller -> invalid_input).
+
+    Uniform mode (screen_mapping is None): geometry from screen_resolution / grid,
+    uniform cabinet_size_mm, placement rect = (col*cw, row*ch, cw, ch).
+    """
+    from lmt_vba_sidecar.board_layout import cabinet_name
+    sw, sh = screen_resolution
+    present = [(col, row) for row in range(rows) for col in range(cols)
+               if (col, row) not in absent]
+
+    if screen_mapping is not None:
+        sm_by_name = {c.cabinet_id: c for c in screen_mapping.cabinets}
+        present_names = {cabinet_name(col, row) for (col, row) in present}
+        missing = sorted(present_names - set(sm_by_name))
+        if missing:
+            raise ValueError(
+                f"screen_mapping is missing {len(missing)} present cabinet(s): "
+                f"{missing}. With --screen-mapping every present cabinet must be "
+                f"described (single source of truth).")
+        extra = sorted(set(sm_by_name) - present_names)
+        if extra:
+            raise ValueError(
+                f"screen_mapping has {len(extra)} cabinet id(s) that are not "
+                f"present grid cells (stale/misspelled or absent): {extra}.")
+        specs: list[dict] = []
+        for (col, row) in present:
+            cab = sm_by_name[cabinet_name(col, row)]
+            x, y, w, h = cab.input_rect_px
+            specs.append({
+                "col": col, "row": row,
+                "resolution_px": (cab.resolution_px[0], cab.resolution_px[1]),
+                "pixel_pitch_mm": (cab.pixel_pitch_mm[0], cab.pixel_pitch_mm[1]),
+                "input_rect_px": (x, y, w, h),
+            })
+        return specs
+
+    # Uniform mode.
+    uni_w, uni_h = sw // cols, sh // rows
+    uni_pitch = (cabinet_size_mm[0] / uni_w, cabinet_size_mm[1] / uni_h)
+    return [{
+        "col": col, "row": row,
+        "resolution_px": (uni_w, uni_h),
+        "pixel_pitch_mm": uni_pitch,
+        "input_rect_px": (col * uni_w, row * uni_h, uni_w, uni_h),
+    } for (col, row) in present]
+
+
 def _assemble_screen(
     *,
     out_path: pathlib.Path,
