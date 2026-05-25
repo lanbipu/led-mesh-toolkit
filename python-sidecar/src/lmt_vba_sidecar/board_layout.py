@@ -32,3 +32,30 @@ def choose_board_shape(
 def markers_per_board(squares_x: int, squares_y: int) -> int:
     """ArUco markers on a squares_x × squares_y ChArUco board (alternating cells)."""
     return (squares_x * squares_y) // 2
+
+
+def cabinet_name(col: int, row: int) -> str:
+    return f"V{col:03d}_R{row:03d}"
+
+
+def corner_name(screen_id: str, col: int, row: int, charuco_id: int) -> str:
+    """Canonical measured-point / corner name. Reverse-routable by a tool."""
+    return f"{screen_id}_{cabinet_name(col, row)}_C{charuco_id:03d}"
+
+
+def build_marker_routing(blocks: list[dict]) -> dict[int, tuple[int, int]]:
+    """Build marker_id -> (col, row). O(total markers) build, O(1) lookup.
+
+    `blocks` items carry `aruco_id_start`/`aruco_id_end` (inclusive) plus the
+    cabinet identity either as a `"cabinet": (col, row)` tuple (detect/reconstruct
+    board descriptors) or as separate `"col"`/`"row"` keys (pattern_meta blocks).
+    """
+    route: dict[int, tuple[int, int]] = {}
+    for b in blocks:
+        if "cabinet" in b:
+            col, row = b["cabinet"]
+        else:
+            col, row = b["col"], b["row"]
+        for marker_id in range(b["aruco_id_start"], b["aruco_id_end"] + 1):
+            route[marker_id] = (int(col), int(row))
+    return route
