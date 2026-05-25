@@ -1410,3 +1410,181 @@ fn visual_calibrate_intrinsics_invalid_exit_16() {
     assert_eq!(env["ok"], false);
     assert_eq!(env["error"]["code"], "intrinsics_invalid");
 }
+
+// ---------------------------------------------------------------------------
+// generate-pattern E2E (real Python sidecar). Gated on LMT_VBA_SIDECAR_PATH
+// (point it at the sidecar binary / venv console script `lmt-vba-sidecar`);
+// `#[ignore]` like the adapter real-binary tests so CI without a Python env
+// stays green. Run with: cargo test -p lmt-cli --test cli_e2e -- --ignored
+// These validate the Rust plumbing for PatternMeta v2 + --screen-mapping; the
+// per-cabinet generation/placement/coverage logic is unit-tested in the sidecar.
+// ---------------------------------------------------------------------------
+
+fn gp_sidecar() -> Option<String> {
+    std::env::var("LMT_VBA_SIDECAR_PATH").ok()
+}
+
+fn write_gp_project(dir: &Path, cols: u32, rows: u32) {
+    let yaml = format!(
+        "project: {{ name: GP, unit: mm }}
+screens:
+  MAIN:
+    cabinet_count: [{cols}, {rows}]
+    cabinet_size_mm: [500, 500]
+    pixels_per_cabinet: [540, 540]
+    shape_prior: {{ type: flat }}
+    shape_mode: rectangle
+    irregular_mask: []
+coordinate_system:
+  origin_point: MAIN_V000_R000
+  x_axis_point: MAIN_V000_R000
+  xy_plane_point: MAIN_V000_R000
+output:
+  target: neutral
+  obj_filename: \"{{screen_id}}.obj\"
+  weld_vertices_tolerance_mm: 1.0
+  triangulate: true
+"
+    );
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join("project.yaml"), yaml).unwrap();
+}
+
+fn gp_stdout_env(out: &std::process::Output) -> Value {
+    serde_json::from_str(std::str::from_utf8(&out.stdout).unwrap().trim_end())
+        .expect("stdout must be a JSON envelope")
+}
+
+fn gp_stderr_env(out: &std::process::Output) -> Value {
+    serde_json::from_str(std::str::from_utf8(&out.stderr).unwrap().trim_end())
+        .expect("stderr must be a JSON envelope")
+}
+
+/// Happy uniform path: pattern_meta.json is schema v2 with per-cabinet geometry;
+/// a 540px square cabinet reproduces the legacy 9x9 board.
+#[test]
+#[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary/wrapper"]
+fn generate_pattern_uniform_writes_v2_meta() {
+    let sidecar = match gp_sidecar() {
+        Some(s) => s,
+        None => { eprintln!("skip: LMT_VBA_SIDECAR_PATH unset"); return; }
+    };
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 1, 2);
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &sidecar)
+        .args(["--json", "visual", "generate-pattern", proj.to_str().unwrap(), "MAIN", "--yes"])
+        .assert()
+        .success();
+    let env = gp_stdout_env(assert.get_output());
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["cabinet_count"], 2);
+    let meta: Value = serde_json::from_str(
+        &std::fs::read_to_string(proj.join("patterns/MAIN/pattern_meta.json")).unwrap(),
+    ).unwrap();
+    assert_eq!(meta["schema_version"], 2);
+    assert_eq!(meta["cabinets"][0]["squares_x"], 9);
+    assert_eq!(meta["cabinets"][0]["squares_y"], 9);
+}
+
+/// Happy mapped path with UNEQUAL cabinets (Codex fix #1 regression guard at the
+/// CLI level): the two cabinets get different square counts from their own sizes.
+#[test]
+#[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary/wrapper"]
+fn generate_pattern_screen_mapping_unequal_cabinets() {
+    let sidecar = match gp_sidecar() {
+        Some(s) => s,
+        None => { eprintln!("skip: LMT_VBA_SIDECAR_PATH unset"); return; }
+    };
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 1, 2);
+    let sm = proj.join("screen_mapping.json");
+    let sm_json = serde_json::json!({
+        "screen_id": "MAIN", "expected_pattern_hash": "x",
+        "cabinets": [
+            {"cabinet_id": "V000_R000", "resolution_px": [1280, 720],
+             "active_size_mm": [400.0, 225.0], "pixel_pitch_mm": [0.3125, 0.3125],
+             "active_origin": "center", "input_rect_px": [0, 0, 1280, 720],
+             "rotation": 0, "mirror_x": false, "mirror_y": false},
+            {"cabinet_id": "V000_R001", "resolution_px": [720, 720],
+             "active_size_mm": [225.0, 225.0], "pixel_pitch_mm": [0.3125, 0.3125],
+             "active_origin": "center", "input_rect_px": [0, 760, 720, 720],
+             "rotation": 0, "mirror_x": false, "mirror_y": false}
+        ]
+    });
+    std::fs::write(&sm, serde_json::to_string(&sm_json).unwrap()).unwrap();
+    lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &sidecar)
+        .args(["--json", "visual", "generate-pattern", proj.to_str().unwrap(), "MAIN",
+               "--screen-mapping", sm.to_str().unwrap(), "--yes"])
+        .assert()
+        .success();
+    let meta: Value = serde_json::from_str(
+        &std::fs::read_to_string(proj.join("patterns/MAIN/pattern_meta.json")).unwrap(),
+    ).unwrap();
+    let by = |cr: usize| meta["cabinets"][cr].clone();
+    assert_eq!(by(0)["squares_x"], 16);  // 1280x720 wide
+    assert_eq!(by(0)["squares_y"], 9);
+    assert_eq!(by(1)["squares_x"], 9);   // 720x720 square
+    assert_eq!(by(1)["squares_y"], 9);
+}
+
+/// Over-capacity: 26 cabinets × 40 markers > 1000 → invalid_input envelope.
+#[test]
+#[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary/wrapper"]
+fn generate_pattern_over_capacity_invalid_input() {
+    let sidecar = match gp_sidecar() {
+        Some(s) => s,
+        None => { eprintln!("skip: LMT_VBA_SIDECAR_PATH unset"); return; }
+    };
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 26, 1);
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &sidecar)
+        .args(["--json", "visual", "generate-pattern", proj.to_str().unwrap(), "MAIN", "--yes"])
+        .assert()
+        .failure();
+    let env = gp_stderr_env(assert.get_output());
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "invalid_input");
+}
+
+/// Missing cabinet in screen_mapping (Codex fix #2 regression guard at the CLI
+/// level): single-source-of-truth requires exact coverage → invalid_input that
+/// names the missing cabinet.
+#[test]
+#[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary/wrapper"]
+fn generate_pattern_missing_cabinet_invalid_input() {
+    let sidecar = match gp_sidecar() {
+        Some(s) => s,
+        None => { eprintln!("skip: LMT_VBA_SIDECAR_PATH unset"); return; }
+    };
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 1, 2);  // grid needs V000_R000 AND V000_R001
+    let sm = proj.join("screen_mapping.json");
+    let sm_json = serde_json::json!({
+        "screen_id": "MAIN", "expected_pattern_hash": "x",
+        "cabinets": [
+            {"cabinet_id": "V000_R000", "resolution_px": [720, 720],
+             "active_size_mm": [225.0, 225.0], "pixel_pitch_mm": [0.3125, 0.3125],
+             "active_origin": "center", "input_rect_px": [0, 0, 720, 720],
+             "rotation": 0, "mirror_x": false, "mirror_y": false}
+        ]
+    });
+    std::fs::write(&sm, serde_json::to_string(&sm_json).unwrap()).unwrap();
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &sidecar)
+        .args(["--json", "visual", "generate-pattern", proj.to_str().unwrap(), "MAIN",
+               "--screen-mapping", sm.to_str().unwrap(), "--yes"])
+        .assert()
+        .failure();
+    let env = gp_stderr_env(assert.get_output());
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "invalid_input");
+    assert!(env["error"]["message"].as_str().unwrap().contains("V000_R001"),
+            "message should name the missing cabinet: {}", env["error"]["message"]);
+}
