@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import pytest
 
+from lmt_vba_sidecar.board_layout import choose_board_shape, markers_per_board
 from lmt_vba_sidecar.ipc import PatternMeta
 from lmt_vba_sidecar.pattern import generate_cabinet_png
 
@@ -145,15 +146,19 @@ def _build_synthetic_charuco_capture(
     cap_dir.mkdir()
 
     # --- render the two board PNGs (full active surface each) ---
+    # v2: pick the board shape exactly as production does. For the square
+    # _RES_PX=(630,630) this yields (9, 9, 70) -> 630x630 board filling the
+    # active surface, so the pitch-based local-mm matches the rendered geometry.
+    _sx, _sy, _spx = choose_board_shape(resolution_px=_RES_PX)
     board0_path = cap_dir / "board0.png"
     board1_path = cap_dir / "board1.png"
     next_id0 = generate_cabinet_png(
-        out_path=board0_path, cabinet_pixel_size=_RES_PX,
-        aruco_id_start=0, inner_corners=_INNER,
+        out_path=board0_path, aruco_id_start=0,
+        squares_x=_sx, squares_y=_sy, square_px=_spx,
     )
     next_id1 = generate_cabinet_png(
-        out_path=board1_path, cabinet_pixel_size=_RES_PX,
-        aruco_id_start=next_id0, inner_corners=_INNER,
+        out_path=board1_path, aruco_id_start=next_id0,
+        squares_x=_sx, squares_y=_sy, square_px=_spx,
     )
     board0 = cv2.imread(str(board0_path), cv2.IMREAD_GRAYSCALE)
     board1 = cv2.imread(str(board1_path), cv2.IMREAD_GRAYSCALE)
@@ -180,16 +185,23 @@ def _build_synthetic_charuco_capture(
         cv2.imwrite(str(img_path), canvas)
         views.append({"view_id": f"cam_{i:03d}", "images": [img_path.name]})
 
-    # --- pattern_meta.json ---
-    markers_each = (next_id0 - 0)  # markers per board (40 for inner=8)
+    # --- pattern_meta.json (v2: per-cabinet geometry) ---
+    assert (next_id0 - 0) == markers_per_board(_sx, _sy)  # 40 markers per 9x9 board
+    _pitch = [_ACTIVE_W_MM / _RES_PX[0], _ACTIVE_H_MM / _RES_PX[1]]
+
+    def _meta_cab(col: int, row: int, id_start: int, id_end: int) -> dict:
+        return {
+            "col": col, "row": row, "aruco_id_start": id_start, "aruco_id_end": id_end,
+            "squares_x": _sx, "squares_y": _sy, "square_px": _spx, "pixel_pitch_mm": _pitch,
+        }
+
     pattern_meta = PatternMeta.model_validate(
         {
+            "schema_version": 2,
             "aruco_dict": "DICT_6X6_1000",
-            "markers_per_cabinet": markers_each,
-            "checkerboard_inner_corners": _INNER,
             "cabinets": [
-                {"col": 0, "row": 0, "aruco_id_start": 0, "aruco_id_end": next_id0 - 1},
-                {"col": 1, "row": 0, "aruco_id_start": next_id0, "aruco_id_end": next_id1 - 1},
+                _meta_cab(0, 0, 0, next_id0 - 1),
+                _meta_cab(1, 0, next_id0, next_id1 - 1),
             ],
         }
     )

@@ -242,7 +242,9 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
         write_event(ErrorEvent(event="error", code="invalid_input", message=str(e), fatal=True))
         return 1
 
-    inner = pattern_meta.checkerboard_inner_corners
+    # Per-cabinet board shape (v2): (col,row) -> (squares_x, squares_y, square_px).
+    shape_by_cr = {(c.col, c.row): (c.squares_x, c.squares_y, c.square_px)
+                   for c in pattern_meta.cabinets}
 
     # --- 4. boards + deterministic cabinet index map ---
     present = sorted(
@@ -261,7 +263,9 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
     n_cabinets = len(present)
 
     boards = [
-        {"cabinet": (c.col, c.row), "aruco_id_start": c.aruco_id_start, "inner_corners": inner}
+        {"cabinet": (c.col, c.row),
+         "aruco_id_start": c.aruco_id_start, "aruco_id_end": c.aruco_id_end,
+         "squares_x": c.squares_x, "squares_y": c.squares_y}
         for c in pattern_meta.cabinets
     ]
 
@@ -284,8 +288,10 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
                     continue
                 cab_idx = cab_to_idx[cab_cr]
                 charuco_id = int(det["charuco_id"])
+                sx, sy, spx = shape_by_cr[cab_cr]
                 p_local = screen_mapping.charuco_corner_local_mm(
-                    _cabinet_id(*cab_cr), charuco_id, inner=inner
+                    _cabinet_id(*cab_cr), charuco_id,
+                    squares_x=sx, squares_y=sy, square_px=spx,
                 )
                 pixel = _undistort_obs(np.array(det["corner_px"], dtype=float), K, dist)
                 observations.append(Observation(
