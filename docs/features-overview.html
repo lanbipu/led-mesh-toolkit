@@ -22,6 +22,8 @@
     --warn-soft:    oklch(94% 0.045 75);
     --off:          oklch(58% 0.006 70);
     --off-soft:     oklch(93% 0.005 70);
+    --info:         oklch(50% 0.13 255);
+    --info-soft:    oklch(94% 0.04 255);
 
     --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Source Han Sans SC",
             "Noto Sans CJK SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
@@ -123,6 +125,7 @@
   .dot-ok   { background: var(--ok); }
   .dot-warn { background: var(--warn); }
   .dot-off  { background: var(--off); }
+  .dot-cli  { background: var(--info); }
 
   /* —— sections —— */
   section.feature {
@@ -268,6 +271,7 @@
   .status-ok   { background: var(--ok-soft);   border-color: oklch(82% 0.06 145); }
   .status-warn { background: var(--warn-soft); border-color: oklch(85% 0.07 75); }
   .status-off  { background: var(--off-soft);  border-color: var(--rule-strong); color: var(--ink-soft); }
+  .status-cli  { background: var(--info-soft); border-color: oklch(82% 0.07 255); }
 
   /* —— caveats —— */
   .caveats {
@@ -498,7 +502,7 @@
     <h1 class="title">用户能做的 <em>七件事</em></h1>
 
     <p class="lead">
-      这是一套给现实 LED 大屏建三维几何模型的工具。拍方位、量坐标，反算出 mesh，导出成 Disguise 或 Unreal 等软件能直接用的 OBJ。下面按"我能干啥"列功能。状态色代表 GUI/CLI 实际能不能用——绿圆是两边都通，琥珀圆只有 GUI 能跑，灰圆是路由占位但还没实装。
+      这是一套给现实 LED 大屏建三维几何模型的工具。拍方位、量坐标，反算出 mesh，导出成 Disguise 或 Unreal 等软件能直接用的 OBJ。坐标怎么来有<strong>两条采集线</strong>：架全站仪一个个打点（<strong>分支一</strong>），或者拿普通相机拍 ChArUco 图案反算（<strong>分支二，零全站仪</strong>）。下面按"我能干啥"列功能。状态色代表 GUI/CLI 实际能不能用——绿圆两边都通，琥珀圆只有 GUI，蓝圆 CLI 已实装但 GUI 推迟，灰圆是路由占位还没实装。
     </p>
 
     <!-- 真·几何签名:8×4 curved arc,基于 examples/curved-flat 的几何参数算出 -->
@@ -661,6 +665,7 @@
     <div class="legend">
       <span class="legend-item"><span class="dot dot-ok"></span>GUI + CLI 全覆盖</span>
       <span class="legend-item"><span class="dot dot-warn"></span>仅 GUI(技术原因)</span>
+      <span class="legend-item"><span class="dot dot-cli"></span>CLI 实装 · GUI 推迟</span>
       <span class="legend-item"><span class="dot dot-off"></span>未实装 / 占位</span>
     </div>
   </header>
@@ -865,13 +870,138 @@ SCREEN=main                     # 换成你的 screen id</code>
 
 
   <!-- ============================== -->
+  <!-- flow map · 分支二:相机视觉测量(零全站仪) -->
+  <section class="flowmap" aria-labelledby="fm2-heading">
+    <div class="fm-head">
+      <div class="heading">
+        <h3 id="fm2-heading">分支二 · 相机视觉测量 <span class="feature-en">Camera visual · zero total station</span></h3>
+        <p>不想架全站仪?拿一台普通相机拍屏上显示的 ChArUco 图案,就能反算出每块 cabinet 的位置和朝向。<strong>全程不用全站仪</strong>——产出的 <code>measured.yaml</code> 照样喂给 ⑤ 几何重建。</p>
+      </div>
+      <span class="cross-note">替代 <strong>①④</strong> 的采集环节,结果接回 <strong>⑤</strong>;目前 <strong>CLI 优先</strong>,GUI 视图推迟。</span>
+    </div>
+    <div class="fm-track">
+      <div class="fm-stage is-root">
+        <div class="fm-rail"><div class="fm-node fm-node-root">视觉</div></div>
+        <div class="fm-card fm-card-root">
+          <div class="fm-card-head"><h4>为什么相机也能算出真实尺寸</h4><span class="feature-en">Model-constrained BA</span></div>
+          <p class="fm-gist">关键在 <strong>model-constrained BA</strong>:把每块箱体当一块刚性平面板,板上每个 ChArUco 角点该在哪(物理 mm)<strong>一开始就知道</strong>——因为图案是工具生成、显示在已知像素间距的屏上,所以<strong>屏自己就是尺子</strong>,尺度无需全站仪。算法解的是"每块板摆在哪、每张照片从哪拍"。</p>
+          <ul class="capabilities">
+            <li>输出和分支一一致的 <code>measured.yaml</code>(发光面中心,喂回 ⑤)</li>
+            <li>外加 <code>cabinet_pose_report.json</code>:每箱体位姿 / 法向 / 四角 / 重投影 RMS / 质量标记</li>
+            <li>合成台实测:nominal 档距离误差 ~0.06mm、夹角 ~0.01°(隔离 BA 数学)</li>
+          </ul>
+        </div>
+      </div>
+      <div class="fm-stage">
+        <div class="fm-rail"><div class="fm-node">A</div></div>
+        <div class="fm-card">
+          <div class="fm-card-head">
+            <h4>相机标定</h4>
+            <span class="feature-en">Camera calibration</span>
+            <span class="status status-cli"><span class="dot dot-cli"></span>CLI 实装 · GUI 推迟</span>
+          </div>
+          <p class="fm-gist">先拍一组棋盘格,标出这台相机的内参(焦距、主点、畸变)。门槛收得很紧:<strong>重投影 RMS &lt; 0.5px</strong> + 角点要铺满画面,不达标直接拒,免得带病标定污染后面所有重建。</p>
+          <ul class="capabilities">
+            <li>棋盘格图像集 → <code>intrinsics.json</code></li>
+            <li>RMS &lt; 0.5px 门槛 + 角点覆盖跨度检查</li>
+            <li>必须和后续拍摄同镜头、同焦距、同分辨率</li>
+          </ul>
+          <div class="fm-cli">
+            <p class="fm-cli-label">CLI · 复制即用</p>
+            <div class="fm-cmds">
+          <div class="cmd-row"><p class="cmd-note">棋盘格 → 相机内参(destructive)</p><code>$LMT visual calibrate "$PROJECT" "$SCREEN" ./checkerboard --inner 9x9 --square-mm 20 --yes</code></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="fm-stage">
+        <div class="fm-rail"><div class="fm-node">B</div></div>
+        <div class="fm-card">
+          <div class="fm-card-head">
+            <h4>生成 ChArUco 图案</h4>
+            <span class="feature-en">Pattern generation</span>
+            <span class="status status-cli"><span class="dot dot-cli"></span>CLI 实装 · GUI 推迟</span>
+          </div>
+          <p class="fm-gist">给每块 cabinet 生成一张独立的 ChArUco 板(棋盘格 + ArUco 标记),显示到屏上当标定物。每个角点的 ArUco ID 一查就知道是<strong>哪块板的第几个角</strong>。</p>
+          <ul class="capabilities">
+            <li>每 cabinet 一张 PNG + 拼好的 <code>full_screen.png</code> + <code>pattern_meta.json</code></li>
+            <li>marker ID 分段,角点物理 mm 由 <code>screen_mapping</code> 提供</li>
+            <li>显示器测试:ChArUco 放<strong>方形子区域</strong>(非方形会破坏 mm 约定)</li>
+          </ul>
+          <div class="fm-cli">
+            <p class="fm-cli-label">CLI · 复制即用</p>
+            <div class="fm-cmds">
+          <div class="cmd-row"><p class="cmd-note">生成 ChArUco pattern 三件套(destructive)</p><code>$LMT visual generate-pattern "$PROJECT" "$SCREEN" --method charuco --yes</code></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="fm-stage is-core">
+        <div class="fm-rail"><div class="fm-node">C</div></div>
+        <div class="fm-card">
+          <div class="fm-card-head">
+            <h4>视觉反算</h4>
+            <span class="feature-en">Model-constrained reconstruct</span>
+            <span class="status status-cli"><span class="dot dot-cli"></span>CLI 实装 · GUI 推迟</span>
+          </div>
+          <p class="fm-gist">分支二的核心。多机位照片(打包成 capture manifest)→ 检测每块板的 ChArUco 角点 → 喂 model-constrained BA → 解出每块 cabinet 的三维位姿。<strong>根箱体固定为坐标原点(gauge fix),尺度来自屏的已知像素间距,全程零全站仪。</strong></p>
+          <ul class="capabilities">
+            <li>输入 <code>--capture-manifest</code>(多视角图 + 标定 + pattern_meta + screen_mapping)</li>
+            <li>可观测性硬门:每箱体 ≥2 视角、观测图必须连通,否则报错</li>
+            <li>产出 <code>measured.yaml</code> + <code>cabinet_pose_report.json</code></li>
+            <li>per-cabinet 质量标:观测不足 / 残差过大 / ok,附 warning</li>
+          </ul>
+          <div class="fm-cli">
+            <p class="fm-cli-label">CLI · 复制即用</p>
+            <div class="fm-cmds">
+          <div class="cmd-row"><p class="cmd-note">先预演,确认 manifest / 内参 / pattern 都齐</p><code>$LMT visual reconstruct "$PROJECT" "$SCREEN" --capture-manifest capture.json --dry-run</code></div>
+          <div class="cmd-row"><p class="cmd-note">正式反算(destructive,写 measured.yaml + pose report)</p><code>$LMT visual reconstruct "$PROJECT" "$SCREEN" --capture-manifest capture.json --yes</code></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="fm-stage">
+        <div class="fm-rail"><div class="fm-node">D</div></div>
+        <div class="fm-card">
+          <div class="fm-card-head">
+            <h4>精度验证</h4>
+            <span class="feature-en">Validation · synthetic + monitor bench</span>
+            <span class="status status-cli"><span class="dot dot-cli"></span>CLI 实装 · GUI 推迟</span>
+          </div>
+          <p class="fm-gist">怎么证明它准?两层都不用全站仪:<strong>合成台</strong>——电脑里造假屏、假拍照、对答案(验算法数学);<strong>真实显示器台架</strong>——拿两台已知尺寸的显示器实拍,看算出的尺寸 / 间距 / 夹角对不对(验现实)。</p>
+          <ul class="capabilities">
+            <li><code>simulate</code>:生成带噪合成数据集(真值箱体 / 相机位姿)</li>
+            <li><code>eval</code>:跑方法 vs 真值,出 gauge-invariant 指标(尺寸 / 距离 / 夹角)</li>
+            <li><code>compare-known</code>:重建结果 vs 实测显示器几何,逐项 pass / fail</li>
+          </ul>
+          <div class="fm-cli">
+            <p class="fm-cli-label">CLI · 复制即用</p>
+            <div class="fm-cmds">
+          <div class="cmd-row"><p class="cmd-note">生成合成数据集(destructive)</p><code>$LMT visual simulate sim_config.json --out ./synthetic --yes</code></div>
+          <div class="cmd-row"><p class="cmd-note">合成台:方法 vs 真值(write_safe,不需要 --yes)</p><code>$LMT visual eval --dataset ./synthetic --method charuco</code></div>
+          <div class="cmd-row"><p class="cmd-note">显示器台架:重建 vs 实测几何(write_safe)</p><code>$LMT visual compare-known cabinet_pose_report.json known_geometry.json</code></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ============================== -->
   <section class="caveats">
-    <h3>路由已占位，但暂未实装</h3>
+    <h3>已实装的边界 · 待办</h3>
     <div class="caveats-grid">
       <div class="caveat-item">
-        <h4>M2 · 视觉反算 <span class="status status-off"><span class="dot dot-off"></span>BLOCKED ON POC</span></h4>
+        <h4>相机视觉分支的 GUI 视图 <span class="status status-cli"><span class="dot dot-cli"></span>CLI 优先</span></h4>
         <p>
-          用手机 / 相机拍 ChArUco 标记，反算顶点位置——设备要求比全站仪低很多。GUI 里 <code>Method / Charuco / Photoplan</code> 三个路由已建好，但 Part B 被现场 PoC 卡住。完成时间未定，M1（全站仪）够用之前不急。
+          分支二的六个 <code>visual</code> 操作目前<strong>只走 CLI</strong>(calibrate / generate-pattern / reconstruct / simulate / eval / compare-known),Tauri GUI 视图按计划推迟——服务层 helper 已备好,后续接 GUI 直接复用。
+        </p>
+      </div>
+      <div class="caveat-item">
+        <h4>两显示器台架待线下实拍 <span class="status status-off"><span class="dot dot-off"></span>NEEDS CAPTURE</span></h4>
+        <p>
+          算法已在<strong>合成台</strong>验证(0.06mm 级),工具链全就绪。两台已知尺寸显示器的<strong>现实验证</strong>需用户线下实拍(协议见 <code>docs/poc/monitor-bench-report-template.md</code>)。真实 LED 的 bloom / 摩尔纹 / 远距离要等真 LED 测试才覆盖。
         </p>
       </div>
       <div class="caveat-item">
@@ -887,7 +1017,7 @@ SCREEN=main                     # 换成你的 screen id</code>
   <footer class="meta">
     <div>
       <strong>来源</strong><br>
-      项目源码 / <code>docs/agents-cli.md</code> / GUI 视图与导航文案
+      项目源码 / <code>docs/agents-cli.md</code> / <code>docs/contract-manifest.json</code> / 相机分支 spec + plan / GUI 视图与导航文案
     </div>
     <div>
       <strong>自检命令</strong><br>
