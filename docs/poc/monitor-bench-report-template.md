@@ -165,10 +165,20 @@ lmt --yes visual reconstruct /path/to/project BENCH \
 1. **生成 pattern**（在 project 目录内）：
 
    ```bash
-   lmt --yes visual generate-pattern /path/to/project BENCH --method charuco
+   lmt --yes visual generate-pattern /path/to/project BENCH --method charuco \
+       --screen-mapping screen_mapping.json
    ```
 
-   产物：`patterns/BENCH/cabinets/V000_R000.png`、`V000_R001.png`、`full_screen.png`、`pattern_meta.json`。
+   产物：`patterns/BENCH/cabinets/V000_R000.png`、`V000_R001.png`、`full_screen.png`、`pattern_meta.json`（schema v2）。
+
+   > **`--screen-mapping` 是这个台子的关键**：两台显示器尺寸不同，必须先按 §1.2 把
+   > 每台的 `resolution_px` / `active_size_mm` / `pixel_pitch_mm` / `input_rect_px`
+   > 填进 `screen_mapping.json`，再生成。生成器据此为**每个箱体按其自身点间距/尺寸**
+   > 出专属棋盘（支持非正方形、不等尺寸),并把每块棋盘贴到它的 `input_rect_px`
+   > 位置。`screen_mapping.json` 必须**恰好**覆盖网格里的每个箱体,缺/多/拼错都会
+   > 报 `invalid_input`。**注意:改了 pattern 后 `pattern_meta` 变了 → pattern hash
+   > 也变了,必须按 §3 重新获取并回填 `expected_pattern_hash`,否则 reconstruct 会
+   > 报 hash mismatch。**
 
 2. **显示 pattern**：把 `V000_R000.png` 全屏（或在正方形区域 1:1）显示在显示器 A；把 `V000_R001.png` 显示在显示器 B。**两台同时显示**。
 
@@ -256,8 +266,10 @@ lmt --yes visual reconstruct /path/to/project BENCH \
 ```bash
 PROJECT=/path/to/your/project
 
-# 步骤 1：生成 pattern（如已生成可跳过）
-lmt --yes visual generate-pattern $PROJECT BENCH --method charuco
+# 步骤 1：生成 pattern（如已生成可跳过）。--screen-mapping 必带：按每台显示器
+# 自身尺寸/点间距出专属棋盘（见 §4.1），生成后记得按 §3 刷新 expected_pattern_hash。
+lmt --yes visual generate-pattern $PROJECT BENCH --method charuco \
+    --screen-mapping $PROJECT/screen_mapping.json
 
 # 步骤 2：标定（如已有 intrinsics.json 可跳过）
 lmt --yes visual calibrate $PROJECT BENCH \
