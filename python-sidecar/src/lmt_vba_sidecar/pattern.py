@@ -30,42 +30,36 @@ from lmt_vba_sidecar.ipc import (
 DEFAULT_ARUCO_DICT = "DICT_6X6_1000"
 DEFAULT_INNER_CORNERS = 8  # 8×8 inner corners → 9×9 squares (per spec §5.2)
 ABSENT_CELL_FILL = 255  # white block for missing cabinets
+ARUCO_DICT_CAPACITY = 1000  # DICT_6X6_1000 has 1000 markers
 
 
 def _aruco_dict():
     return cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, DEFAULT_ARUCO_DICT))
 
 
-def _markers_per_board(inner_corners: int) -> int:
-    """Number of markers a CharucoBoard places on a (n+1)×(n+1) square grid.
-
-    Markers fill alternating squares in a checkerboard pattern; for an
-    (n+1)×(n+1) grid that is `((n+1)*(n+1)) // 2` markers.
-    """
-    squares = inner_corners + 1
-    return (squares * squares) // 2
-
-
 def generate_cabinet_png(
     *,
     out_path: pathlib.Path,
-    cabinet_pixel_size: tuple[int, int],
     aruco_id_start: int,
+    squares_x: int,
+    squares_y: int,
+    square_px: int,
     aruco_dict_name: str = DEFAULT_ARUCO_DICT,
-    inner_corners: int = DEFAULT_INNER_CORNERS,
 ) -> int:
-    """Render one cabinet's ChArUco PNG.
+    """Render one cabinet's ChArUco PNG at exact integer square pixels.
 
-    Returns the next free ArUco ID (caller assigns ranges sequentially).
+    Canvas = (squares_x*square_px, squares_y*square_px); cells stay square.
+    Returns the next free ArUco ID (caller assigns blocks sequentially).
     """
     if aruco_dict_name != DEFAULT_ARUCO_DICT:
-        raise ValueError(f"only {DEFAULT_ARUCO_DICT} supported in M2")
+        raise ValueError(f"only {DEFAULT_ARUCO_DICT} supported")
+    from lmt_vba_sidecar.board_layout import markers_per_board
     aruco_dict = _aruco_dict()
-    n_markers = _markers_per_board(inner_corners)
-    if aruco_id_start + n_markers > 1000:
+    n_markers = markers_per_board(squares_x, squares_y)
+    if aruco_id_start + n_markers > ARUCO_DICT_CAPACITY:
         raise ValueError(
             f"ArUco ID range {aruco_id_start}..{aruco_id_start + n_markers} "
-            f"overflows {DEFAULT_ARUCO_DICT} (1000 markers); too many cabinets"
+            f"overflows {DEFAULT_ARUCO_DICT} ({ARUCO_DICT_CAPACITY} markers)"
         )
 
     # Slice the dictionary's bytesList so per-cabinet IDs occupy a contiguous
@@ -74,14 +68,16 @@ def generate_cabinet_png(
         aruco_dict.bytesList[aruco_id_start:aruco_id_start + n_markers],
         aruco_dict.markerSize,
     )
-
     board = cv2.aruco.CharucoBoard(
-        size=(inner_corners + 1, inner_corners + 1),
+        size=(squares_x, squares_y),
         squareLength=1.0,
         markerLength=0.7,
         dictionary=sub_dict,
     )
-    img = board.generateImage(cabinet_pixel_size, marginSize=0, borderBits=1)
+    img = board.generateImage(
+        (squares_x * square_px, squares_y * square_px),
+        marginSize=0, borderBits=1,
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(out_path), img)
     return aruco_id_start + n_markers
