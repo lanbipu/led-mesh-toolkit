@@ -138,6 +138,9 @@ class GeneratePatternInput(BaseModel):
     project: GeneratePatternProject
     output_dir: str
     screen_resolution: PositiveIntPair
+    # When set, per-cabinet board geometry (size/pitch) is read from this
+    # screen_mapping.json; when None, uniform grid generation is used.
+    screen_mapping_path: str | None = None
 
 
 class Uncertainty(BaseModel):
