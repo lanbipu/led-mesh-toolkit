@@ -7,21 +7,20 @@ physical size.  This module:
   - converts charuco_id → local mm (active-surface-center origin, flat z=0),
   - runs a preflight hash/format check before reconstruct.
 
-Physical ChArUco convention
----------------------------
-pattern.py builds CharucoBoard(size=(inner+1, inner+1)), so each square side is:
-    squareLength = active_size / (inner + 1)
+Physical ChArUco convention (pitch-based, pattern_meta v2)
+----------------------------------------------------------
+pattern.py builds CharucoBoard(size=(squares_x, squares_y)) rendered at an integer
+`square_px` per cell (possibly non-square: squares_x != squares_y). Inner corner
+(r, c) — with r, c = divmod(charuco_id, squares_x - 1) — sits at board-pixel
+((c+1)*square_px, (r+1)*square_px). With a center origin and the cabinet's own
+pixel pitch the signed mm coordinate is:
 
-Inner corner k (0-based) sits at distance (k+1)*squareLength from the active-area
-edge.  With a center origin the signed coordinate is:
+    x = ((c + 1) * square_px - (squares_x * square_px) / 2) * pitch_x
+    y = ((r + 1) * square_px - (squares_y * square_px) / 2) * pitch_y
 
-    x = active_w * ((c + 1) / (inner + 1) - 0.5)
-    y = active_h * ((r + 1) / (inner + 1) - 0.5)
-
-where  r, c = divmod(charuco_id, inner).
-
-DO NOT use an (inner-1) divisor — that would span edge-to-edge and introduce a
-~29 % scale error that would corrupt BA metric scale.
+This uses the cabinet's measured pixel pitch directly, so mm is exact for any
+per-cabinet size/pitch and any non-square board. (The pre-v2 formula
+`active_size / (inner + 1)` assumed a single square `inner` and is obsolete.)
 """
 from __future__ import annotations
 
@@ -113,26 +112,25 @@ class ScreenMapping(BaseModel):
         self,
         cabinet_id: str,
         charuco_id: int,
-        inner: int = 8,
+        *,
+        squares_x: int,
+        squares_y: int,
+        square_px: int,
     ) -> np.ndarray:
-        """
-        Return the local-mm coordinate of a ChArUco inner corner as [x, y, 0].
+        """Local-mm of a ChArUco inner corner [x, y, 0], pitch-based.
 
-        The origin is the center of the cabinet's active area.  Positive x is
-        right, positive y is down (matches image convention).
+        Origin = board center. +x right, +y down (image convention). Uses the
+        cabinet's own pixel pitch so coordinates are exact for any per-cabinet
+        size/pitch and any non-square (squares_x != squares_y) board.
 
         Parameters
         ----------
         cabinet_id : str
-        charuco_id : int   0-based index into the charuco inner corner list
-        inner      : int   number of inner corners per side (default 8 for a 9x9
-                           square board).
-                           Callers should always pass `inner` explicitly (from
-                           `pattern_meta.checkerboard_inner_corners`). The
-                           default=8 is a convenience for the monitor-bench
-                           fixture only — a wrong `inner` produces wrong mm
-                           coordinates (a scale bug, same class as the
-                           module-level warning above).
+        charuco_id : int   0-based ChArUco inner-corner index (L-R, T-B)
+        squares_x / squares_y / square_px : int
+            The cabinet's board geometry from `pattern_meta` (v2). The board is
+            squares_x x squares_y cells, each square_px pixels; inner corners per
+            row = squares_x - 1.
 
         Raises
         ------
@@ -153,21 +151,21 @@ class ScreenMapping(BaseModel):
                 "MVP/monitor-bench requires rotation=0 and no mirror."
             )
 
-        active_w, active_h = cab.active_size_mm  # [width_mm, height_mm]
-
-        # Decompose charuco_id into (row, col) within the inner-corner grid.
+        pitch_x, pitch_y = cab.pixel_pitch_mm
+        inner_x = squares_x - 1             # inner corners per row
         # ChArUco numbers corners left-to-right, top-to-bottom.
-        r, c = divmod(charuco_id, inner)
+        r, c = divmod(charuco_id, inner_x)
 
-        # Physical ChArUco spacing: board has (inner+1) squares per side.
-        #   squareLength = active_w / (inner + 1)
-        # Corner (r, c) is at position (c+1)*squareLength from the left edge,
-        # (r+1)*squareLength from the top edge.  Subtract half active size to
-        # move from edge-origin to center-origin.
-        x = active_w * ((c + 1) / (inner + 1) - 0.5)
-        y = active_h * ((r + 1) / (inner + 1) - 0.5)
-
-        return np.array([x, y, 0.0], dtype=float)
+        # Corner (r, c) sits at board-pixel ((c+1)*square_px, (r+1)*square_px).
+        # Subtract half the board pixel size to move from edge-origin to center,
+        # then scale by the cabinet's own pixel pitch -> exact mm.
+        board_w_px = squares_x * square_px
+        board_h_px = squares_y * square_px
+        x_px = (c + 1) * square_px
+        y_px = (r + 1) * square_px
+        x_mm = (x_px - board_w_px / 2.0) * pitch_x
+        y_mm = (y_px - board_h_px / 2.0) * pitch_y
+        return np.array([x_mm, y_mm, 0.0], dtype=float)
 
     # ------------------------------------------------------------------
     # Preflight check
