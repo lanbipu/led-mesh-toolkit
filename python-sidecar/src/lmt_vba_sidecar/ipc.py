@@ -74,12 +74,29 @@ class PatternMetaCabinet(BaseModel):
     row: int
     aruco_id_start: int
     aruco_id_end: int
+    # v2: per-cabinet board geometry (pitch-matched generation)
+    squares_x: int = Field(ge=2)
+    squares_y: int = Field(ge=2)
+    square_px: int = Field(gt=0)
+    pixel_pitch_mm: PositiveSizePair  # [pitch_x, pitch_y]
+
+    @property
+    def markers(self) -> int:
+        """Markers this board consumes (alternating cells of squares_x×squares_y)."""
+        return (self.squares_x * self.squares_y) // 2
+
+    @property
+    def inner_x(self) -> int:
+        return self.squares_x - 1
+
+    @property
+    def inner_y(self) -> int:
+        return self.squares_y - 1
 
 
 class PatternMeta(BaseModel):
+    schema_version: Literal[2]
     aruco_dict: str
-    markers_per_cabinet: int
-    checkerboard_inner_corners: int
     cabinets: list[PatternMetaCabinet]
 
 
