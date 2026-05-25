@@ -161,6 +161,9 @@ pub fn run_reconstruct(
     // If a previous measured.yaml exists, rename it to .bak (overwriting any prior
     // .bak), so we can restore it if the new write fails.
     let did_backup = if measured_yaml_path.exists() {
+        // Remove any prior .bak first: std::fs::rename fails on Windows when the
+        // destination exists (POSIX silently overwrites). Matches the comment's intent.
+        let _ = std::fs::remove_file(&backup_path);
         std::fs::rename(&measured_yaml_path, &backup_path)?;
         true
     } else {

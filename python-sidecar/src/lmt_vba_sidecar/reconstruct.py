@@ -314,7 +314,11 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
     # --- 7. init ---
     write_event(ProgressEvent(event="progress", stage="bundle_adjustment", percent=0.5, message="initializing"))
     # Cabinet nominal world (model) positions, mm, with root re-centered to origin.
-    nominal_m = nominal_cabinet_centers_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
+    try:
+        nominal_m = nominal_cabinet_centers_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
+    except ValueError as e:
+        write_event(ErrorEvent(event="error", code="invalid_input", message=str(e), fatal=True))
+        return 1
     if ROOT_CABINET not in nominal_m:
         write_event(ErrorEvent(
             event="error", code="invalid_input",
@@ -477,18 +481,21 @@ def _pnp_camera(
         if pose is not None:
             return pose
 
-    # Fall back to any other cabinet this view sees, composing with its nominal
-    # world pose (R_cab_world, t_cab_world): T_cam_world = T_cam_cab @ T_cab_world.
+    # Fall back to any other cabinet this view sees, composing with the inverse
+    # of its nominal world_from_cabinet pose: T_cam_world = T_cam_cab @ T_cab_world,
+    # where T_cab_world = inverse(world_from_cabinet).
     for (ci, cab_idx), corners in per_view_cab_corners.items():
         if ci != cam_idx or cab_idx == root_idx or len(corners) < MIN_PNP_CORNERS:
             continue
         cam_from_cab = solve(corners)
         if cam_from_cab is None:
             continue
-        Rcc, tcc = cam_from_cab
-        Rcw, tcw = init_cabinets[cab_idx]  # cabinet_from_world (nominal)
-        R = Rcc @ Rcw
-        t = Rcc @ tcw + tcc
+        Rcc, tcc = cam_from_cab  # camera_from_cabinet: x_cam = Rcc·p_local + tcc
+        # init_cabinets stores world_from_cabinet (BA: xw = R_wc·p_local + t_wc).
+        # camera_from_world = camera_from_cabinet ∘ inverse(world_from_cabinet).
+        R_wc, t_wc = init_cabinets[cab_idx]  # world_from_cabinet (nominal)
+        R = Rcc @ R_wc.T
+        t = tcc - R @ t_wc
         return R, t
 
     # Neutral fallback: identity rotation, pushed back along +z.

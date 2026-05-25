@@ -14,10 +14,15 @@ import pathlib
 import numpy as np
 
 from lmt_vba_sidecar.ipc import ReconstructInput
-from lmt_vba_sidecar.reconstruct import _classify_cabinet_quality, run_reconstruct
+from lmt_vba_sidecar.reconstruct import (
+    MIN_PNP_CORNERS,
+    _classify_cabinet_quality,
+    _pnp_camera,
+    run_reconstruct,
+)
 
 
-def _build_input(paths: dict) -> ReconstructInput:
+def _build_input(paths: dict, shape_prior="flat") -> ReconstructInput:
     return ReconstructInput.model_validate(
         {
             "command": "reconstruct",
@@ -32,7 +37,7 @@ def _build_input(paths: dict) -> ReconstructInput:
                 # fill its canvas with no letterbox to keep the local-mm chain
                 # exact). BA still recovers the true 700mm / 10deg regardless.
                 "cabinet_array": {"cols": 2, "rows": 1, "cabinet_size_mm": [600, 340]},
-                "shape_prior": "flat",
+                "shape_prior": shape_prior,
             },
             "capture_manifest_path": paths["capture"],
             "screen_mapping_path": paths["screen_mapping"],
@@ -179,5 +184,90 @@ def test_reconstruct_structured_light_method_rejected(synthetic_charuco_capture)
         rc = run_reconstruct(inp)
     assert rc == 1
     last = json.loads([ln for ln in buf.getvalue().splitlines() if ln.strip()][-1])
+    assert last["event"] == "error"
+    assert last["code"] == "invalid_input"
+
+
+def test_pnp_camera_fallback_recovers_world_pose():
+    """Unit test for the non-root PnP fallback frame composition (no rendering).
+
+    init_cabinets stores world_from_cabinet (BA: xw = R_wc·p_local + t_wc).
+    solvePnP returns camera_from_cabinet (Rcc, tcc): x_cam = Rcc·p_local + tcc.
+    The camera init must be camera_from_world: x_cam = R·x_world + t. So the
+    correct composition is camera_from_world = camera_from_cabinet ∘
+    inverse(world_from_cabinet): R = Rcc·R_wc^T, t = tcc − R·t_wc.
+
+    The old buggy composition (R = Rcc·R_wc; t = Rcc·t_wc + tcc) shifts the
+    translation seed by ~2·R_cam·t_wc when the camera is rotated, so the
+    recovered t is off by far more than 1 mm.
+    """
+    import cv2
+
+    # Known camera world pose (camera_from_world): x_cam = R_cam·x_world + t_cam.
+    rvec_cam = np.array([0.05, -0.08, 0.03], dtype=float)
+    R_cam, _ = cv2.Rodrigues(rvec_cam)
+    t_cam = np.array([50.0, -20.0, 2500.0], dtype=float)
+
+    # Non-root cabinet (idx 1) world pose (world_from_cabinet): identity
+    # rotation + nominal offset, matching init_cabinets non-root entries.
+    t_wc = np.array([700.0, 0.0, 0.0], dtype=float)
+
+    # A grid of local-mm corners spanning ±300 x ±170 (>= MIN_PNP_CORNERS).
+    p_locals = [
+        np.array([x, y, 0.0], dtype=float)
+        for x in (-300.0, 300.0)
+        for y in (-170.0, 170.0)
+    ] + [
+        np.array([x, y, 0.0], dtype=float)
+        for x in (-150.0, 150.0)
+        for y in (-85.0, 85.0)
+    ]
+    assert len(p_locals) >= MIN_PNP_CORNERS
+
+    K = np.array(
+        [[1800.0, 0.0, 960.0], [0.0, 1800.0, 540.0], [0.0, 0.0, 1.0]], dtype=float
+    )
+
+    corners = []
+    for p_local in p_locals:
+        xw = p_local + t_wc            # world_from_cabinet (identity R)
+        xc = R_cam @ xw + t_cam        # camera_from_world
+        proj = K @ xc
+        px = proj[:2] / proj[2]
+        corners.append((p_local, px))
+
+    # NO (0, root_idx) entry -> forces the fallback branch.
+    per_view_cab_corners = {(0, 1): corners}
+    init_cabinets = {
+        0: (np.eye(3), np.zeros(3)),
+        1: (np.eye(3), t_wc),
+    }
+
+    R, t = _pnp_camera(
+        cam_idx=0,
+        root_idx=0,
+        init_cabinets=init_cabinets,
+        per_view_cab_corners=per_view_cab_corners,
+        K=K,
+    )
+
+    assert np.allclose(R, R_cam, atol=1e-4)
+    assert np.linalg.norm(t - t_cam) < 1.0
+
+
+def test_reconstruct_folded_shape_prior_is_invalid_input(
+    synthetic_charuco_capture, capsys,
+):
+    """An unsupported (folded) shape_prior reaches nominal_cabinet_centers_model_frame
+    after detection + observability pass, where it raises ValueError. That must
+    surface as the invalid_input envelope, NOT an internal_error traceback."""
+    paths = synthetic_charuco_capture
+    inp = _build_input(paths, shape_prior={"folded": {"fold_seam_columns": [1]}})
+    rc = run_reconstruct(inp)
+    assert rc == 1
+
+    last = json.loads(
+        [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()][-1]
+    )
     assert last["event"] == "error"
     assert last["code"] == "invalid_input"
