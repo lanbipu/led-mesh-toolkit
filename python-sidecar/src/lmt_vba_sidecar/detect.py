@@ -77,6 +77,17 @@ def detect_charuco_corners(
     if not boards:
         return {path: [] for path in image_paths}
 
+    # interpolateCornersCharuco is the legacy (deprecated) aruco API. It is
+    # present through OpenCV 4.x but could be dropped in a future build the pin
+    # (opencv-contrib-python>=4.8,<5.0) allows. Fail with an actionable message
+    # rather than a cryptic AttributeError mid-detection.
+    if not hasattr(cv2.aruco, "interpolateCornersCharuco"):
+        raise RuntimeError(
+            f"cv2.aruco.interpolateCornersCharuco is unavailable in OpenCV "
+            f"{cv2.__version__}; per-cabinet ChArUco interpolation requires it. "
+            f"Pin opencv-contrib-python to a version that provides it (e.g. 4.11.x)."
+        )
+
     routing = build_marker_routing(boards)  # global marker_id -> (col, row)
     # Per cabinet: a local board + the global id offset (to localize marker ids).
     cab_board: dict[tuple, dict] = {}

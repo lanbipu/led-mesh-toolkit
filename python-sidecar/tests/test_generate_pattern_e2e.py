@@ -86,3 +86,46 @@ def test_screen_mapping_missing_cabinet_is_invalid_input(tmp_path: pathlib.Path,
     err = cap.out + cap.err
     assert "invalid_input" in err and "V000_R001" in err
     assert not out.exists()  # nothing published on failure
+
+
+def test_screen_mapping_overlapping_rects_is_invalid_input(tmp_path: pathlib.Path, capsys):
+    out = tmp_path / "patterns" / "BENCH"
+    sm = tmp_path / "screen_mapping.json"
+    # Two cabinets whose input_rect_px overlap in y (0..720 vs 360..1080).
+    _write_screen_mapping(sm, [
+        ("V000_R000", [720, 720], [225.0, 225.0], [0.3125, 0.3125], [0, 0, 720, 720]),
+        ("V000_R001", [720, 720], [225.0, 225.0], [0.3125, 0.3125], [0, 360, 720, 720]),
+    ])
+    cmd = GeneratePatternInput.model_validate({
+        "command": "generate_pattern", "version": 1,
+        "project": {"screen_id": "BENCH",
+                    "cabinet_array": {"cols": 1, "rows": 2, "cabinet_size_mm": [225.0, 225.0]}},
+        "output_dir": str(out), "screen_resolution": [720, 1080],
+        "screen_mapping_path": str(sm),
+    })
+    assert run_generate_pattern(cmd) == 1
+    cap = capsys.readouterr()
+    err = cap.out + cap.err
+    assert "invalid_input" in err and "overlapping" in err
+    assert not out.exists()
+
+
+def test_screen_mapping_scale_inconsistency_is_invalid_input(tmp_path: pathlib.Path, capsys):
+    out = tmp_path / "patterns" / "BENCH"
+    sm = tmp_path / "screen_mapping.json"
+    # 1080 * 0.2778 = 300.02mm, but active_size_mm says 320 (>6% off) -> rejected.
+    _write_screen_mapping(sm, [
+        ("V000_R000", [1080, 1080], [320.0, 320.0], [0.2778, 0.2778], [0, 0, 1080, 1080]),
+    ])
+    cmd = GeneratePatternInput.model_validate({
+        "command": "generate_pattern", "version": 1,
+        "project": {"screen_id": "BENCH",
+                    "cabinet_array": {"cols": 1, "rows": 1, "cabinet_size_mm": [320.0, 320.0]}},
+        "output_dir": str(out), "screen_resolution": [1080, 1080],
+        "screen_mapping_path": str(sm),
+    })
+    assert run_generate_pattern(cmd) == 1
+    cap = capsys.readouterr()
+    err = cap.out + cap.err
+    assert "invalid_input" in err
+    assert not out.exists()

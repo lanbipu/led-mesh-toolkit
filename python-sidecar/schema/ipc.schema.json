@@ -120,25 +120,35 @@
     "PatternMeta": {
       "type": "object",
       "required": [
+        "schema_version",
         "aruco_dict",
-        "markers_per_cabinet",
-        "checkerboard_inner_corners",
         "cabinets"
       ],
       "properties": {
+        "schema_version": { "const": 2 },
         "aruco_dict": { "type": "string" },
-        "markers_per_cabinet": { "type": "integer" },
-        "checkerboard_inner_corners": { "type": "integer" },
         "cabinets": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["col", "row", "aruco_id_start", "aruco_id_end"],
+            "required": [
+              "col", "row", "aruco_id_start", "aruco_id_end",
+              "squares_x", "squares_y", "square_px", "pixel_pitch_mm"
+            ],
             "properties": {
               "col": { "type": "integer" },
               "row": { "type": "integer" },
               "aruco_id_start": { "type": "integer" },
-              "aruco_id_end": { "type": "integer" }
+              "aruco_id_end": { "type": "integer" },
+              "squares_x": { "type": "integer", "minimum": 2 },
+              "squares_y": { "type": "integer", "minimum": 2 },
+              "square_px": { "type": "integer", "exclusiveMinimum": 0 },
+              "pixel_pitch_mm": {
+                "type": "array",
+                "items": { "type": "number", "exclusiveMinimum": 0 },
+                "minItems": 2,
+                "maxItems": 2
+              }
             }
           }
         }
@@ -251,6 +261,9 @@
           "items": { "type": "integer", "exclusiveMinimum": 0 },
           "minItems": 2,
           "maxItems": 2
+        },
+        "screen_mapping_path": {
+          "oneOf": [{ "type": "null" }, { "type": "string" }]
         }
       }
     },

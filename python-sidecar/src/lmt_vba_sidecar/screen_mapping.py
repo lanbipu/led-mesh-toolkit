@@ -78,6 +78,38 @@ class ScreenMappingCabinet(BaseModel):
                 f"rotation must be one of {{0, 90, 180, 270}}, got {self.rotation}"
             )
 
+        # Scale-consistency guard. local-mm derives metric scale from
+        # pixel_pitch_mm, while the active-surface corners (pose report / size
+        # checks) use active_size_mm. The two MUST agree (pitch = active/res) or
+        # the reconstruction silently mixes scales. Reject >1% divergence — well
+        # above pitch rounding noise (~0.05%), well below a data-entry error.
+        for axis, name in ((0, "width"), (1, "height")):
+            implied = self.resolution_px[axis] * self.pixel_pitch_mm[axis]
+            if abs(implied - self.active_size_mm[axis]) > 0.01 * self.active_size_mm[axis]:
+                raise ValueError(
+                    f"cabinet '{self.cabinet_id}' {name} is inconsistent: "
+                    f"resolution_px {self.resolution_px[axis]} × pixel_pitch_mm "
+                    f"{self.pixel_pitch_mm[axis]} = {implied:.3f}mm, but "
+                    f"active_size_mm = {self.active_size_mm[axis]}mm (>1% apart). "
+                    f"These set the BA metric scale and must match — "
+                    f"set pixel_pitch_mm = active_size_mm / resolution_px."
+                )
+
+        # 1:1 feed guard. The pitch-based board geometry assumes each cabinet
+        # pixel maps 1:1 to the feed, i.e. input_rect_px width/height equal
+        # resolution_px (only the x/y offset may differ, e.g. a gap between
+        # monitors). A scaled feed (w/h != resolution) would put the displayed
+        # board at a different size than local-mm assumes — fail loud.
+        if (self.input_rect_px[2], self.input_rect_px[3]) != (
+            self.resolution_px[0], self.resolution_px[1]
+        ):
+            raise ValueError(
+                f"cabinet '{self.cabinet_id}' input_rect_px size "
+                f"[{self.input_rect_px[2]}, {self.input_rect_px[3]}] must equal "
+                f"resolution_px {self.resolution_px} (1:1 feed required; only the "
+                f"[x, y] offset may differ). Scaled feeds are not supported."
+            )
+
 
 # ---------------------------------------------------------------------------
 # Top-level mapping model

@@ -170,11 +170,18 @@ def run_generate_pattern(cmd: GeneratePatternInput) -> int:
     sw, sh = cmd.screen_resolution
 
     # Optional per-cabinet geometry from screen_mapping (single source of truth).
+    # A malformed mapping or a failed model validator (scale/1:1/rotation guards)
+    # surfaces as a clean invalid_input envelope, not an uncaught traceback.
     screen_mapping = None
     if cmd.screen_mapping_path is not None:
         from lmt_vba_sidecar.screen_mapping import ScreenMapping
-        screen_mapping = ScreenMapping.model_validate_json(
-            pathlib.Path(cmd.screen_mapping_path).read_text())
+        try:
+            screen_mapping = ScreenMapping.model_validate_json(
+                pathlib.Path(cmd.screen_mapping_path).read_text())
+        except (OSError, ValueError) as exc:
+            write_event(ErrorEvent(event="error", code="invalid_input",
+                message=f"screen_mapping load/validate failed: {exc}", fatal=True))
+            return 1
 
     # Even-divisibility only constrains the UNIFORM path; in --screen-mapping
     # mode the per-cabinet input_rect_px defines placement (DD6), so divisibility
@@ -227,6 +234,21 @@ def run_generate_pattern(cmd: GeneratePatternInput) -> int:
                 message=(f"cabinet V{s['col']:03d}_R{s['row']:03d} input_rect "
                          f"[{rx},{ry},{rw},{rh}] spills past screen {sw}x{sh}"), fatal=True))
             return 1
+
+    # Reject overlapping placement rects: in mapped mode input_rect_px are
+    # operator-supplied, and two overlapping rects would silently overwrite each
+    # other's board pixels in full_screen.png (uniform mode can't overlap).
+    for i in range(len(specs)):
+        ax, ay, aw, ah = specs[i]["input_rect_px"]
+        for j in range(i + 1, len(specs)):
+            bx, by, bw_, bh_ = specs[j]["input_rect_px"]
+            if not (ax + aw <= bx or bx + bw_ <= ax or ay + ah <= by or by + bh_ <= ay):
+                write_event(ErrorEvent(event="error", code="invalid_input",
+                    message=(f"cabinets V{specs[i]['col']:03d}_R{specs[i]['row']:03d} and "
+                             f"V{specs[j]['col']:03d}_R{specs[j]['row']:03d} have overlapping "
+                             f"input_rect_px ([{ax},{ay},{aw},{ah}] vs [{bx},{by},{bw_},{bh_}])"),
+                    fatal=True))
+                return 1
 
     # Generate into a sibling temp dir and atomically swap on success so a
     # mid-run failure leaves the existing output_dir untouched.

@@ -185,3 +185,43 @@ def test_cabinet_resolution_must_be_positive():
             }],
             "expected_pattern_hash": "abc",
         })
+
+
+def _cabinet(**overrides):
+    base = {
+        "cabinet_id": "V000_R000",
+        "resolution_px": [1000, 1000],
+        "active_size_mm": [312.5, 312.5],  # = 1000 * 0.3125, consistent
+        "pixel_pitch_mm": [0.3125, 0.3125],
+        "active_origin": "center",
+        "input_rect_px": [0, 0, 1000, 1000],
+        "rotation": 0, "mirror_x": False, "mirror_y": False,
+    }
+    base.update(overrides)
+    return {"screen_id": "S", "expected_pattern_hash": "x", "cabinets": [base]}
+
+
+def test_scale_inconsistency_rejected():
+    """pixel_pitch_mm × resolution_px must match active_size_mm (>1% apart fails)."""
+    with pytest.raises(ValueError, match="inconsistent"):
+        # 1000 * 0.3125 = 312.5mm, but active_size_mm says 300 (4% off)
+        ScreenMapping.model_validate(_cabinet(active_size_mm=[300.0, 300.0]))
+
+
+def test_consistent_scale_accepted():
+    """Rounded pitch within 1% is accepted (no false positive)."""
+    # 900 * 0.667 = 600.3 vs active 600 -> 0.05%, must pass
+    ScreenMapping.model_validate(_cabinet(
+        resolution_px=[900, 510], pixel_pitch_mm=[0.667, 0.667],
+        active_size_mm=[600.0, 340.0], input_rect_px=[0, 0, 900, 510]))
+
+
+def test_non_1to1_input_rect_rejected():
+    """input_rect_px width/height must equal resolution_px (1:1 feed)."""
+    with pytest.raises(ValueError, match="1:1 feed"):
+        ScreenMapping.model_validate(_cabinet(input_rect_px=[0, 0, 800, 1000]))
+
+
+def test_offset_input_rect_accepted():
+    """Only the x/y offset may differ from a (0,0) rect (e.g. a gap)."""
+    ScreenMapping.model_validate(_cabinet(input_rect_px=[0, 1080, 1000, 1000]))

@@ -300,11 +300,13 @@ pub async fn generate_pattern(args: GeneratePatternArgs) -> VbaResult<GeneratePa
     )
     .map_err(|e| VbaError::InvalidInput(format!("pattern_meta.json decode failed: {e}")))?;
 
+    // Saturating arithmetic: a malformed/hand-edited pattern_meta with
+    // aruco_id_end < aruco_id_start must not panic (debug) or wrap (release).
     let total_markers: u32 = meta
         .cabinets
         .iter()
-        .map(|c| c.aruco_id_end - c.aruco_id_start + 1)
-        .sum();
+        .map(|c| c.aruco_id_end.saturating_sub(c.aruco_id_start).saturating_add(1))
+        .fold(0u32, |acc, n| acc.saturating_add(n));
     Ok(GeneratePatternOut {
         output_dir: args.output_dir,
         cabinet_count: meta.cabinets.len() as u32,

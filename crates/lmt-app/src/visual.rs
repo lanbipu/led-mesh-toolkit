@@ -342,7 +342,11 @@ pub fn run_generate_pattern(
             let cabs = v.get("cabinets").and_then(|c| c.as_array()).ok_or_else(|| {
                 LmtError::InvalidInput("screen_mapping has no cabinets[]".into())
             })?;
-            let (mut max_w, mut max_h) = (0u32, 0u32);
+            // Parse each coordinate via as_f64 (accepts both JSON int and float,
+            // matching the Python side's int coercion) and reject negative /
+            // non-finite values rather than silently treating them as 0. Sum in
+            // u64 so a large rect can't overflow; cap the framebuffer at u32.
+            let (mut max_w, mut max_h) = (0u64, 0u64);
             for c in cabs {
                 let r = c.get("input_rect_px").and_then(|r| r.as_array()).ok_or_else(|| {
                     LmtError::InvalidInput("screen_mapping cabinet missing input_rect_px".into())
@@ -352,11 +356,26 @@ pub fn run_generate_pattern(
                         "input_rect_px must be [x, y, w, h]".into(),
                     ));
                 }
-                let g = |i: usize| r[i].as_u64().unwrap_or(0) as u32;
-                max_w = max_w.max(g(0) + g(2));
-                max_h = max_h.max(g(1) + g(3));
+                let g = |i: usize| -> Result<u64, LmtError> {
+                    let f = r[i].as_f64().ok_or_else(|| {
+                        LmtError::InvalidInput("input_rect_px values must be numbers".into())
+                    })?;
+                    if !f.is_finite() || f < 0.0 {
+                        return Err(LmtError::InvalidInput(format!(
+                            "input_rect_px values must be finite and non-negative, got {f}"
+                        )));
+                    }
+                    Ok(f.round() as u64)
+                };
+                max_w = max_w.max(g(0)? + g(2)?);
+                max_h = max_h.max(g(1)? + g(3)?);
             }
-            [max_w, max_h]
+            if max_w > u32::MAX as u64 || max_h > u32::MAX as u64 {
+                return Err(LmtError::InvalidInput(format!(
+                    "screen_mapping framebuffer {max_w}x{max_h} exceeds u32 range"
+                )));
+            }
+            [max_w as u32, max_h as u32]
         }
         None => {
             let ppc = screen_cfg.pixels_per_cabinet.ok_or_else(|| {
