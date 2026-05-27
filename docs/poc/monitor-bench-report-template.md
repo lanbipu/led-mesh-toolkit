@@ -31,31 +31,28 @@
 > `pitch_y = active_height_mm / native_height_px`。
 > 若规格书直接给 pitch，以规格书为准。
 
-### 1.2 ChArUco 显示区域（正方形区域，重要！）
+### 1.2 ChArUco 显示区域（全屏 + per-cabinet pitch 方案）
 
-> 警告：必须读完本节再填 screen\_mapping.json。
+> 本台架使用 `--screen-mapping` 方案：每块 cabinet 独立指定 `resolution_px`、`active_size_mm`、`pixel_pitch_mm`，生成器（`generate-pattern`）自动用 `choose_board_shape` 选出合适的 `squares_x × squares_y`，使每格物理上是正方形并铺满整个显示区域。**不再需要手动裁剪正方形子区域。**
 
-`cv2.aruco.CharucoBoard` 本质上是**正方形**棋盘；`pattern.py` 的 `generateImage()` 如果传入非正方形像素尺寸，会在短轴方向留黑边（letterbox），而**不是**拉伸图案。同时 `screen_mapping.charuco_corner_local_mm()` 在 x 和 y 轴分别独立使用 `active_size_mm`——如果 x 轴尺寸 ≠ y 轴尺寸，宽轴的坐标会差一个宽高比倍数，导致 BA 里的尺度静默出错。
+**原理**：`charuco_corner_local_mm()` 使用 `square_px × pixel_pitch_mm` 推导每个角点的物理坐标，与棋盘是否为正方形无关——16×9 的棋盘（每格仍是正方形）和 9×9 的棋盘精度一样。
 
-**唯一正确的做法**：在每台显示器上只使用一个**正方形区域**显示 ChArUco 图案，**不要**全屏拉伸。
+**操作**：
 
-> 两台显示器**尺寸不同没关系**：A、B 各自用各自的正方形区域，像素尺寸 N 与实测边长 S **可以不同**（下表分列填写）。每台被当作独立的刚性平面板，互不要求等大。
-
-具体操作：
-
-1. 在每台显示器上设置一个居中的 N×N 像素正方形窗口（例如 1080×1080 px），在 OS 层固定此区域不缩放。
-2. 把 `V000_R000.png`（cabinet PNG）显示在该正方形区域内（1:1，不缩放）。
-3. 用游标卡尺或钢板尺量出该正方形区域在显示器表面的物理边长 S（mm）。
+1. 按规格书填写每台显示器的 `resolution_px`（原生分辨率）、`active_size_mm`（有效显示面积）、`pixel_pitch_mm`（规格 pitch 或 active_size / resolution 推导）。
+2. 用 `generate-pattern --screen-mapping` 生成图案。每台显示器会得到一个填满全屏的棋盘图（如 2560×1440 和 3840×2160），用 `show_pattern.py` 全屏显示即可。
+3. 理想情况下，用卷尺或游标卡尺**实测** `active_size_mm`（规格 pitch × 分辨率会有 OS 缩放或 overscan 误差）。若条件受限，用规格书值并在报告里注明。
 
 填写下表：
 
-| 项目 | 显示器 A | 显示器 B |
+| 项目 | 显示器 A（V000\_R000） | 显示器 B（V000\_R001） |
 |---|---|---|
-| 正方形区域像素尺寸 N（px） | `<<N_A>>` | `<<N_B>>` |
-| 实测正方形边长 S（mm） | `<<S_A>>` | `<<S_B>>` |
-| 推导 pixel\_pitch（S/N，mm/px） | `<<S_A/N_A>>` | `<<S_B/N_B>>` |
+| 原生分辨率（px） | `<<W_A × H_A>>` | `<<W_B × H_B>>` |
+| 规格 pixel\_pitch（mm） | `<<px_A>>` | `<<px_B>>` |
+| active\_size\_mm（规格/实测，mm） | `<<W_A_mm × H_A_mm>>` | `<<W_B_mm × H_B_mm>>` |
+| 来源 | 规格书 / 实测（选填） | 规格书 / 实测（选填） |
 
-> **为什么要实测 S，不能用规格推导**？规格 pitch × N 的理论值与实际显示面积存在 OS 缩放（HiDPI）、面板 overscan 等误差；用钢板尺量是最直接的真值。
+> **关于 known\_geometry.json 的 size\_mm**：填各台的实测（或规格）有效面积短边和长边。由于棋盘格已是非正方形，size\_mm 也应填 `[width_mm, height_mm]`（两方向可不同）。
 
 ### 1.3 系统要求（缺任意一项 → 重建结果无意义）
 
@@ -126,22 +123,22 @@ angle_deg（两法向夹角） = 180° − 开合角 φ
   "cabinets": [
     {
       "cabinet_id": "V000_R000",
-      "resolution_px": [<<N_A>>, <<N_A>>],
-      "active_size_mm": [<<S_A>>, <<S_A>>],
-      "pixel_pitch_mm": [<<S_A/N_A>>, <<S_A/N_A>>],
+      "resolution_px": [<<W_A>>, <<H_A>>],
+      "active_size_mm": [<<W_A_mm>>, <<H_A_mm>>],
+      "pixel_pitch_mm": [<<pitch_A>>, <<pitch_A>>],
       "active_origin": "center",
-      "input_rect_px": [0, 0, <<N_A>>, <<N_A>>],
+      "input_rect_px": [0, 0, <<W_A>>, <<H_A>>],
       "rotation": 0,
       "mirror_x": false,
       "mirror_y": false
     },
     {
       "cabinet_id": "V000_R001",
-      "resolution_px": [<<N_B>>, <<N_B>>],
-      "active_size_mm": [<<S_B>>, <<S_B>>],
-      "pixel_pitch_mm": [<<S_B/N_B>>, <<S_B/N_B>>],
+      "resolution_px": [<<W_B>>, <<H_B>>],
+      "active_size_mm": [<<W_B_mm>>, <<H_B_mm>>],
+      "pixel_pitch_mm": [<<pitch_B>>, <<pitch_B>>],
       "active_origin": "center",
-      "input_rect_px": [0, <<N_A>>, <<N_B>>, <<N_B>>],
+      "input_rect_px": [0, <<H_A>>, <<W_B>>, <<H_B>>],
       "rotation": 0,
       "mirror_x": false,
       "mirror_y": false
@@ -151,7 +148,7 @@ angle_deg（两法向夹角） = 180° − 开合角 φ
 }
 ```
 
-> `input_rect_px` 的格式是 `[x, y, width, height]`（left-top 原点，单位 px）。A 从 (0,0)、B 从 (0, N) 排（竖排）或从 (N,0) 排（横排）都行。
+> `input_rect_px` 格式：`[x, y, width, height]`（left-top 原点，px）。B 从 (0, H_A) 起排（竖排）。两台分辨率可以不同。
 >
 > **重要**：这个组装屏虚拟坐标**只用于 BA 的标称初值与 cabinet 命名**，**不代表也不约束两台的真实摆位**。真实的相对位置（含**几厘米间隙**）与相对朝向（含 **~120° 折角**）由 BA 从照片里**自由解算**（每箱体 SE3 是自由参数，gauge 只钉根箱体；见 spec §3/§7）。所以这里两块虚拟相邻、共面，与现实折叠 + 留缝**不矛盾**。
 >
