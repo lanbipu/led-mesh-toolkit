@@ -311,6 +311,31 @@ pub struct GeneratePatternResult {
     pub total_markers: u32,
 }
 
+// ── Pose-OBJ export DTO types ─────────────────────────────────────────────────
+
+/// 读 `cabinet_pose_report.json`（visual reconstruct 产出）用的精简视图，
+/// 只取导出 OBJ 需要的字段。完整 schema 见 python-sidecar 的 `CabinetPoseReport`。
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CabinetPoseReportFile {
+    pub schema_version: String,
+    pub cabinet_poses: Vec<CabinetPoseEntry>,
+}
+
+/// 单块 cabinet 的 4 个世界系角点（mm，顺序 BL,BR,TR,TL）。
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CabinetPoseEntry {
+    pub cabinet_id: String,
+    pub corners_mm: [[f64; 3]; 4],
+}
+
+/// `lmt export pose-obj` 结果：每块屏一个 OBJ。
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ExportPoseObjResult {
+    pub target: String,
+    pub cabinet_count: usize,
+    pub files: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct InstructionCardResult {

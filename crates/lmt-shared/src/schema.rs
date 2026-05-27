@@ -72,6 +72,9 @@ pub fn dump_all() -> Value {
     add!("PairCheck", dto::PairCheck);
     add!("CalibrateResult", dto::CalibrateResult);
     add!("GeneratePatternResult", dto::GeneratePatternResult);
+    add!("CabinetPoseReportFile", dto::CabinetPoseReportFile);
+    add!("CabinetPoseEntry", dto::CabinetPoseEntry);
+    add!("ExportPoseObjResult", dto::ExportPoseObjResult);
 
     // 错误模型
     add!("LmtError", error::LmtError);
@@ -123,6 +126,9 @@ mod tests {
             "VisualReconstructResult",
             "EvalResult",
             "CompareKnownResult",
+            "CabinetPoseReportFile",
+            "CabinetPoseEntry",
+            "ExportPoseObjResult",
         ] {
             assert!(types.contains_key(expected), "missing schema for {expected}");
         }
