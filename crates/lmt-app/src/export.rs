@@ -1,10 +1,12 @@
 use lmt_core::export::build::surface_to_mesh_output;
 use lmt_core::export::obj::write_obj;
 use lmt_core::shape::CabinetArray;
-use lmt_core::surface::TargetSoftware;
+use lmt_core::surface::{GridTopology, QualityMetrics, ReconstructedSurface, TargetSoftware};
+use lmt_core::uv::compute_grid_uv;
 use lmt_shared::data::{runs, Db};
-use lmt_shared::dto::{ReconstructionReport, ShapeMode};
+use lmt_shared::dto::{CabinetPoseReportFile, ExportPoseObjResult, ReconstructionReport, ShapeMode};
 use lmt_shared::error::{LmtError, LmtResult};
+use nalgebra::Vector3;
 use std::path::{Path, PathBuf};
 
 fn parse_target(s: &str) -> LmtResult<TargetSoftware> {
@@ -137,6 +139,67 @@ pub fn run_export(
     Ok(out_abs.display().to_string())
 }
 
+/// 把 visual `cabinet_pose_report.json` 里每块 cabinet 单独导出成一个 OBJ，
+/// 顶点烘进共享世界系（每个 OBJ 摆原点导入即回到正确相对位置）。每块屏当 1×1
+/// 单 quad 复用 `surface_to_mesh_output`，拿到与 Path A 一致的 target 单位/winding/UV。
+pub fn run_export_pose_obj(
+    pose_report_path: &Path,
+    target: &str,
+    out_dir: &Path,
+) -> LmtResult<ExportPoseObjResult> {
+    let target_enum = parse_target(target)?;
+    let report: CabinetPoseReportFile =
+        serde_json::from_slice(&std::fs::read(pose_report_path)?)?;
+    if report.cabinet_poses.is_empty() {
+        return Err(LmtError::InvalidInput(
+            "pose report has no cabinet_poses".into(),
+        ));
+    }
+    std::fs::create_dir_all(out_dir)?;
+    let mut files = Vec::with_capacity(report.cabinet_poses.len());
+    for cab in &report.cabinet_poses {
+        let surface = panel_surface(&cab.cabinet_id, &cab.corners_mm);
+        // 单 quad → 1×1；cabinet_size 只参与 absent-cell 逻辑（此处无），填占位值。
+        let cabinet_array = CabinetArray::rectangle(1, 1, [1.0, 1.0]);
+        let mesh = surface_to_mesh_output(&surface, &cabinet_array, target_enum, 0.0)?;
+        let out = out_dir.join(format!("{}_{target}.obj", cab.cabinet_id));
+        write_obj(&mesh, &out)?;
+        files.push(out.display().to_string());
+    }
+    Ok(ExportPoseObjResult {
+        target: target.to_string(),
+        cabinet_count: files.len(),
+        files,
+    })
+}
+
+/// 一块 cabinet 的 4 个世界系角点（mm，BL,BR,TR,TL）→ 1×1 ReconstructedSurface（米）。
+/// 网格顶点行主序 [(0,0),(1,0),(0,1),(1,1)]=[BL,BR,TL,TR]，故把 [BL,BR,TR,TL] 重排为
+/// [BL,BR,TL,TR]（索引 0,1,3,2）。
+fn panel_surface(cabinet_id: &str, corners_mm: &[[f64; 3]; 4]) -> ReconstructedSurface {
+    let m = |i: usize| {
+        Vector3::new(
+            corners_mm[i][0] / 1000.0,
+            corners_mm[i][1] / 1000.0,
+            corners_mm[i][2] / 1000.0,
+        )
+    };
+    let topology = GridTopology { cols: 1, rows: 1 };
+    ReconstructedSurface {
+        screen_id: cabinet_id.to_string(),
+        uv_coords: compute_grid_uv(topology),
+        vertices: vec![m(0), m(1), m(3), m(2)],
+        topology,
+        quality_metrics: QualityMetrics {
+            method: "pose_report_quad".into(),
+            measured_count: 4,
+            expected_count: 4,
+            ..Default::default()
+        },
+        scatter_fit: None,
+    }
+}
+
 /// Append `.obj` if the path doesn't already end with that extension
 /// (case-insensitive). Users who skip the dialog's filter and type
 /// `mymesh` should still get a usable OBJ file.
@@ -183,4 +246,42 @@ pub fn lookup_run_paths(db: Db, run_id: i64) -> LmtResult<(String, String)> {
         |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
     )
     .map_err(|_| LmtError::NotFound(format!("run id {run_id}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn export_pose_obj_writes_one_world_frame_obj_per_cabinet() {
+        let dir = tempdir().unwrap();
+        let report = r#"{
+          "schema_version": "visual_pose_report.v1",
+          "frame": {},
+          "cabinet_poses": [
+            {"cabinet_id":"V000_R000",
+             "corners_mm":[[-300,-170,0],[300,-170,0],[300,170,0],[-300,170,0]]},
+            {"cabinet_id":"V000_R001",
+             "corners_mm":[[321,-391,-4],[793,-376,-1117],[803,303,-1104],[331,289,8]]}
+          ]
+        }"#;
+        let rp = dir.path().join("BENCH_cabinet_pose_report.json");
+        std::fs::write(&rp, report).unwrap();
+        let out_dir = dir.path().join("out");
+
+        let res = run_export_pose_obj(&rp, "neutral", &out_dir).unwrap();
+        assert_eq!(res.cabinet_count, 2);
+        assert_eq!(res.files.len(), 2);
+
+        let obj0 = out_dir.join("V000_R000_neutral.obj");
+        let obj1 = out_dir.join("V000_R001_neutral.obj");
+        assert!(obj0.is_file() && obj1.is_file());
+
+        let text0 = std::fs::read_to_string(&obj0).unwrap();
+        assert_eq!(text0.lines().filter(|l| l.starts_with("v ")).count(), 4);
+        assert_eq!(text0.lines().filter(|l| l.starts_with("f ")).count(), 2);
+        // neutral = raw model frame in meters → BL corner (-0.3,-0.17,0) baked into geometry
+        assert!(text0.contains("v -0.3 -0.17 0"), "got:\n{text0}");
+    }
 }
