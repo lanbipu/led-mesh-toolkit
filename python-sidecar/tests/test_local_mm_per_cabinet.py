@@ -17,10 +17,10 @@ def test_local_mm_uses_pitch_and_nonsquare_board():
     sm = _sm()
     # board 16x9, square_px=60 -> board 960x540 px, inner 15x8
     # charuco_id 0 = inner (r=0,c=0): px=((0+1)*60,(0+1)*60)=(60,60)
-    # center origin: x=(60-960/2)*0.3125, y=(60-540/2)*0.3125
+    # center origin, +y up: x=(60-960/2)*0.3125, y=(540/2-60)*0.3125
     p = sm.charuco_corner_local_mm("V000_R000", charuco_id=0,
                                    squares_x=16, squares_y=9, square_px=60)
-    assert np.allclose(p, [(60 - 480) * 0.3125, (60 - 270) * 0.3125, 0.0])
+    assert np.allclose(p, [(60 - 480) * 0.3125, (270 - 60) * 0.3125, 0.0])
 
 
 def test_center_corner_is_near_origin_for_centered_board():

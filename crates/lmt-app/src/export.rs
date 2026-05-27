@@ -139,35 +139,38 @@ pub fn run_export(
     Ok(out_abs.display().to_string())
 }
 
-/// Export one world-frame OBJ per cabinet from a `cabinet_pose_report.json`.
+/// Export one OBJ per cabinet from a `cabinet_pose_report.json`.
 ///
-/// ## Geometry frame
+/// ## Frame
 ///
-/// Vertices are emitted in the **screen-local world frame** as supplied by the
-/// visual pipeline: right-handed, **+Y up** (panel height axis), **+Z outward**,
-/// metres. This frame is disguise-native and imports upright without any further
-/// rotation.
+/// The visual pose report is already in the conventional screen-local world
+/// frame (right-handed, +Y up, +Z outward, mm) — the source-side
+/// `charuco_corner_local_mm` y-up convention makes it physically faithful —
+/// which IS disguise's own convention (RH, +Y up, m). Geometry is therefore
+/// emitted RAW (`TargetSoftware::Neutral`, identity): the core→target axis
+/// adapter is intentionally NOT applied (it is built for the +Z-up internal core
+/// model frame and would mis-orient this +Y-up frame). The `target` string is
+/// validated and recorded but does not remap axes.
 ///
-/// The core-model→target axis adapter (`surface_to_mesh_output` with
-/// `target=Disguise/Unreal`) is intentionally **NOT** applied. The visual world
-/// frame is already a target-agnostic world frame, and Path A's adapters are
-/// designed for the internal +Z-up core model frame: applying them here would
-/// reflect/mis-orient each panel (det −1 mismatch). Geometry is therefore always
-/// built with `TargetSoftware::Neutral` (identity transform, raw world coords).
+/// ## Placement options
 ///
-/// ## `target` argument
+/// - `root = Some(cabinet_id)`: re-express the whole scene in that cabinet's
+///   local frame (origin = its center; +x width, +y height, +z outward), so it
+///   becomes the axis-aligned reference at the origin. The same proper rotation
+///   is applied to every panel, so relative poses are preserved.
+/// - `ground = true`: shift Y so the bottom edge sits at 0 (reference = the
+///   `root` cabinet if given, else the whole assembly) instead of being centered.
 ///
-/// The `target` string is **validated** (unknown values are rejected) and
-/// **recorded** in `ExportPoseObjResult.target`, but does not currently remap
-/// axes or scale units — the world frame is already in the correct convention
-/// for all supported targets.
+/// Per-cabinet OBJs are written as `<cabinet_id>_<target>.obj`, with world
+/// coordinates baked in: import each at the origin to reproduce the layout.
 pub fn run_export_pose_obj(
     pose_report_path: &Path,
     target: &str,
     out_dir: &Path,
+    root: Option<&str>,
+    ground: bool,
 ) -> LmtResult<ExportPoseObjResult> {
-    // Validate target string but do NOT use the enum for geometry: see doc comment.
-    let _ = parse_target(target)?;
+    let _ = parse_target(target)?; // validate target; geometry is raw (Neutral)
     let report: CabinetPoseReportFile =
         serde_json::from_slice(&std::fs::read(pose_report_path)?)?;
     if report.cabinet_poses.is_empty() {
@@ -175,11 +178,26 @@ pub fn run_export_pose_obj(
             "pose report has no cabinet_poses".into(),
         ));
     }
-    std::fs::create_dir_all(out_dir)?;
-    let mut files = Vec::with_capacity(report.cabinet_poses.len());
+
+    // Optional re-root: derive a world→local transform from the chosen cabinet.
+    let frame = match root {
+        None => None,
+        Some(rid) => {
+            let rc = report
+                .cabinet_poses
+                .iter()
+                .find(|c| c.cabinet_id == rid)
+                .ok_or_else(|| {
+                    LmtError::NotFound(format!("--root cabinet '{rid}' not in pose report"))
+                })?;
+            Some(CabinetFrame::from_corners(&rc.corners_mm))
+        }
+    };
+
+    // Sanitize ids + apply the (optional) re-root transform to every corner.
+    let mut panels: Vec<(String, [[f64; 3]; 4])> = Vec::with_capacity(report.cabinet_poses.len());
     for cab in &report.cabinet_poses {
-        // Sanitize cabinet_id before using it as a filename component.
-        // Must be non-empty, consist only of [A-Za-z0-9._-], and not be "." or "..".
+        // cabinet_id becomes a filename component: must be a safe, non-traversing name.
         if cab.cabinet_id.is_empty()
             || !cab.cabinet_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
             || cab.cabinet_id == "."
@@ -190,13 +208,45 @@ pub fn run_export_pose_obj(
                 cab.cabinet_id
             )));
         }
-        let surface = panel_surface(&cab.cabinet_id, &cab.corners_mm);
+        let mut cs = cab.corners_mm;
+        if let Some(f) = &frame {
+            for c in cs.iter_mut() {
+                *c = f.world_to_local(c);
+            }
+        }
+        panels.push((cab.cabinet_id.clone(), cs));
+    }
+
+    // Optional ground-align: shift Y so the bottom edge is at 0.
+    if ground {
+        let min_y = match root {
+            Some(rid) => panels
+                .iter()
+                .find(|(id, _)| id == rid)
+                .map(|(_, cs)| cs.iter().map(|c| c[1]).fold(f64::INFINITY, f64::min))
+                .unwrap_or(f64::INFINITY),
+            None => panels
+                .iter()
+                .flat_map(|(_, cs)| cs.iter().map(|c| c[1]))
+                .fold(f64::INFINITY, f64::min),
+        };
+        if min_y.is_finite() {
+            for (_, cs) in panels.iter_mut() {
+                for c in cs.iter_mut() {
+                    c[1] -= min_y;
+                }
+            }
+        }
+    }
+
+    std::fs::create_dir_all(out_dir)?;
+    let mut files = Vec::with_capacity(panels.len());
+    for (cid, cs) in &panels {
+        let surface = panel_surface(cid, cs);
         // 单 quad → 1×1；cabinet_size 只参与 absent-cell 逻辑（此处无），填占位值。
-        // Always use Neutral (identity) so vertices stay in the raw world frame —
-        // see doc comment on run_export_pose_obj.
         let cabinet_array = CabinetArray::rectangle(1, 1, [1.0, 1.0]);
         let mesh = surface_to_mesh_output(&surface, &cabinet_array, TargetSoftware::Neutral, 0.0)?;
-        let out = out_dir.join(format!("{}_{target}.obj", cab.cabinet_id));
+        let out = out_dir.join(format!("{cid}_{target}.obj"));
         write_obj(&mesh, &out)?;
         files.push(out.display().to_string());
     }
@@ -207,9 +257,35 @@ pub fn run_export_pose_obj(
     })
 }
 
-/// 一块 cabinet 的 4 个世界系角点（mm，BL,BR,TR,TL）→ 1×1 ReconstructedSurface（米）。
+/// A cabinet's local frame derived from its 4 world corners (BL,BR,TR,TL).
+/// Origin = panel center; +x = width (BL→BR); +z = outward (x × BL→TL); +y = z×x.
+/// `world_to_local` maps a world point (mm) into this orthonormal RH frame.
+struct CabinetFrame {
+    center: Vector3<f64>,
+    x: Vector3<f64>,
+    y: Vector3<f64>,
+    z: Vector3<f64>,
+}
+
+impl CabinetFrame {
+    fn from_corners(c: &[[f64; 3]; 4]) -> Self {
+        let v = |i: usize| Vector3::new(c[i][0], c[i][1], c[i][2]);
+        let (bl, br, tl) = (v(0), v(1), v(3));
+        let center = (v(0) + v(1) + v(2) + v(3)) / 4.0;
+        let x = (br - bl).normalize();
+        let z = x.cross(&(tl - bl)).normalize();
+        let y = z.cross(&x);
+        Self { center, x, y, z }
+    }
+    fn world_to_local(&self, p: &[f64; 3]) -> [f64; 3] {
+        let d = Vector3::new(p[0], p[1], p[2]) - self.center;
+        [self.x.dot(&d), self.y.dot(&d), self.z.dot(&d)]
+    }
+}
+
+/// 一块 cabinet 的 4 个世界系角点（mm，BL,BR,TR,TL）→ 1×1 ReconstructedSurface（米，原样）。
 /// 网格顶点行主序 [(0,0),(1,0),(0,1),(1,1)]=[BL,BR,TL,TR]，故把 [BL,BR,TR,TL] 重排为
-/// [BL,BR,TL,TR]（索引 0,1,3,2）。
+/// 索引 0,1,3,2，quad 不扭曲。
 fn panel_surface(cabinet_id: &str, corners_mm: &[[f64; 3]; 4]) -> ReconstructedSurface {
     let m = |i: usize| {
         Vector3::new(
@@ -305,7 +381,7 @@ mod tests {
         std::fs::write(&rp, BENCH_REPORT).unwrap();
         let out_dir = dir.path().join("out");
 
-        let res = run_export_pose_obj(&rp, "neutral", &out_dir).unwrap();
+        let res = run_export_pose_obj(&rp, "neutral", &out_dir, None, false).unwrap();
         assert_eq!(res.cabinet_count, 2);
         assert_eq!(res.files.len(), 2);
 
@@ -331,7 +407,7 @@ mod tests {
         std::fs::write(&rp, BENCH_REPORT).unwrap();
         let out_dir = dir.path().join("out_disguise");
 
-        let res = run_export_pose_obj(&rp, "disguise", &out_dir).unwrap();
+        let res = run_export_pose_obj(&rp, "disguise", &out_dir, None, false).unwrap();
         assert_eq!(res.target, "disguise");
         assert_eq!(res.cabinet_count, 2);
 
@@ -369,7 +445,7 @@ mod tests {
             std::fs::write(&rp, &report).unwrap();
             let out_dir = dir.path().join("out");
 
-            let result = run_export_pose_obj(&rp, "neutral", &out_dir);
+            let result = run_export_pose_obj(&rp, "neutral", &out_dir, None, false);
             assert!(
                 matches!(result, Err(LmtError::InvalidInput(_))),
                 "expected InvalidInput for cabinet_id={bad_id:?}, got {result:?}"
@@ -378,5 +454,44 @@ mod tests {
             let escaped = dir.path().join("escape");
             assert!(!escaped.exists(), "path traversal file written for cabinet_id={bad_id:?}");
         }
+    }
+
+    #[test]
+    fn export_pose_obj_root_makes_reference_axis_aligned_and_grounded() {
+        // --root V000_R001 + --ground: V000_R001 becomes the axis-aligned
+        // reference — its panel lies in the XY plane (z≈0) with its bottom edge
+        // at y=0. --root not found must be NotFound.
+        let dir = tempdir().unwrap();
+        let rp = dir.path().join("BENCH_cabinet_pose_report.json");
+        std::fs::write(&rp, BENCH_REPORT).unwrap();
+        let out_dir = dir.path().join("out_root");
+
+        let res =
+            run_export_pose_obj(&rp, "neutral", &out_dir, Some("V000_R001"), true).unwrap();
+        assert_eq!(res.cabinet_count, 2);
+
+        let text = std::fs::read_to_string(out_dir.join("V000_R001_neutral.obj")).unwrap();
+        let verts: Vec<[f64; 3]> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("v "))
+            .map(|l| {
+                let n: Vec<f64> = l.split_whitespace().map(|t| t.parse().unwrap()).collect();
+                [n[0], n[1], n[2]]
+            })
+            .collect();
+        assert_eq!(verts.len(), 4);
+        // reference panel is axis-aligned in the XY plane → z ≈ 0
+        assert!(verts.iter().all(|v| v[2].abs() < 1e-3), "ref panel not in XY plane: {verts:?}");
+        // ground: bottom edge at y = 0
+        let min_y = verts.iter().map(|v| v[1]).fold(f64::INFINITY, f64::min);
+        assert!(min_y.abs() < 1e-3, "ground: min y should be 0, got {min_y}");
+        // width ≈ 1.209 m, height ≈ 0.680 m (from the V000_R001 corners)
+        let max_y = verts.iter().map(|v| v[1]).fold(f64::NEG_INFINITY, f64::max);
+        assert!((max_y - 0.680).abs() < 0.01, "height ≈ 0.68m, got {max_y}");
+
+        // unknown --root → NotFound
+        let err = run_export_pose_obj(&rp, "neutral", &out_dir, Some("V999_R999"), false)
+            .unwrap_err();
+        assert!(matches!(err, LmtError::NotFound(_)), "got {err:?}");
     }
 }

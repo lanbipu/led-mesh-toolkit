@@ -151,9 +151,14 @@ class ScreenMapping(BaseModel):
     ) -> np.ndarray:
         """Local-mm of a ChArUco inner corner [x, y, 0], pitch-based.
 
-        Origin = board center. +x right, +y down (image convention). Uses the
-        cabinet's own pixel pitch so coordinates are exact for any per-cabinet
-        size/pitch and any non-square (squares_x != squares_y) board.
+        Origin = board center. +x right, **+y up** (so +z = x×y points outward,
+        toward the viewer). This MUST match OpenCV's ChArUco board object-point
+        frame (origin bottom-left, +y up): feeding y-down points (the displayed
+        image convention) to solvePnP recovers a vertically-flipped / chirally
+        mirrored board pose — low reprojection but physically mirrored, which
+        silently corrupts every relative cabinet pose. Uses the cabinet's own
+        pixel pitch so coordinates are exact for any per-cabinet size/pitch and
+        any non-square (squares_x != squares_y) board.
 
         Parameters
         ----------
@@ -196,7 +201,9 @@ class ScreenMapping(BaseModel):
         x_px = (c + 1) * square_px
         y_px = (r + 1) * square_px
         x_mm = (x_px - board_w_px / 2.0) * pitch_x
-        y_mm = (y_px - board_h_px / 2.0) * pitch_y
+        # +y UP: larger y_px (lower on the displayed pattern) → smaller local y,
+        # matching OpenCV's y-up ChArUco board frame. See docstring.
+        y_mm = (board_h_px / 2.0 - y_px) * pitch_y
         return np.array([x_mm, y_mm, 0.0], dtype=float)
 
     # ------------------------------------------------------------------

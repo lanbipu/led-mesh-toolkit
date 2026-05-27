@@ -267,6 +267,13 @@ pub enum ExportCmd {
         /// 输出目录(每块屏一个 OBJ)。
         #[arg(long, value_name = "DIR")]
         out_dir: PathBuf,
+        /// 以该 cabinet_id 为基准:把整个场景重定位到它的局部系(它轴对齐落在原点),
+        /// 其余屏保持真实相对位姿。不传则用重建根 cabinet 的世界系。
+        #[arg(long, value_name = "CABINET_ID")]
+        root: Option<String>,
+        /// 让下边缘贴地(最低 Y = 0),而非以中心为原点。
+        #[arg(long)]
+        ground: bool,
     },
 }
 

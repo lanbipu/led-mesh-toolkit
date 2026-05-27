@@ -18,7 +18,9 @@ pub fn run(cmd: ExportCmd, mode: Mode, db_arg: Option<&Path>, yes: bool, dry_run
             pose_report,
             target,
             out_dir,
-        } => pose_obj(mode, &pose_report, &target, &out_dir, yes, dry_run),
+            root,
+            ground,
+        } => pose_obj(mode, &pose_report, &target, &out_dir, root.as_deref(), ground, yes, dry_run),
     }
 }
 
@@ -132,11 +134,14 @@ fn obj(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn pose_obj(
     mode: Mode,
     pose_report: &str,
     target: &str,
     out_dir: &Path,
+    root: Option<&str>,
+    ground: bool,
     yes: bool,
     dry_run: bool,
 ) -> i32 {
@@ -168,6 +173,8 @@ fn pose_obj(
                 "dry_run": true,
                 "pose_report": pose_report,
                 "target": target,
+                "root": root,
+                "ground": ground,
                 "would_write_under": out_dir.display().to_string(),
             });
             output::ok(mode, payload, |_| {
@@ -179,7 +186,13 @@ fn pose_obj(
             })
         }
         DestructiveDecision::Execute => {
-            match lmt_app::export::run_export_pose_obj(Path::new(pose_report), target, out_dir) {
+            match lmt_app::export::run_export_pose_obj(
+                Path::new(pose_report),
+                target,
+                out_dir,
+                root,
+                ground,
+            ) {
                 Ok(r) => output::ok(mode, r, |p| {
                     let _ = writeln!(
                         std::io::stdout(),

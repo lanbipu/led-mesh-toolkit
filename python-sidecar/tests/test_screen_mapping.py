@@ -49,14 +49,15 @@ def test_charuco_corner_local_mm_z_is_zero():
 def test_charuco_corner_local_mm_pitch_based_spacing():
     """
     Pitch-based convention (v2): corner (r, c) sits at board-pixel
-    ((c+1)*square_px, (r+1)*square_px); mm = (px - board_px/2) * pixel_pitch.
+    ((c+1)*square_px, (r+1)*square_px); x_mm = (x_px - board_px/2) * pitch,
+    y_mm = (board_px/2 - y_px) * pitch  (+y UP, matching OpenCV's ChArUco frame).
     For a 9x9 board at square_px=60 (board 540px) with pitch 0.667:
-      corner (0,0) -> x = (60 - 270)*0.667 = -140.07
+      corner (0,0) -> x = (60 - 270)*0.667 = -140.07, y = (270 - 60)*0.667 = +140.07
     """
     m = _mapping()
     p0 = m.charuco_corner_local_mm("V000_R000", 0, squares_x=9, squares_y=9, square_px=60)
     expected_x = (1 * 60 - 9 * 60 / 2) * 0.667  # -140.07
-    expected_y = (1 * 60 - 9 * 60 / 2) * 0.667
+    expected_y = (9 * 60 / 2 - 1 * 60) * 0.667  # +140.07 (+y up)
     assert np.allclose(p0[:2], [expected_x, expected_y], atol=1e-6), (
         f"Pitch-based spacing mismatch: got {p0[:2]}, expected [{expected_x:.4f}, {expected_y:.4f}]"
     )

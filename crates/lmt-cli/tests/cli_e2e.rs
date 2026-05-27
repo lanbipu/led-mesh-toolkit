@@ -1682,3 +1682,51 @@ fn export_pose_obj_missing_report_is_error() {
     let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
     assert_eq!(env["ok"], false, "envelope ok must be false: {env}");
 }
+
+/// --root + --ground: chosen cabinet becomes the axis-aligned reference at the
+/// origin with its bottom edge at y=0.
+#[test]
+fn export_pose_obj_root_and_ground() {
+    let tmp = TempDir::new().unwrap();
+    let report = tmp.path().join("cabinet_pose_report.json");
+    std::fs::write(&report, pose_report_json()).unwrap();
+    let out_dir = tmp.path().join("out");
+
+    let assert = lmt()
+        .args([
+            "--json",
+            "--yes",
+            "export",
+            "pose-obj",
+            report.to_str().unwrap(),
+            "neutral",
+            "--out-dir",
+            out_dir.to_str().unwrap(),
+            "--root",
+            "V000_R001",
+            "--ground",
+        ])
+        .assert()
+        .success();
+
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true, "envelope ok: {env}");
+
+    let text = std::fs::read_to_string(out_dir.join("V000_R001_neutral.obj")).unwrap();
+    let ys: Vec<f64> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("v "))
+        .map(|l| l.split_whitespace().nth(1).unwrap().parse::<f64>().unwrap())
+        .collect();
+    let zs: Vec<f64> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("v "))
+        .map(|l| l.split_whitespace().nth(2).unwrap().parse::<f64>().unwrap())
+        .collect();
+    assert_eq!(ys.len(), 4);
+    // reference panel axis-aligned in the XY plane → z ≈ 0
+    assert!(zs.iter().all(|z| z.abs() < 1e-3), "ref panel not in XY plane: {zs:?}");
+    // ground → bottom edge at y = 0
+    let min_y = ys.iter().cloned().fold(f64::INFINITY, f64::min);
+    assert!(min_y.abs() < 1e-3, "ground: min y should be 0, got {min_y}");
+}
