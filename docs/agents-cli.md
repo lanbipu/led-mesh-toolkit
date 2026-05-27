@@ -36,6 +36,7 @@ lmt --db /path/to/lmt.sqlite project list-recent
 | `lmt reconstruct list-runs <project> [--screen-id S]` | read_only | List runs for a project (raw + canonical path keys both searched) |
 | `lmt reconstruct get-run-report <run_id>` | read_only | Return the full `report.json` for a run |
 | `lmt export obj <run_id> <target> [--dst path]` | destructive | Write an OBJ for a run; `target` ∈ `{disguise, unreal, neutral}` |
+| `lmt export pose-obj <pose_report> <target> --out-dir <dir>` | destructive | 从 `cabinet_pose_report.json` 把每块屏单独导出成世界坐标 OBJ（每屏一个文件，顶点烘进共享世界系，导入 disguise 即回到正确相对位置）；Path B 直出路径，绕过 `reconstruct surface`。`target` ∈ `{disguise, unreal, neutral}`。Result: `{target, cabinet_count, files}` |
 | `lmt seed-example <name> <dst>` | destructive | Copy a built-in example (curved-flat / curved-arc) into `<dst>/<name>` |
 | `lmt visual calibrate <project> <screen_id> <checkerboard_dir> [--square-mm <f>] [--inner <RxC>]` | destructive | Checkerboard images → `calibration/<screen_id>_intrinsics.json` |
 | `lmt visual generate-pattern <project> <screen_id> [--method charuco] [--screen-mapping <json>]` | destructive | Generate ChArUco pattern — per-cabinet PNGs + `full_screen` + `pattern_meta` (schema **v2**) under `patterns/<screen_id>/`. `--screen-mapping`: read per-cabinet size/pitch from a `screen_mapping.json` (path resolved against the project root) and generate a pitch-matched board per cabinet (non-square / unequal cabinets supported); boards are placed at each cabinet's `input_rect_px` and the framebuffer size is their bounding box. The mapping must cover every present cabinet exactly (missing/extra id → `invalid_input`). Without the flag, the uniform grid is used (square cabinets reproduce the legacy 9×9/40-marker board). Result reports `total_markers` (per-cabinet counts vary in v2). |
@@ -224,7 +225,7 @@ GUI 启动 / `add-recent` / `reconstruct surface` 之类的写命令都会触发
 | --- | :---: | --- |
 | `read_only` | yes | `schema`, `project list-recent` / `load`, `measurements load`, `total-station instruction-card`, `reconstruct list-runs` / `get-run-report` |
 | `write_safe` | yes (no `--yes`) | `project add-recent` (still honors `--dry-run`), `visual eval`, `visual compare-known` |
-| `destructive` | no (requires `--yes` or `--dry-run`) | `project remove-recent` / `save`, `total-station import`, `reconstruct surface`, `export obj`, `visual calibrate`, `visual generate-pattern`, `visual reconstruct`, `visual simulate` |
+| `destructive` | no (requires `--yes` or `--dry-run`) | `project remove-recent` / `save`, `total-station import`, `reconstruct surface`, `export obj`, `export pose-obj`, `visual calibrate`, `visual generate-pattern`, `visual reconstruct`, `visual simulate` |
 
 An MCP tool wrapper should propagate these as the tool's `side_effect`
 annotation and route `destructive` tools through a confirmation step.
