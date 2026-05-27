@@ -95,8 +95,8 @@ def estimate_nonroot_cabinet_init(
 
 - 输入：`cabinet_pose_report.json`（`CabinetPoseReport`，含 `cabinet_poses[].corners_mm`，
   4 角 BL,BR,TR,TL，世界系 mm）；`target`（disguise / unreal / neutral）；输出目录。
-- 输出：每块 cabinet 一个 OBJ，文件名 `<screen>_<cabinet_id>_<target>.obj`，
-  顶点为**共享世界系**坐标（相对位置烘进几何）。
+- 输出：每块 cabinet 一个 OBJ，文件名 `<cabinet_id>_<target>.obj`（pose report 不带
+  screen_id，故文件名只用 cabinet_id），顶点为**共享世界系**坐标（相对位置烘进几何）。
 
 ### 4.2 复用现成导出管线
 
