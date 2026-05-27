@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 
 from lmt_vba_sidecar.ipc import ReconstructInput
+from lmt_vba_sidecar.model_constrained_ba import Observation, model_constrained_ba
 from lmt_vba_sidecar.reconstruct import (
     MIN_PNP_CORNERS,
     _classify_cabinet_quality,
@@ -346,3 +347,43 @@ def test_estimate_nonroot_cabinet_init_no_bridge_returns_empty():
 
     out = estimate_nonroot_cabinet_init(per_view, root_idx=0, K=K)
     assert out == {}
+
+
+def test_bridge_init_makes_ba_converge_to_known_angle():
+    K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
+    root_local = np.array([[-300, -170, 0], [300, -170, 0],
+                           [300, 170, 0], [-300, 170, 0]], dtype=float)
+    ang = np.deg2rad(60.0)
+    R_true = np.array([[np.cos(ang), 0, np.sin(ang)],
+                       [0, 1, 0],
+                       [-np.sin(ang), 0, np.cos(ang)]])
+    t_true = np.array([500.0, 0.0, -200.0])
+    cams = [(np.eye(3), np.array([dx, 0.0, 2200.0])) for dx in (-300., -100., 100., 300.)]
+
+    per_view: dict[tuple[int, int], list] = {}
+    observations = []
+    init_cameras = []
+    for ci, (R_cam, t_cam) in enumerate(cams):
+        init_cameras.append((R_cam, t_cam))
+        for p in root_local:
+            pix = _project(R_cam, t_cam, np.eye(3), np.zeros(3), p, K)
+            observations.append(Observation(camera_idx=ci, cabinet_idx=0, p_local=p, pixel=pix))
+            per_view.setdefault((ci, 0), []).append((p, pix))
+        for p in root_local:
+            pix = _project(R_cam, t_cam, R_true, t_true, p, K)
+            observations.append(Observation(camera_idx=ci, cabinet_idx=1, p_local=p, pixel=pix))
+            per_view.setdefault((ci, 1), []).append((p, pix))
+
+    bridge = estimate_nonroot_cabinet_init(per_view, root_idx=0, K=K)
+    init_cabinets = {0: (np.eye(3), np.zeros(3)), 1: bridge[1]}
+    res = model_constrained_ba(
+        K=K, observations=observations, n_cameras=len(cams), n_cabinets=2,
+        root_cabinet_idx=0, init_cameras=init_cameras, init_cabinets=init_cabinets,
+    )
+    assert res.converged
+    assert res.rms_reprojection_px < 1.0
+    R_solved, _ = res.cabinet_poses[1]
+    n_root = np.array([0, 0, 1.0])
+    n_non = R_solved @ np.array([0, 0, 1.0])
+    angle = np.degrees(np.arccos(np.clip(n_root @ n_non, -1, 1)))
+    assert abs(angle - 60.0) < 1.0, f"recovered inter-panel angle {angle:.2f} != 60"

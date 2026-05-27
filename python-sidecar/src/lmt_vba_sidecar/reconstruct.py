@@ -333,10 +333,16 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
         ))
         return 1
     root_nominal_mm = np.array(nominal_m[ROOT_CABINET], dtype=float) * 1000.0
+    # Bridge-camera init: estimate each non-root cabinet's world pose from views
+    # that see it together with the root. Falls back to nominal (flat/curved)
+    # translation + identity rotation when no bridge view exists for a cabinet.
+    bridge = estimate_nonroot_cabinet_init(per_view_cab_corners, root_idx, K)
     init_cabinets: dict[int, tuple[np.ndarray, np.ndarray]] = {}
     for cr, idx in cab_to_idx.items():
         if idx == root_idx:
             init_cabinets[idx] = (np.eye(3), np.zeros(3))
+        elif idx in bridge:
+            init_cabinets[idx] = bridge[idx]
         elif cr in nominal_m:
             t_mm = np.array(nominal_m[cr], dtype=float) * 1000.0 - root_nominal_mm
             init_cabinets[idx] = (np.eye(3), t_mm)
