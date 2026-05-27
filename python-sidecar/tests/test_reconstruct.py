@@ -11,6 +11,7 @@ import io
 import json
 import pathlib
 
+import cv2
 import numpy as np
 
 from lmt_vba_sidecar.ipc import ReconstructInput
@@ -18,6 +19,7 @@ from lmt_vba_sidecar.reconstruct import (
     MIN_PNP_CORNERS,
     _classify_cabinet_quality,
     _pnp_camera,
+    estimate_nonroot_cabinet_init,
     run_reconstruct,
 )
 
@@ -273,10 +275,6 @@ def test_reconstruct_folded_shape_prior_is_invalid_input(
     assert last["code"] == "invalid_input"
 
 
-import cv2
-from lmt_vba_sidecar.reconstruct import estimate_nonroot_cabinet_init
-
-
 def _project(R_cam, t_cam, R_cab, t_cab, p_local, K):
     xw = R_cab @ p_local + t_cab
     xc = R_cam @ xw + t_cam
@@ -289,6 +287,9 @@ def test_estimate_nonroot_cabinet_init_recovers_known_pose():
     # root cabinet: 4 corners in its own plane (mm), z=0
     root_local = np.array([[-300, -170, 0], [300, -170, 0],
                            [300, 170, 0], [-300, 170, 0]], dtype=float)
+    # Identical coplanar local geometry on purpose: both cabinets share the
+    # same active-surface corner layout, so any recovered pose difference comes
+    # only from the bridge composition, not from differing object points.
     nonroot_local = root_local.copy()
     # ground-truth world_from_nonroot: 60 deg about y + translate
     ang = np.deg2rad(60.0)
@@ -320,3 +321,28 @@ def test_estimate_nonroot_cabinet_init_recovers_known_pose():
     ang_err = np.degrees(np.arccos(np.clip((np.trace(R_est.T @ R_true) - 1) / 2, -1, 1)))
     assert ang_err < 1.0, f"rotation error {ang_err:.3f} deg too large"
     assert np.linalg.norm(t_est - t_true) < 5.0, f"t_est={t_est} vs {t_true}"
+
+
+def test_estimate_nonroot_cabinet_init_no_bridge_returns_empty():
+    """No view sees the root with >= MIN_PNP_CORNERS corners (one view shows
+    only the non-root, another shows the root with just 2 corners) -> nothing
+    can be bridged, so the result is an empty dict (caller falls back to nominal)."""
+    K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
+    local = np.array([[-300, -170, 0], [300, -170, 0],
+                      [300, 170, 0], [-300, 170, 0]], dtype=float)
+    R_cam = np.eye(3)
+    t_cam = np.array([0.0, 0.0, 2200.0])
+
+    per_view: dict[tuple[int, int], list] = {
+        # view 0: only the non-root cabinet visible (no root in this view).
+        (0, 1): [(p, _project(R_cam, t_cam, np.eye(3), np.zeros(3), p, K))
+                 for p in local],
+        # view 1: root visible but with < MIN_PNP_CORNERS corners.
+        (1, 0): [(p, _project(R_cam, t_cam, np.eye(3), np.zeros(3), p, K))
+                 for p in local[:2]],
+        (1, 1): [(p, _project(R_cam, t_cam, np.eye(3), np.zeros(3), p, K))
+                 for p in local],
+    }
+
+    out = estimate_nonroot_cabinet_init(per_view, root_idx=0, K=K)
+    assert out == {}

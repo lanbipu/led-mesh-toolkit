@@ -468,6 +468,8 @@ def _solve_pnp(corners, K):
 
 def _avg_rotation(rotations):
     """SVD-average a set of rotation matrices; result is orthonormal with det=+1."""
+    if not rotations:
+        raise ValueError("_avg_rotation needs at least one rotation")
     S = sum(rotations)
     U, _, Vt = np.linalg.svd(S)
     R = U @ Vt
@@ -477,8 +479,12 @@ def _avg_rotation(rotations):
     return R
 
 
-def estimate_nonroot_cabinet_init(per_view_cab_corners, root_idx, K,
-                                  min_corners=MIN_PNP_CORNERS):
+def estimate_nonroot_cabinet_init(
+    per_view_cab_corners: dict[tuple[int, int], list[tuple[np.ndarray, np.ndarray]]],
+    root_idx: int,
+    K: np.ndarray,
+    min_corners: int = MIN_PNP_CORNERS,
+) -> dict[int, tuple[np.ndarray, np.ndarray]]:
     """Non-root cabinet_idx -> (R_world_from_cab, t_mm) via bridge cameras.
 
     A bridge view sees the root cabinet AND a non-root cabinet (each with
@@ -538,21 +544,10 @@ def _pnp_camera(
     corners, return a neutral guess (BA still has the metric scale from local
     coords + other well-init cameras to recover).
     """
-    def solve(corners: list[tuple[np.ndarray, np.ndarray]]):
-        obj = np.array([p for p, _ in corners], dtype=np.float64)
-        img = np.array([px for _, px in corners], dtype=np.float64)
-        ok, rvec, tvec = cv2.solvePnP(
-            obj, img, K, None, flags=cv2.SOLVEPNP_ITERATIVE,
-        )
-        if not ok:
-            return None
-        R, _ = cv2.Rodrigues(rvec)
-        return R, tvec.reshape(3)
-
     # Try root first.
     root_corners = per_view_cab_corners.get((cam_idx, root_idx), [])
     if len(root_corners) >= MIN_PNP_CORNERS:
-        pose = solve(root_corners)
+        pose = _solve_pnp(root_corners, K)
         if pose is not None:
             return pose
 
@@ -562,7 +557,7 @@ def _pnp_camera(
     for (ci, cab_idx), corners in per_view_cab_corners.items():
         if ci != cam_idx or cab_idx == root_idx or len(corners) < MIN_PNP_CORNERS:
             continue
-        cam_from_cab = solve(corners)
+        cam_from_cab = _solve_pnp(corners, K)
         if cam_from_cab is None:
             continue
         Rcc, tcc = cam_from_cab  # camera_from_cabinet: x_cam = Rcc·p_local + tcc
