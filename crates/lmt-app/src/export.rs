@@ -139,15 +139,35 @@ pub fn run_export(
     Ok(out_abs.display().to_string())
 }
 
-/// 把 visual `cabinet_pose_report.json` 里每块 cabinet 单独导出成一个 OBJ，
-/// 顶点烘进共享世界系（每个 OBJ 摆原点导入即回到正确相对位置）。每块屏当 1×1
-/// 单 quad 复用 `surface_to_mesh_output`，拿到与 Path A 一致的 target 单位/winding/UV。
+/// Export one world-frame OBJ per cabinet from a `cabinet_pose_report.json`.
+///
+/// ## Geometry frame
+///
+/// Vertices are emitted in the **screen-local world frame** as supplied by the
+/// visual pipeline: right-handed, **+Y up** (panel height axis), **+Z outward**,
+/// metres. This frame is disguise-native and imports upright without any further
+/// rotation.
+///
+/// The core-model→target axis adapter (`surface_to_mesh_output` with
+/// `target=Disguise/Unreal`) is intentionally **NOT** applied. The visual world
+/// frame is already a target-agnostic world frame, and Path A's adapters are
+/// designed for the internal +Z-up core model frame: applying them here would
+/// reflect/mis-orient each panel (det −1 mismatch). Geometry is therefore always
+/// built with `TargetSoftware::Neutral` (identity transform, raw world coords).
+///
+/// ## `target` argument
+///
+/// The `target` string is **validated** (unknown values are rejected) and
+/// **recorded** in `ExportPoseObjResult.target`, but does not currently remap
+/// axes or scale units — the world frame is already in the correct convention
+/// for all supported targets.
 pub fn run_export_pose_obj(
     pose_report_path: &Path,
     target: &str,
     out_dir: &Path,
 ) -> LmtResult<ExportPoseObjResult> {
-    let target_enum = parse_target(target)?;
+    // Validate target string but do NOT use the enum for geometry: see doc comment.
+    let _ = parse_target(target)?;
     let report: CabinetPoseReportFile =
         serde_json::from_slice(&std::fs::read(pose_report_path)?)?;
     if report.cabinet_poses.is_empty() {
@@ -158,10 +178,24 @@ pub fn run_export_pose_obj(
     std::fs::create_dir_all(out_dir)?;
     let mut files = Vec::with_capacity(report.cabinet_poses.len());
     for cab in &report.cabinet_poses {
+        // Sanitize cabinet_id before using it as a filename component.
+        // Must be non-empty, consist only of [A-Za-z0-9._-], and not be "." or "..".
+        if cab.cabinet_id.is_empty()
+            || !cab.cabinet_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+            || cab.cabinet_id == "."
+            || cab.cabinet_id == ".."
+        {
+            return Err(LmtError::InvalidInput(format!(
+                "unsafe cabinet_id in pose report: {:?}",
+                cab.cabinet_id
+            )));
+        }
         let surface = panel_surface(&cab.cabinet_id, &cab.corners_mm);
         // 单 quad → 1×1；cabinet_size 只参与 absent-cell 逻辑（此处无），填占位值。
+        // Always use Neutral (identity) so vertices stay in the raw world frame —
+        // see doc comment on run_export_pose_obj.
         let cabinet_array = CabinetArray::rectangle(1, 1, [1.0, 1.0]);
-        let mesh = surface_to_mesh_output(&surface, &cabinet_array, target_enum, 0.0)?;
+        let mesh = surface_to_mesh_output(&surface, &cabinet_array, TargetSoftware::Neutral, 0.0)?;
         let out = out_dir.join(format!("{}_{target}.obj", cab.cabinet_id));
         write_obj(&mesh, &out)?;
         files.push(out.display().to_string());
@@ -253,10 +287,7 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[test]
-    fn export_pose_obj_writes_one_world_frame_obj_per_cabinet() {
-        let dir = tempdir().unwrap();
-        let report = r#"{
+    const BENCH_REPORT: &str = r#"{
           "schema_version": "visual_pose_report.v1",
           "frame": {},
           "cabinet_poses": [
@@ -266,8 +297,12 @@ mod tests {
              "corners_mm":[[321,-391,-4],[793,-376,-1117],[803,303,-1104],[331,289,8]]}
           ]
         }"#;
+
+    #[test]
+    fn export_pose_obj_writes_one_world_frame_obj_per_cabinet() {
+        let dir = tempdir().unwrap();
         let rp = dir.path().join("BENCH_cabinet_pose_report.json");
-        std::fs::write(&rp, report).unwrap();
+        std::fs::write(&rp, BENCH_REPORT).unwrap();
         let out_dir = dir.path().join("out");
 
         let res = run_export_pose_obj(&rp, "neutral", &out_dir).unwrap();
@@ -281,7 +316,67 @@ mod tests {
         let text0 = std::fs::read_to_string(&obj0).unwrap();
         assert_eq!(text0.lines().filter(|l| l.starts_with("v ")).count(), 4);
         assert_eq!(text0.lines().filter(|l| l.starts_with("f ")).count(), 2);
-        // neutral = raw model frame in meters → BL corner (-0.3,-0.17,0) baked into geometry
+        // neutral = raw world frame in meters → BL corner (-0.3,-0.17,0) baked into geometry
         assert!(text0.contains("v -0.3 -0.17 0"), "got:\n{text0}");
+    }
+
+    #[test]
+    fn export_pose_obj_disguise_target_equals_raw_world_frame() {
+        // Fix 1 regression lock: "disguise" must produce the same raw world-frame
+        // geometry as "neutral". The axis adapter must NOT be applied to the visual
+        // world frame (which is already in disguise convention). If the adapter were
+        // applied, BL would become v -0.3 0 0.17 (x,z,-y swap) — wrong.
+        let dir = tempdir().unwrap();
+        let rp = dir.path().join("BENCH_cabinet_pose_report.json");
+        std::fs::write(&rp, BENCH_REPORT).unwrap();
+        let out_dir = dir.path().join("out_disguise");
+
+        let res = run_export_pose_obj(&rp, "disguise", &out_dir).unwrap();
+        assert_eq!(res.target, "disguise");
+        assert_eq!(res.cabinet_count, 2);
+
+        let obj0 = out_dir.join("V000_R000_disguise.obj");
+        assert!(obj0.is_file());
+        let text0 = std::fs::read_to_string(&obj0).unwrap();
+        // Must equal the raw world frame — NOT the axis-swapped v -0.3 0 0.17
+        assert!(
+            text0.contains("v -0.3 -0.17 0"),
+            "disguise output should equal raw world frame; got:\n{text0}"
+        );
+        assert!(
+            !text0.contains("v -0.3 0 0.17"),
+            "axis-swapped vertex found — adapter was wrongly applied; got:\n{text0}"
+        );
+    }
+
+    #[test]
+    fn export_pose_obj_rejects_unsafe_cabinet_id() {
+        // Fix 3: cabinet_id from external JSON must be sanitized before use in path.
+        for bad_id in &["../escape", "a/b", "", ".", ".."] {
+            let dir = tempdir().unwrap();
+            let report = format!(
+                r#"{{
+                  "schema_version": "visual_pose_report.v1",
+                  "frame": {{}},
+                  "cabinet_poses": [
+                    {{"cabinet_id":{},
+                     "corners_mm":[[-300,-170,0],[300,-170,0],[300,170,0],[-300,170,0]]}}
+                  ]
+                }}"#,
+                serde_json::to_string(bad_id).unwrap()
+            );
+            let rp = dir.path().join("pose_report.json");
+            std::fs::write(&rp, &report).unwrap();
+            let out_dir = dir.path().join("out");
+
+            let result = run_export_pose_obj(&rp, "neutral", &out_dir);
+            assert!(
+                matches!(result, Err(LmtError::InvalidInput(_))),
+                "expected InvalidInput for cabinet_id={bad_id:?}, got {result:?}"
+            );
+            // Nothing should be written outside out_dir (out_dir itself may be created)
+            let escaped = dir.path().join("escape");
+            assert!(!escaped.exists(), "path traversal file written for cabinet_id={bad_id:?}");
+        }
     }
 }
