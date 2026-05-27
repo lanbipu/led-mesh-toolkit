@@ -271,3 +271,52 @@ def test_reconstruct_folded_shape_prior_is_invalid_input(
     )
     assert last["event"] == "error"
     assert last["code"] == "invalid_input"
+
+
+import cv2
+from lmt_vba_sidecar.reconstruct import estimate_nonroot_cabinet_init
+
+
+def _project(R_cam, t_cam, R_cab, t_cab, p_local, K):
+    xw = R_cab @ p_local + t_cab
+    xc = R_cam @ xw + t_cam
+    p = K @ xc
+    return p[:2] / p[2]
+
+
+def test_estimate_nonroot_cabinet_init_recovers_known_pose():
+    K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
+    # root cabinet: 4 corners in its own plane (mm), z=0
+    root_local = np.array([[-300, -170, 0], [300, -170, 0],
+                           [300, 170, 0], [-300, 170, 0]], dtype=float)
+    nonroot_local = root_local.copy()
+    # ground-truth world_from_nonroot: 60 deg about y + translate
+    ang = np.deg2rad(60.0)
+    R_true = np.array([[np.cos(ang), 0, np.sin(ang)],
+                       [0, 1, 0],
+                       [-np.sin(ang), 0, np.cos(ang)]])
+    t_true = np.array([500.0, 0.0, -200.0])
+
+    # 3 synthetic cameras, all see both cabinets
+    cams = []
+    for dx in (-300.0, 0.0, 300.0):
+        R_cam = np.eye(3)
+        t_cam = np.array([dx, 0.0, 2200.0])
+        cams.append((R_cam, t_cam))
+
+    per_view: dict[tuple[int, int], list] = {}
+    for ci, (R_cam, t_cam) in enumerate(cams):
+        root_obs = [(p, _project(R_cam, t_cam, np.eye(3), np.zeros(3), p, K))
+                    for p in root_local]
+        non_obs = [(p, _project(R_cam, t_cam, R_true, t_true, p, K))
+                   for p in nonroot_local]
+        per_view[(ci, 0)] = root_obs   # cabinet idx 0 = root
+        per_view[(ci, 1)] = non_obs    # cabinet idx 1 = non-root
+
+    out = estimate_nonroot_cabinet_init(per_view, root_idx=0, K=K)
+    assert 1 in out, "non-root cabinet should get a bridge estimate"
+    R_est, t_est = out[1]
+    # rotation close (trace test) and translation close
+    ang_err = np.degrees(np.arccos(np.clip((np.trace(R_est.T @ R_true) - 1) / 2, -1, 1)))
+    assert ang_err < 1.0, f"rotation error {ang_err:.3f} deg too large"
+    assert np.linalg.norm(t_est - t_true) < 5.0, f"t_est={t_est} vs {t_true}"

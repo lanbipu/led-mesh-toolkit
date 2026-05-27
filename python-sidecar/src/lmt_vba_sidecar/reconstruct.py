@@ -455,6 +455,75 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
     return 0
 
 
+def _solve_pnp(corners, K):
+    """corners: list[(p_local_mm, pixel_undistorted)] -> (R, t) camera_from_obj, or None."""
+    obj = np.array([p for p, _ in corners], dtype=np.float64)
+    img = np.array([px for _, px in corners], dtype=np.float64)
+    ok, rvec, tvec = cv2.solvePnP(obj, img, K, None, flags=cv2.SOLVEPNP_ITERATIVE)
+    if not ok:
+        return None
+    R, _ = cv2.Rodrigues(rvec)
+    return R, tvec.reshape(3)
+
+
+def _avg_rotation(rotations):
+    """SVD-average a set of rotation matrices; result is orthonormal with det=+1."""
+    S = sum(rotations)
+    U, _, Vt = np.linalg.svd(S)
+    R = U @ Vt
+    if np.linalg.det(R) < 0:
+        U[:, -1] *= -1
+        R = U @ Vt
+    return R
+
+
+def estimate_nonroot_cabinet_init(per_view_cab_corners, root_idx, K,
+                                  min_corners=MIN_PNP_CORNERS):
+    """Non-root cabinet_idx -> (R_world_from_cab, t_mm) via bridge cameras.
+
+    A bridge view sees the root cabinet AND a non-root cabinet (each with
+    >= min_corners corners). Two PnPs give camera_from_root / camera_from_nonroot;
+    compose to world_from_nonroot:
+        R = Rc0.T @ Rc1 ,  t = Rc0.T @ (tc1 - tc0)
+    Multiple bridge views: rotations SVD-averaged, translation component-wise median.
+    Cabinets with no bridge view are absent from the result (caller falls back to
+    nominal).
+
+    Limitation: only direct root<->non-root bridging; no transitive bridging for
+    distant cabinets that share no view with the root (large chained-topology
+    screens). Current target is the monitor bench (2 panels) + small screens.
+    """
+    by_view: dict[int, dict[int, list]] = {}
+    for (cam_idx, cab_idx), corners in per_view_cab_corners.items():
+        by_view.setdefault(cam_idx, {})[cab_idx] = corners
+
+    est_R: dict[int, list] = {}
+    est_t: dict[int, list] = {}
+    for cabs in by_view.values():
+        root_corners = cabs.get(root_idx, [])
+        if len(root_corners) < min_corners:
+            continue
+        pose_root = _solve_pnp(root_corners, K)
+        if pose_root is None:
+            continue
+        Rc0, tc0 = pose_root
+        for cab_idx, corners in cabs.items():
+            if cab_idx == root_idx or len(corners) < min_corners:
+                continue
+            pose_cab = _solve_pnp(corners, K)
+            if pose_cab is None:
+                continue
+            Rc1, tc1 = pose_cab
+            est_R.setdefault(cab_idx, []).append(Rc0.T @ Rc1)
+            est_t.setdefault(cab_idx, []).append(Rc0.T @ (tc1 - tc0))
+
+    out: dict[int, tuple] = {}
+    for cab_idx, rotations in est_R.items():
+        t = np.median(np.array(est_t[cab_idx]), axis=0)
+        out[cab_idx] = (_avg_rotation(rotations), t)
+    return out
+
+
 def _pnp_camera(
     cam_idx: int,
     root_idx: int,
