@@ -255,6 +255,19 @@ pub enum ExportCmd {
         #[arg(long, value_name = "PATH")]
         dst: Option<PathBuf>,
     },
+
+    /// 把 cabinet_pose_report.json 的每块屏单独导出成一个世界坐标 OBJ。
+    /// side_effect: destructive(写文件,需要 --yes 或 --dry-run)
+    #[command(name = "pose-obj")]
+    PoseObj {
+        /// cabinet_pose_report.json 路径。
+        pose_report: String,
+        /// target software: disguise / unreal / neutral。
+        target: String,
+        /// 输出目录(每块屏一个 OBJ)。
+        #[arg(long, value_name = "DIR")]
+        out_dir: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]

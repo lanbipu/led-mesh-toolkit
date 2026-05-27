@@ -14,6 +14,11 @@ pub fn run(cmd: ExportCmd, mode: Mode, db_arg: Option<&Path>, yes: bool, dry_run
             target,
             dst,
         } => obj(mode, db_arg, run_id, &target, dst, yes, dry_run),
+        ExportCmd::PoseObj {
+            pose_report,
+            target,
+            out_dir,
+        } => pose_obj(mode, &pose_report, &target, &out_dir, yes, dry_run),
     }
 }
 
@@ -121,6 +126,69 @@ fn obj(
                         let _ = writeln!(std::io::stdout(), "wrote {out_abs}");
                     },
                 ),
+                Err(e) => output::err(mode, ApiError::from(e)),
+            }
+        }
+    }
+}
+
+fn pose_obj(
+    mode: Mode,
+    pose_report: &str,
+    target: &str,
+    out_dir: &Path,
+    yes: bool,
+    dry_run: bool,
+) -> i32 {
+    let decision = match util::gate_destructive(yes, dry_run, "export pose-obj") {
+        Ok(d) => d,
+        Err(e) => return output::err(mode, e),
+    };
+    match decision {
+        DestructiveDecision::DryRun => {
+            if !matches!(target, "disguise" | "unreal" | "neutral") {
+                return output::err(
+                    mode,
+                    ApiError::new(
+                        error_codes::INVALID_INPUT,
+                        format!("unknown target: {target}"),
+                    ),
+                );
+            }
+            if !Path::new(pose_report).is_file() {
+                return output::err(
+                    mode,
+                    ApiError::new(
+                        error_codes::NOT_FOUND,
+                        format!("pose report not found: {pose_report}"),
+                    ),
+                );
+            }
+            let payload = serde_json::json!({
+                "dry_run": true,
+                "pose_report": pose_report,
+                "target": target,
+                "would_write_under": out_dir.display().to_string(),
+            });
+            output::ok(mode, payload, |_| {
+                let _ = writeln!(
+                    std::io::stdout(),
+                    "[dry-run] would export per-cabinet OBJ from {pose_report} into {}",
+                    out_dir.display()
+                );
+            })
+        }
+        DestructiveDecision::Execute => {
+            match lmt_app::export::run_export_pose_obj(Path::new(pose_report), target, out_dir) {
+                Ok(r) => output::ok(mode, r, |p| {
+                    let _ = writeln!(
+                        std::io::stdout(),
+                        "wrote {} OBJ ({} target) under {}",
+                        p.cabinet_count,
+                        p.target,
+                        out_dir.display()
+                    );
+                }),
                 Err(e) => output::err(mode, ApiError::from(e)),
             }
         }

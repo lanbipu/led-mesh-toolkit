@@ -1588,3 +1588,97 @@ fn generate_pattern_missing_cabinet_invalid_input() {
     assert!(env["error"]["message"].as_str().unwrap().contains("V000_R001"),
             "message should name the missing cabinet: {}", env["error"]["message"]);
 }
+
+// ── export pose-obj E2E (Task 2.3) ────────────────────────────────────────────
+
+/// Pose report JSON for 2 cabinets used by export pose-obj tests.
+fn pose_report_json() -> &'static str {
+    r#"{"schema_version":"visual_pose_report.v1","frame":{},"cabinet_poses":[
+ {"cabinet_id":"V000_R000","corners_mm":[[-300,-170,0],[300,-170,0],[300,170,0],[-300,170,0]]},
+ {"cabinet_id":"V000_R001","corners_mm":[[321,-391,-4],[793,-376,-1117],[803,303,-1104],[331,289,8]]}]}"#
+}
+
+/// happy: 2-cabinet report → exit 0, envelope ok, cabinet_count==2, both OBJ files exist.
+#[test]
+fn export_pose_obj_happy() {
+    let tmp = TempDir::new().unwrap();
+    let report = tmp.path().join("cabinet_pose_report.json");
+    std::fs::write(&report, pose_report_json()).unwrap();
+    let out_dir = tmp.path().join("out");
+
+    let assert = lmt()
+        .args([
+            "--json",
+            "--yes",
+            "export",
+            "pose-obj",
+            report.to_str().unwrap(),
+            "neutral",
+            "--out-dir",
+            out_dir.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true, "envelope ok: {env}");
+    assert_eq!(env["data"]["cabinet_count"], 2, "cabinet_count: {env}");
+    assert!(out_dir.join("V000_R000_neutral.obj").is_file(), "V000_R000 OBJ must exist");
+    assert!(out_dir.join("V000_R001_neutral.obj").is_file(), "V000_R001 OBJ must exist");
+}
+
+/// dry-run: out-dir must NOT be created, exit 0, dry_run==true in envelope.
+#[test]
+fn export_pose_obj_dry_run_writes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let report = tmp.path().join("cabinet_pose_report.json");
+    std::fs::write(&report, pose_report_json()).unwrap();
+    let out_dir = tmp.path().join("out");
+
+    let assert = lmt()
+        .args([
+            "--json",
+            "--dry-run",
+            "export",
+            "pose-obj",
+            report.to_str().unwrap(),
+            "neutral",
+            "--out-dir",
+            out_dir.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true, "envelope ok: {env}");
+    assert_eq!(env["data"]["dry_run"], true, "dry_run flag: {env}");
+    assert!(!out_dir.exists(), "dry-run must not create out-dir");
+}
+
+/// missing report → non-zero exit, envelope ok==false.
+#[test]
+fn export_pose_obj_missing_report_is_error() {
+    let tmp = TempDir::new().unwrap();
+    let missing = tmp.path().join("nope.json");
+    let out_dir = tmp.path().join("out");
+
+    let assert = lmt()
+        .args([
+            "--json",
+            "--yes",
+            "export",
+            "pose-obj",
+            missing.to_str().unwrap(),
+            "neutral",
+            "--out-dir",
+            out_dir.to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+
+    let out = assert.get_output();
+    assert_ne!(out.status.code(), Some(0), "must be non-zero exit");
+    let stderr = std::str::from_utf8(&out.stderr).unwrap().trim_end();
+    let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
+    assert_eq!(env["ok"], false, "envelope ok must be false: {env}");
+}
