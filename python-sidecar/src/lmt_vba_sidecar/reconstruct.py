@@ -462,7 +462,13 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
 
 
 def _solve_pnp(corners, K):
-    """corners: list[(p_local_mm, pixel_undistorted)] -> (R, t) camera_from_obj, or None."""
+    """corners: list[(p_local_mm, pixel_undistorted)] -> (R, t) camera_from_obj, or None.
+
+    Returns None for < 6 points: cv2.solvePnP's SOLVEPNP_ITERATIVE DLT path needs
+    >= 6 point correspondences.
+    """
+    if len(corners) < 6:
+        return None
     obj = np.array([p for p, _ in corners], dtype=np.float64)
     img = np.array([px for _, px in corners], dtype=np.float64)
     ok, rvec, tvec = cv2.solvePnP(obj, img, K, None, flags=cv2.SOLVEPNP_ITERATIVE)

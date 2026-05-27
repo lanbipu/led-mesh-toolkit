@@ -285,9 +285,11 @@ def _project(R_cam, t_cam, R_cab, t_cab, p_local, K):
 
 def test_estimate_nonroot_cabinet_init_recovers_known_pose():
     K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
-    # root cabinet: 4 corners in its own plane (mm), z=0
-    root_local = np.array([[-300, -170, 0], [300, -170, 0],
-                           [300, 170, 0], [-300, 170, 0]], dtype=float)
+    # root cabinet: 3x3 coplanar grid in its own plane (mm), z=0 — 9 points
+    # so _solve_pnp's >= 6 guard (SOLVEPNP_ITERATIVE DLT minimum) is satisfied.
+    _xs = np.array([-300.0, 0.0, 300.0])
+    _ys = np.array([-170.0, 0.0, 170.0])
+    root_local = np.array([[x, y, 0.0] for y in _ys for x in _xs], dtype=float)  # 9 coplanar points
     # Identical coplanar local geometry on purpose: both cabinets share the
     # same active-surface corner layout, so any recovered pose difference comes
     # only from the bridge composition, not from differing object points.
@@ -351,8 +353,10 @@ def test_estimate_nonroot_cabinet_init_no_bridge_returns_empty():
 
 def test_bridge_init_makes_ba_converge_to_known_angle():
     K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
-    root_local = np.array([[-300, -170, 0], [300, -170, 0],
-                           [300, 170, 0], [-300, 170, 0]], dtype=float)
+    # 3x3 coplanar grid — 9 points so _solve_pnp's >= 6 DLT guard is satisfied.
+    _xs = np.array([-300.0, 0.0, 300.0])
+    _ys = np.array([-170.0, 0.0, 170.0])
+    root_local = np.array([[x, y, 0.0] for y in _ys for x in _xs], dtype=float)  # 9 coplanar points
     ang = np.deg2rad(60.0)
     R_true = np.array([[np.cos(ang), 0, np.sin(ang)],
                        [0, 1, 0],
