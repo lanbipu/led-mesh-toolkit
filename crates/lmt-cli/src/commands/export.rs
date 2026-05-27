@@ -169,6 +169,11 @@ fn pose_obj(
                     ),
                 );
             }
+            // Parity with execute: reject a non-empty report / unknown --root now,
+            // so --dry-run doesn't green-light an export that execute would fail.
+            if let Err(e) = lmt_app::export::check_pose_obj_inputs(Path::new(pose_report), root) {
+                return output::err(mode, ApiError::from(e));
+            }
             let payload = serde_json::json!({
                 "dry_run": true,
                 "pose_report": pose_report,

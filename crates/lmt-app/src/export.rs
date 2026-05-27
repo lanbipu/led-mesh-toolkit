@@ -190,7 +190,11 @@ pub fn run_export_pose_obj(
                 .ok_or_else(|| {
                     LmtError::NotFound(format!("--root cabinet '{rid}' not in pose report"))
                 })?;
-            Some(CabinetFrame::from_corners(&rc.corners_mm))
+            Some(CabinetFrame::from_corners(&rc.corners_mm).ok_or_else(|| {
+                LmtError::InvalidInput(format!(
+                    "--root cabinet '{rid}' has degenerate corners (zero-area or collinear)"
+                ))
+            })?)
         }
     };
 
@@ -217,19 +221,16 @@ pub fn run_export_pose_obj(
         panels.push((cab.cabinet_id.clone(), cs));
     }
 
-    // Optional ground-align: shift Y so the bottom edge is at 0.
+    // Optional ground-align: shift Y so the bottom edge is at 0. Reference = the
+    // --root cabinet if given (its bottom → 0; other panels keep their true
+    // relative height, so a physically-lower panel can land below 0), else the
+    // whole assembly.
     if ground {
-        let min_y = match root {
-            Some(rid) => panels
-                .iter()
-                .find(|(id, _)| id == rid)
-                .map(|(_, cs)| cs.iter().map(|c| c[1]).fold(f64::INFINITY, f64::min))
-                .unwrap_or(f64::INFINITY),
-            None => panels
-                .iter()
-                .flat_map(|(_, cs)| cs.iter().map(|c| c[1]))
-                .fold(f64::INFINITY, f64::min),
-        };
+        let min_y = panels
+            .iter()
+            .filter(|(id, _)| root.map_or(true, |r| id == r))
+            .flat_map(|(_, cs)| cs.iter().map(|c| c[1]))
+            .fold(f64::INFINITY, f64::min);
         if min_y.is_finite() {
             for (_, cs) in panels.iter_mut() {
                 for c in cs.iter_mut() {
@@ -240,12 +241,12 @@ pub fn run_export_pose_obj(
     }
 
     std::fs::create_dir_all(out_dir)?;
+    // 单 quad → 1×1；cabinet_size 只参与 absent-cell 逻辑（此处无），填占位值。
+    let unit_array = CabinetArray::rectangle(1, 1, [1.0, 1.0]);
     let mut files = Vec::with_capacity(panels.len());
     for (cid, cs) in &panels {
         let surface = panel_surface(cid, cs);
-        // 单 quad → 1×1；cabinet_size 只参与 absent-cell 逻辑（此处无），填占位值。
-        let cabinet_array = CabinetArray::rectangle(1, 1, [1.0, 1.0]);
-        let mesh = surface_to_mesh_output(&surface, &cabinet_array, TargetSoftware::Neutral, 0.0)?;
+        let mesh = surface_to_mesh_output(&surface, &unit_array, TargetSoftware::Neutral, 0.0)?;
         let out = out_dir.join(format!("{cid}_{target}.obj"));
         write_obj(&mesh, &out)?;
         files.push(out.display().to_string());
@@ -255,6 +256,27 @@ pub fn run_export_pose_obj(
         cabinet_count: files.len(),
         files,
     })
+}
+
+/// Dry-run pre-flight for [`run_export_pose_obj`]: the pose report must be
+/// readable, non-empty, and (if `root` is given) contain that cabinet — so
+/// `--dry-run` does not green-light an export that execute would reject.
+pub fn check_pose_obj_inputs(pose_report_path: &Path, root: Option<&str>) -> LmtResult<()> {
+    let report: CabinetPoseReportFile =
+        serde_json::from_slice(&std::fs::read(pose_report_path)?)?;
+    if report.cabinet_poses.is_empty() {
+        return Err(LmtError::InvalidInput(
+            "pose report has no cabinet_poses".into(),
+        ));
+    }
+    if let Some(rid) = root {
+        if !report.cabinet_poses.iter().any(|c| c.cabinet_id == rid) {
+            return Err(LmtError::NotFound(format!(
+                "--root cabinet '{rid}' not in pose report"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// A cabinet's local frame derived from its 4 world corners (BL,BR,TR,TL).
@@ -268,14 +290,20 @@ struct CabinetFrame {
 }
 
 impl CabinetFrame {
-    fn from_corners(c: &[[f64; 3]; 4]) -> Self {
+    /// `None` if the panel is degenerate (coincident/collinear corners), where
+    /// `normalize()` would yield non-finite components and poison the geometry.
+    fn from_corners(c: &[[f64; 3]; 4]) -> Option<Self> {
         let v = |i: usize| Vector3::new(c[i][0], c[i][1], c[i][2]);
         let (bl, br, tl) = (v(0), v(1), v(3));
         let center = (v(0) + v(1) + v(2) + v(3)) / 4.0;
         let x = (br - bl).normalize();
         let z = x.cross(&(tl - bl)).normalize();
         let y = z.cross(&x);
-        Self { center, x, y, z }
+        let finite = |a: &Vector3<f64>| a.x.is_finite() && a.y.is_finite() && a.z.is_finite();
+        if !(finite(&x) && finite(&y) && finite(&z)) {
+            return None;
+        }
+        Some(Self { center, x, y, z })
     }
     fn world_to_local(&self, p: &[f64; 3]) -> [f64; 3] {
         let d = Vector3::new(p[0], p[1], p[2]) - self.center;

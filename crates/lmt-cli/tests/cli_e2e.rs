@@ -1730,3 +1730,35 @@ fn export_pose_obj_root_and_ground() {
     let min_y = ys.iter().cloned().fold(f64::INFINITY, f64::min);
     assert!(min_y.abs() < 1e-3, "ground: min y should be 0, got {min_y}");
 }
+
+/// dry-run must reject an unknown --root (parity with execute), not green-light it.
+#[test]
+fn export_pose_obj_dry_run_validates_root() {
+    let tmp = TempDir::new().unwrap();
+    let report = tmp.path().join("cabinet_pose_report.json");
+    std::fs::write(&report, pose_report_json()).unwrap();
+    let out_dir = tmp.path().join("out");
+
+    let assert = lmt()
+        .args([
+            "--json",
+            "--dry-run",
+            "export",
+            "pose-obj",
+            report.to_str().unwrap(),
+            "neutral",
+            "--out-dir",
+            out_dir.to_str().unwrap(),
+            "--root",
+            "NONEXISTENT_CAB",
+        ])
+        .assert()
+        .failure();
+
+    let out = assert.get_output();
+    assert_ne!(out.status.code(), Some(0), "unknown --root must fail dry-run");
+    let stderr = std::str::from_utf8(&out.stderr).unwrap().trim_end();
+    let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
+    assert_eq!(env["ok"], false, "envelope ok must be false: {env}");
+    assert!(!out_dir.exists(), "dry-run must not create out-dir");
+}

@@ -271,7 +271,8 @@ pub enum ExportCmd {
         /// 其余屏保持真实相对位姿。不传则用重建根 cabinet 的世界系。
         #[arg(long, value_name = "CABINET_ID")]
         root: Option<String>,
-        /// 让下边缘贴地(最低 Y = 0),而非以中心为原点。
+        /// 让下边缘贴地(最低 Y = 0),而非以中心为原点。给了 --root 时以基准屏下沿
+        /// 为 0,其余屏保持真实相对高度(物理更低的屏可能 y<0)。
         #[arg(long)]
         ground: bool,
     },

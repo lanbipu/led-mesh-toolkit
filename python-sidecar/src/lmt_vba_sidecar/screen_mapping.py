@@ -12,13 +12,16 @@ Physical ChArUco convention (pitch-based, pattern_meta v2)
 pattern.py builds CharucoBoard(size=(squares_x, squares_y)) rendered at an integer
 `square_px` per cell (possibly non-square: squares_x != squares_y). Inner corner
 (r, c) — with r, c = divmod(charuco_id, squares_x - 1) — sits at board-pixel
-((c+1)*square_px, (r+1)*square_px). With a center origin and the cabinet's own
-pixel pitch the signed mm coordinate is:
+((c+1)*square_px, (r+1)*square_px). With a center origin, the cabinet's own
+pixel pitch, and **+y up** (OpenCV's ChArUco board frame; larger r = lower on
+the displayed pattern = smaller y), the signed mm coordinate is:
 
     x = ((c + 1) * square_px - (squares_x * square_px) / 2) * pitch_x
-    y = ((r + 1) * square_px - (squares_y * square_px) / 2) * pitch_y
+    y = ((squares_y * square_px) / 2 - (r + 1) * square_px) * pitch_y
 
-This uses the cabinet's measured pixel pitch directly, so mm is exact for any
+Note the +y-up sign on y: feeding y-down object points to solvePnP recovers a
+vertically-flipped / chirally mirrored board pose. This uses the cabinet's
+measured pixel pitch directly, so mm is exact for any
 per-cabinet size/pitch and any non-square board. (The pre-v2 formula
 `active_size / (inner + 1)` assumed a single square `inner` and is obsolete.)
 """
