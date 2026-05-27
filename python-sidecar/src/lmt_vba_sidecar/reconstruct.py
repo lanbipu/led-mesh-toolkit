@@ -464,14 +464,21 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
 def _solve_pnp(corners, K):
     """corners: list[(p_local_mm, pixel_undistorted)] -> (R, t) camera_from_obj, or None.
 
-    Returns None for < 6 points: cv2.solvePnP's SOLVEPNP_ITERATIVE DLT path needs
-    >= 6 point correspondences.
+    Returns None for < 4 correspondences (solvePnP minimum) and for geometrically
+    degenerate sets. ChArUco object points are coplanar, so cv2's ITERATIVE solver
+    uses a homography init that works with >= 4 points; but a (near-)collinear corner
+    subset is degenerate and makes ITERATIVE fall back to its DLT path, which raises
+    when given < 6 points. Catch that and skip the view (this pose is only a BA seed;
+    other views still bridge the cabinet).
     """
-    if len(corners) < 6:
+    if len(corners) < 4:
         return None
     obj = np.array([p for p, _ in corners], dtype=np.float64)
     img = np.array([px for _, px in corners], dtype=np.float64)
-    ok, rvec, tvec = cv2.solvePnP(obj, img, K, None, flags=cv2.SOLVEPNP_ITERATIVE)
+    try:
+        ok, rvec, tvec = cv2.solvePnP(obj, img, K, None, flags=cv2.SOLVEPNP_ITERATIVE)
+    except cv2.error:
+        return None
     if not ok:
         return None
     R, _ = cv2.Rodrigues(rvec)

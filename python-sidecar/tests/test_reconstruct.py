@@ -285,11 +285,10 @@ def _project(R_cam, t_cam, R_cab, t_cab, p_local, K):
 
 def test_estimate_nonroot_cabinet_init_recovers_known_pose():
     K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
-    # root cabinet: 3x3 coplanar grid in its own plane (mm), z=0 — 9 points
-    # so _solve_pnp's >= 6 guard (SOLVEPNP_ITERATIVE DLT minimum) is satisfied.
-    _xs = np.array([-300.0, 0.0, 300.0])
-    _ys = np.array([-170.0, 0.0, 170.0])
-    root_local = np.array([[x, y, 0.0] for y in _ys for x in _xs], dtype=float)  # 9 coplanar points
+    # 4 well-spread coplanar corners — ChArUco object points are coplanar, so
+    # cv2's ITERATIVE solver uses a homography init that works with >= 4 points.
+    root_local = np.array([[-300, -170, 0], [300, -170, 0],
+                           [300, 170, 0], [-300, 170, 0]], dtype=float)
     # Identical coplanar local geometry on purpose: both cabinets share the
     # same active-surface corner layout, so any recovered pose difference comes
     # only from the bridge composition, not from differing object points.
@@ -353,10 +352,9 @@ def test_estimate_nonroot_cabinet_init_no_bridge_returns_empty():
 
 def test_bridge_init_makes_ba_converge_to_known_angle():
     K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
-    # 3x3 coplanar grid — 9 points so _solve_pnp's >= 6 DLT guard is satisfied.
-    _xs = np.array([-300.0, 0.0, 300.0])
-    _ys = np.array([-170.0, 0.0, 170.0])
-    root_local = np.array([[x, y, 0.0] for y in _ys for x in _xs], dtype=float)  # 9 coplanar points
+    # 4 well-spread coplanar corners — proves 4-corner bridge views are usable.
+    root_local = np.array([[-300, -170, 0], [300, -170, 0],
+                           [300, 170, 0], [-300, 170, 0]], dtype=float)
     ang = np.deg2rad(60.0)
     R_true = np.array([[np.cos(ang), 0, np.sin(ang)],
                        [0, 1, 0],
@@ -391,3 +389,25 @@ def test_bridge_init_makes_ba_converge_to_known_angle():
     n_non = R_solved @ np.array([0, 0, 1.0])
     angle = np.degrees(np.arccos(np.clip(n_root @ n_non, -1, 1)))
     assert abs(angle - 60.0) < 1.0, f"recovered inter-panel angle {angle:.2f} != 60"
+
+
+def test_solve_pnp_handles_4_points_and_skips_degenerate():
+    from lmt_vba_sidecar.reconstruct import _solve_pnp
+    K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
+    R = cv2.Rodrigues(np.array([0.1, 0.2, 0.05]))[0]
+    t = np.array([50.0, 30.0, 2200.0])
+
+    def obs(obj):
+        xc = (R @ obj.T).T + t
+        pix = (K @ xc.T).T
+        pix = pix[:, :2] / pix[:, 2:3]
+        return list(zip(obj, pix))
+
+    # 4 well-spread coplanar corners -> solvable (homography path)
+    spread4 = np.array([[-300, -170, 0], [300, -170, 0], [300, 170, 0], [-300, 170, 0]], dtype=float)
+    assert _solve_pnp(obs(spread4), K) is not None
+    # 5 (near-)collinear coplanar points -> degenerate -> None (caught cv2.error, no crash)
+    collinear5 = np.array([[x, 0.0, 0.0] for x in np.linspace(-300, 300, 5)], dtype=float)
+    assert _solve_pnp(obs(collinear5), K) is None
+    # < 4 points -> None
+    assert _solve_pnp(obs(spread4[:3]), K) is None
