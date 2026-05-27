@@ -171,7 +171,9 @@ impl Reconstructor for SurfaceFitReconstructor {
             );
         }
         warnings.push(
-            "orientation auto-derived from fit; verify FrameDerivation in report".into(),
+            "facing (+Y normal) auto-derived from fit and NOT audience-pinned; \
+             verify the screen is not back-facing (see FrameDerivation in report)"
+                .into(),
         );
 
         let scatter_fit = ScatterFit {

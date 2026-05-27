@@ -31,6 +31,11 @@ pub fn derive_cylinder_frame(
     // half_span（这份 165° 弧偏 ~82.6°，在 disguise 里表现为要手动绕竖直轴
     // 纠正 ~90°）。用中点 → 屏中心法向对齐 model +Y（→ disguise -Z），屏正对
     // 默认相机，且对任意张角的弧都成立。
+    //
+    // ⚠ 局限：法向取「从拟合圆心向外」（弧中点径向），并未钉到真实观众侧——隐含
+    // 假设观众在凸面外侧（圆心在屏后）。若安装是 convex-toward-audience（圆心在
+    // 观众侧），+Y 会朝后、屏在 disguise 里背面对观众；reprojection 与 compare-known
+    // （角度对镜像不变）都抓不到，仅靠下方 warning 提示人工核对 FrameDerivation。
     let t_mid = 0.5 * (t0 + t1);
     let radial = Vector3::new(t_mid.cos(), t_mid.sin(), 0.0);
     // +Z：竖直向上
@@ -60,9 +65,14 @@ pub fn derive_cylinder_frame(
 /// 与圆柱 [周向(列), radial(法向), up(行)] 统一——两者 +Z 都是行向上(up)，
 /// 匹配 export adapt 的 model-frame +Z up 约定（adapt.rs:8）。
 ///
-/// basis=[u, v×u, v]，det = u·((v×u)×v) = u·u = 1（v 单位、u⊥v），右手系。
-/// 列/行方向直接取 project_plane 的 u_dir/v_dir，与 resample 撒点方向一致，
-/// 避免镜像；法向由 v×u 推出，符号自洽（不依赖传入的 PCA normal 符号）。
+/// basis=[u, v×u, v]，det = u·((v×u)×v) = u·u = 1（v 单位、u⊥v）——手性(det=+1)
+/// 恒成立，与 PCA normal 符号无关。列/行方向取 project_plane 的 u_dir/v_dir，与
+/// resample 撒点方向一致，避免镜像。
+///
+/// ⚠ 但法向【朝向】（+Y 指向哪一物理面）取决于 u_dir 的定向，而 project_plane 用
+/// `u_dir.cross(v_dir)·n >= 0` 把 u_dir 钉到 PCA 最小特征向量 n 上；n 的符号是
+/// 求解器/输入相关的任意符号——所以 +Y 朝向并未钉到真实观众侧，扰动点云可能翻面。
+/// 同 cylinder：reprojection / compare-known 抓不到，靠 warning 人工核对。
 pub fn derive_plane_frame(
     _normal: Vector3<f64>,
     proj: &Projection,
