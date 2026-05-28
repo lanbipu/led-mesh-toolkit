@@ -12,9 +12,11 @@ from lmt_vba_sidecar.io_utils import write_event
 from lmt_vba_sidecar.ipc import (
     CalibrateInput,
     CompareKnownInput,
+    DecodeStructuredLightInput,
     ErrorEvent,
     EvalInput,
     GeneratePatternInput,
+    GenerateStructuredLightInput,
     ReconstructInput,
     SimulateInput,
 )
@@ -38,6 +40,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("simulate")
     sub.add_parser("eval")
     sub.add_parser("compare_known")
+    sub.add_parser("generate_structured_light")
+    sub.add_parser("decode_structured_light")
     args = parser.parse_args(argv)
 
     try:
@@ -58,6 +62,8 @@ def main(argv: list[str] | None = None) -> int:
         "simulate": "lmt_vba_sidecar.simulate_cmd",
         "eval": "lmt_vba_sidecar.eval_cmd",
         "compare_known": "lmt_vba_sidecar.compare_known_cmd",
+        "generate_structured_light": "lmt_vba_sidecar.structured_light",
+        "decode_structured_light": "lmt_vba_sidecar.sl_decode",
     }
     SUBCOMMAND_ENTRYPOINTS = {
         "calibrate": ("run_calibrate", CalibrateInput),
@@ -66,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
         "simulate": ("run_simulate", SimulateInput),
         "eval": ("run_eval", EvalInput),
         "compare_known": ("run_compare_known", CompareKnownInput),
+        "generate_structured_light": ("run_generate_structured_light", GenerateStructuredLightInput),
+        "decode_structured_light": ("run_decode_structured_light", DecodeStructuredLightInput),
     }
 
     try:
