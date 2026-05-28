@@ -328,6 +328,17 @@ pub enum VisualCmd {
         #[arg(long)]
         screen_mapping: Option<String>,
     },
+    /// 解码结构光录像 → 屏幕↔相机对应文件(带 provenance)。side_effect: destructive
+    #[command(name = "decode-structured-light")]
+    DecodeStructuredLight {
+        /// 录像视频文件或帧图片目录。
+        input_path: String,
+        /// sl_meta.json 路径(generate-structured-light 产出)。
+        sl_meta: String,
+        /// 输出的对应文件 corr.json 路径。
+        #[arg(long)]
+        out: String,
+    },
     /// 多视角照片 → measured.yaml + cabinet_pose_report.json。side_effect: destructive
     Reconstruct {
         /// 项目根目录。

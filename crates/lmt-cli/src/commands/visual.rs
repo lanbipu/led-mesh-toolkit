@@ -68,6 +68,11 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             mode, &project_path, &screen_id, dot_spacing, dot_radius,
             screen_mapping.as_deref(), yes, dry_run,
         ),
+        VisualCmd::DecodeStructuredLight {
+            input_path,
+            sl_meta,
+            out,
+        } => decode_structured_light(mode, &input_path, &sl_meta, &out, yes, dry_run),
     }
 }
 
@@ -340,6 +345,53 @@ fn generate_structured_light(
                         p.n_dots,
                         p.n_frames,
                         p.output_dir
+                    );
+                }),
+                Err(e) => output::err(mode, ApiError::from(e)),
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// decode_structured_light
+// ---------------------------------------------------------------------------
+
+fn decode_structured_light(
+    mode: Mode,
+    input_path: &str,
+    sl_meta: &str,
+    out: &str,
+    yes: bool,
+    dry_run: bool,
+) -> i32 {
+    let decision = match util::gate_destructive(yes, dry_run, "visual decode-structured-light") {
+        Ok(d) => d,
+        Err(e) => return output::err(mode, e),
+    };
+
+    match decision {
+        DestructiveDecision::DryRun => {
+            let payload = serde_json::json!({
+                "dry_run": true,
+                "would_write": out,
+            });
+            output::ok(mode, payload, |_| {
+                let _ = writeln!(std::io::stdout(), "[dry-run] would decode → {out}");
+            })
+        }
+        DestructiveDecision::Execute => {
+            match lmt_app::visual::run_decode_structured_light(
+                Path::new(input_path),
+                Path::new(sl_meta),
+                Path::new(out),
+            ) {
+                Ok(r) => output::ok(mode, r, |p| {
+                    let _ = writeln!(
+                        std::io::stdout(),
+                        "decoded {} dots → {}",
+                        p.n_dots_decoded,
+                        p.output_path
                     );
                 }),
                 Err(e) => output::err(mode, ApiError::from(e)),

@@ -10,16 +10,17 @@
 use std::path::Path;
 
 use lmt_adapter_visual_ba::api::{
-    calibrate, compare_known, eval, generate_pattern, generate_structured_light, reconstruct,
-    simulate, CalibrateArgs, CompareKnownArgs, EvalArgs, GeneratePatternArgs,
-    GenerateStructuredLightArgs, ReconstructArgs, SimulateArgs,
+    calibrate, compare_known, decode_structured_light, eval, generate_pattern,
+    generate_structured_light, reconstruct, simulate, CalibrateArgs, CompareKnownArgs,
+    DecodeStructuredLightArgs, EvalArgs, GeneratePatternArgs, GenerateStructuredLightArgs,
+    ReconstructArgs, SimulateArgs,
 };
 use lmt_adapter_visual_ba::ipc;
 
 use lmt_shared::dto::{
-    CabinetPoseSummary, CabinetSizeCheck, CalibrateResult, CompareKnownResult, EvalResult,
-    GeneratePatternResult, GenerateStructuredLightResult, PairCheck, SimulateResult,
-    VisualReconstructResult,
+    CabinetPoseSummary, CabinetSizeCheck, CalibrateResult, CompareKnownResult,
+    DecodeStructuredLightResult, EvalResult, GeneratePatternResult, GenerateStructuredLightResult,
+    PairCheck, SimulateResult, VisualReconstructResult,
 };
 use lmt_shared::error::{LmtError, LmtResult};
 
@@ -470,6 +471,33 @@ pub fn run_generate_structured_light(
         output_dir: out.output_dir,
         n_dots: out.n_dots as usize,
         n_frames: out.n_frames as usize,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// decode_structured_light
+// ---------------------------------------------------------------------------
+
+/// Decode a recorded structured-light capture (video or frame directory) into a
+/// provenance-stamped screen↔camera correspondence file at `output_path`.
+pub fn run_decode_structured_light(
+    input_path: &Path,
+    sl_meta_path: &Path,
+    output_path: &Path,
+) -> LmtResult<DecodeStructuredLightResult> {
+    let args = DecodeStructuredLightArgs {
+        input_path: input_path.display().to_string(),
+        sl_meta_path: sl_meta_path.display().to_string(),
+        output_path: output_path.display().to_string(),
+        progress_tx: None,
+        cancel: None,
+    };
+
+    let out = rt()?.block_on(decode_structured_light(args)).map_err(map_vba_err)?;
+
+    Ok(DecodeStructuredLightResult {
+        output_path: out.output_path,
+        n_dots_decoded: out.n_dots_decoded as usize,
     })
 }
 

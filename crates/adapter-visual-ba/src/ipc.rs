@@ -266,6 +266,27 @@ pub struct StructuredLightMeta {
     pub sequence: serde_json::Value,
 }
 
+// --- correspondence file mirror (matches CorrespondenceFile in
+// python-sidecar/.../ipc.py). Carries provenance for Phase 3 validation; the
+// adapter surfaces only the decoded-point count. ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorrespondencePoint {
+    pub id: u32,
+    pub u: f64,
+    pub v: f64,
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorrespondenceFile {
+    pub schema_version: u32,
+    pub screen_id: String,
+    pub sl_meta_sha256: String,
+    pub points: Vec<CorrespondencePoint>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolErrorEvent {
     pub code: String,

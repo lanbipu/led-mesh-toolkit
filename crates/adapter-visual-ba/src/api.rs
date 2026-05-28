@@ -392,6 +392,58 @@ pub async fn generate_structured_light(
 }
 
 // ---------------------------------------------------------------------------
+// decode_structured_light
+// ---------------------------------------------------------------------------
+
+pub struct DecodeStructuredLightArgs {
+    pub input_path: String,
+    pub sl_meta_path: String,
+    pub output_path: String,
+    pub progress_tx: Option<mpsc::Sender<Event>>,
+    pub cancel: Option<oneshot::Receiver<()>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DecodeStructuredLightOut {
+    pub output_path: String,
+    pub n_dots_decoded: u32,
+}
+
+pub async fn decode_structured_light(
+    args: DecodeStructuredLightArgs,
+) -> VbaResult<DecodeStructuredLightOut> {
+    let payload = json!({
+        "command": "decode_structured_light",
+        "version": 1,
+        "input_path": &args.input_path,
+        "sl_meta_path": &args.sl_meta_path,
+        "output_path": &args.output_path,
+    });
+
+    // decode's result event is an empty ResultData; the product is the
+    // correspondence file on disk. Run for side effects + error surfacing, then
+    // read the produced correspondence file for the decoded-point count.
+    let _value = run_sidecar(SidecarRequest {
+        subcommand: "decode_structured_light".into(),
+        payload,
+        progress_tx: args.progress_tx,
+        cancel: args.cancel,
+    })
+    .await?;
+
+    let corr: crate::ipc::CorrespondenceFile = serde_json::from_str(
+        &std::fs::read_to_string(&args.output_path)
+            .map_err(|e| VbaError::InvalidInput(format!("correspondence unreadable: {e}")))?,
+    )
+    .map_err(|e| VbaError::InvalidInput(format!("correspondence decode failed: {e}")))?;
+
+    Ok(DecodeStructuredLightOut {
+        output_path: args.output_path,
+        n_dots_decoded: corr.points.len() as u32,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // simulate
 // ---------------------------------------------------------------------------
 

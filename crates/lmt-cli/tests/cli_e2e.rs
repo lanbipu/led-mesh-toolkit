@@ -1831,3 +1831,32 @@ fn generate_structured_light_dry_run_writes_nothing() {
     assert!(!proj.join("patterns/MAIN/sl").exists());
 }
 
+#[test]
+fn decode_structured_light_refuses_without_yes() {
+    let tmp = TempDir::new().unwrap();
+    let meta = tmp.path().join("sl_meta.json");
+    std::fs::write(&meta, "{}").unwrap();
+    let assert = lmt().args(["--json", "visual", "decode-structured-light",
+        tmp.path().to_str().unwrap(), meta.to_str().unwrap(),
+        "--out", tmp.path().join("c.json").to_str().unwrap()]).assert().failure();
+    let out = assert.get_output();
+    assert_eq!(out.status.code(), Some(2));
+    let env: Value = serde_json::from_str(std::str::from_utf8(&out.stderr).unwrap().trim_end()).unwrap();
+    assert_eq!(env["error"]["code"], "invalid_input");
+}
+
+#[test]
+fn decode_structured_light_dry_run_writes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let meta = tmp.path().join("sl_meta.json");
+    std::fs::write(&meta, "{}").unwrap();
+    let out_path = tmp.path().join("c.json");
+    let assert = lmt().args(["--json", "--dry-run", "visual", "decode-structured-light",
+        tmp.path().to_str().unwrap(), meta.to_str().unwrap(),
+        "--out", out_path.to_str().unwrap()]).assert().success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["dry_run"], true);
+    assert!(!out_path.exists());
+}
+
