@@ -6,7 +6,7 @@
 
 > **修订 v2(2026-05-28,回应 Codex adversarial review,三条 finding 全采纳)**：
 > - F1：把一致性契约从"任意旋转后一致"**收窄为"只规范 yaw + 平移"**,明确 +Y=面板竖直的前提,真实倾斜刻意保留(保真)。测试改 yaw+平移不变性,不是全 SO(3)。
-> - F2：前向**对齐 Path A 的 disguise 约定**(发光面→+Z),并加 Path A vs Path B golden 测试钉死,不靠人工"导反改一行"。
+> - F2：前向**对齐 Path A 的 disguise 约定**(发光面→-Z),并加 Path A vs Path B golden 测试钉死,不靠人工"导反改一行"。**实现修正**:golden 实测 Path A 发光面落 **-Z**(本 spec 初判 +Z 有误,已全文改为 -Z;正是 golden 在人工验收前抓出来的)。
 > - F3：朝向主方法从"平均法向"换成**中心列朝向**(≥180° 墙如 bengtie 184° 也成立);真正退化时 **fail-fast 报错要求 `--root`**,不静默产出伪标准摆法。
 
 ## 1. 背景与目标
@@ -19,7 +19,7 @@
 
 - **反算原始朝向本就不一致**：全站仪挂架站、ArUco-BA 挂根箱体,都任意。
 - **Path A(`reconstruct surface` → `export obj`)早已从几何重推朝向**：`crates/core/src/reconstruct/surface_fit/frame.rs` 的 `derive_cylinder_frame`(origin=弧左下角、定向用**弧中点法向 θ_mid**)、`derive_plane_frame`(PCA),再 `adapt_to_target` 到 disguise。所以 Path A 的 disguise 导出与架站无关、朝向一致。
-- **Path A disguise 朝向约定**(`crates/core/src/export/adapt.rs`)：`Disguise` 适配 `(x,y,z)→(x,z,-y)`,模型凸(外)法向 `+Y → disguise -Z`;`build.rs` 反 winding 使**发光/凹面落在 +Z(观众侧)**。
+- **Path A disguise 朝向约定**(`crates/core/src/export/adapt.rs`)：`Disguise` 适配 `(x,y,z)→(x,z,-y)`,模型凸(外)法向 `+Y → disguise -Z`;`build.rs` 反 winding 使**发光/凹面落在 -Z(观众侧)**。
 - **Path B(pose-obj)目前不做这件事**：直接用原始 BA 帧 → 朝向随根箱体乱跑,这是病根。
 - **pose report 帧的"上"**：VBA 世界系 = 根箱体 active-surface frame,**+Y 是面板竖直方向(板坐标 y-up),不是重力垂直**。无重力参照。
 
@@ -32,7 +32,7 @@
 
 ### 1.4 成功判据
 
-- `disguise` 不带参数 → 输出贴地(min Y=0)、水平居中、发光面朝固定前方(+Z,对齐 Path A)。
+- `disguise` 不带参数 → 输出贴地(min Y=0)、水平居中、发光面朝固定前方(-Z,对齐 Path A)。
 - **一致性(收窄契约)**：同一面墙,原始帧叠加**任意 yaw(绕竖直轴)+ 平移**后再导,输出摆放**逐顶点一致**。**非 yaw 旋转(真实 roll/pitch/倾斜)被原样保留**,不强行摆平(保真;见 §3 说明)。
 - 逐箱体相对位姿(法向夹角/相对平移)在标准摆法前后不变。
 - **前向契约由 golden 测试钉死**:同一合成墙经 Path A 与 Path B 导出,发光面落同一轴、winding/UV 一致。
@@ -60,8 +60,8 @@
    - `n_fwd` = 该列**所有在位箱体法向的平均**,归一化。
    - `n_h = (n_fwd.x, 0, n_fwd.z)`(水平分量)。
    - **中心列朝向比"全墙平均法向"稳健**:≥180° 包角墙(如 bengtie 184°)平均法向会互相抵消,中心列朝向仍明确。
-2. **绕 +Y 转正**:`θ = atan2(n_h.x, n_h.z)`;对所有顶点施加绕 +Y 的 `R_y(-θ)`,使 `n_h → +Z`。`R_y(α)`:`x'=x·cosα+z·sinα`,`y'=y`,`z'=-x·sinα+z·cosα`。**只转 yaw;+Y(上)不变。**
-   - **前向 = +Z,对齐 Path A**:Path A 发光/凹面落 +Z(见 §1.2);Path B 发光面外法向(`CabinetFrame.z`)朝观众,转到 +Z 即与 Path A 一致。**此约定由 §5 的 Path A vs Path B golden 测试钉死(Path A 为准)。**
+2. **绕 +Y 转正**:`θ = atan2(n_h.x, n_h.z)`;对所有顶点绕 +Y 旋转使 `n_h → -Z`(= 先 R_y(-θ) 到 +Z 再绕 Y 转 180°;实现里直接 `x'=-(x·cosθ - z·sinθ)`,`z'=-(x·sinθ + z·cosθ)`)。**只转 yaw;+Y(上)不变。**
+   - **前向 = -Z,对齐 Path A**:Path A 发光/凹面落 -Z(见 §1.2);Path B 发光面外法向(`CabinetFrame.z`)朝观众,转到 -Z 即与 Path A 一致。**此约定由 §5 的 Path A vs Path B golden 测试钉死(Path A 为准)。**
 3. **贴地**:`y -= min_y`(全顶点)。
 4. **居中**:`x -= mean_x`,`z -= mean_z`(全顶点水平质心到原点)。
 
@@ -92,9 +92,9 @@
 - **中心列稳健性**:≥180° 包角合成墙(平均法向≈0)仍能定出明确前向(用中心列)。
 
 **Path A vs Path B golden(钉死前向契约,F2)**:
-- 构造一面合成墙,**两条路各导一次 disguise OBJ**(Path A:喂 reconstruct surface;Path B:喂等价 pose report)。断言**发光面落同一轴(+Z)、winding 一致、UV 方向一致**。Path A 为权威基准。
+- 构造一面合成墙,**两条路各导一次 disguise OBJ**(Path A:喂 reconstruct surface;Path B:喂等价 pose report)。断言**发光面落同一轴(-Z)、winding 一致、UV 方向一致**。Path A 为权威基准。
 
-**行为变更**:`export_pose_obj_disguise_target_equals_raw_world_frame`(假设 disguise==原始,已不成立)→ 改为「disguise=标准摆法(朝 +Z、贴地)、neutral=原始」。现有用 `neutral` 的 E2E/单测不受影响。
+**行为变更**:`export_pose_obj_disguise_target_equals_raw_world_frame`(假设 disguise==原始,已不成立)→ 改为「disguise=标准摆法(朝 -Z、贴地)、neutral=原始」。现有用 `neutral` 的 E2E/单测不受影响。
 
 **E2E**:新增 `disguise` 不带参数 → 贴地/居中/朝前;退化墙 → 错误信封 + 非零退出 + 不写文件;`--root` 仍覆盖;`neutral` 仍原始。
 
@@ -105,7 +105,7 @@
 - `unreal` target 的 pose-obj 标准摆法(保持现状)。
 - 改 Path A(`reconstruct surface` 导出)——已有 frame 推导,不动。
 - 绝对场地坐标对齐(由 disguise 舞台标定负责)。
-- 前向轴可配置化(固定 +Z + golden 钉死 + `--root` 覆盖即可,YAGNI)。
+- 前向轴可配置化(固定 -Z + golden 钉死 + `--root` 覆盖即可,YAGNI)。
 - 用重力/IMU 等外部参照把墙摆平(本项目无此输入;真实倾斜刻意保留)。
 
 ## 7. 交付清单(CLI 契约)

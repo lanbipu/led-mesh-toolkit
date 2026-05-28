@@ -417,14 +417,15 @@ fn apply_canonical_frame(
             "cannot auto-orient: wall normal near-vertical or no usable cabinets; pass --root <cabinet_id>".into(),
         )
     })?;
-    // θ = atan2(fwd.x, fwd.z);R_y(-θ) 把 fwd 转到 +Z:x'=x·cosθ - z·sinθ,z'=x·sinθ + z·cosθ。
+    // θ = atan2(fwd.x, fwd.z);把 fwd 转到 -Z(对齐 Path A disguise:发光面落 -Z,
+    // 见 path_a_disguise_front_face_is_minus_z golden)。= R_y(-θ)→+Z 再绕 Y 转 180°(取反 x,z)。
     let theta = fwd.x.atan2(fwd.z);
     let (s, c) = theta.sin_cos();
     for (_, _, _, cs) in panels.iter_mut() {
         for p in cs.iter_mut() {
             let (x, z) = (p[0], p[2]);
-            p[0] = x * c - z * s;
-            p[2] = x * s + z * c;
+            p[0] = -(x * c - z * s);
+            p[2] = -(x * s + z * c);
         }
     }
     // 贴地 + 居中(全顶点)。
@@ -616,17 +617,17 @@ mod tests {
     }
 
     #[test]
-    fn apply_canonical_frame_faces_plus_z_grounded_centered() {
-        // 平墙朝 +X → 标准摆法后中心列法向 ≈ +Z、min Y=0、水平质心=0
+    fn apply_canonical_frame_faces_minus_z_grounded_centered() {
+        // 平墙朝 +X → 标准摆法后中心列法向 ≈ -Z(对齐 Path A)、min Y=0、水平质心=0
         let mut panels = vec![
             facing_panel(0, 0, 1.0, 0.0),
             facing_panel(1, 0, 1.0, 0.0),
             facing_panel(2, 0, 1.0, 0.0),
         ];
         apply_canonical_frame(&mut panels, 3).unwrap();
-        // 中心列法向 → +Z
+        // 中心列法向 → -Z
         let f = center_column_forward(&panels, 3).unwrap();
-        assert!((f - Vector3::new(0.0, 0.0, 1.0)).norm() < 1e-6, "facing {f:?}");
+        assert!((f - Vector3::new(0.0, 0.0, -1.0)).norm() < 1e-6, "facing {f:?}");
         // 贴地 + 居中
         let all: Vec<[f64; 3]> = panels.iter().flat_map(|(_, _, _, cs)| cs.iter().copied()).collect();
         let min_y = all.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min);
@@ -883,5 +884,34 @@ mod tests {
         assert_eq!(merged.triangles[2], [4, 5, 7]);
         assert_eq!(merged.triangles[3], [4, 7, 6]);
         assert_eq!(merged.vertices[4].x, 10.0);
+    }
+
+    #[test]
+    fn path_a_disguise_front_face_is_minus_z() {
+        // Path A model frame: 凸法向 +Y、列 +X、高 +Z。构一块平 1×1 panel(y=0 平面)。
+        use lmt_core::export::build::surface_to_mesh_output;
+        use lmt_core::surface::{GridTopology, QualityMetrics, ReconstructedSurface};
+        let topo = GridTopology { cols: 1, rows: 1 };
+        let surface = ReconstructedSurface {
+            screen_id: "A".into(),
+            topology: topo,
+            // 行主序 (0,0),(1,0),(0,1),(1,1);y=0 → 法向 ±Y(凸=+Y)
+            vertices: vec![
+                Vector3::new(0.0, 0.0, 0.0),
+                Vector3::new(1.0, 0.0, 0.0),
+                Vector3::new(0.0, 0.0, 1.0),
+                Vector3::new(1.0, 0.0, 1.0),
+            ],
+            uv_coords: compute_grid_uv(topo),
+            quality_metrics: QualityMetrics::default(),
+            scatter_fit: None,
+        };
+        let array = CabinetArray::rectangle(1, 1, [1.0, 1.0]);
+        let mesh = surface_to_mesh_output(&surface, &array, TargetSoftware::Disguise, 0.0).unwrap();
+        // 三角面 0 の几何法向(按 winding)= 发光/前面方向。
+        let t = mesh.triangles[0];
+        let v = |i: u32| mesh.vertices[i as usize];
+        let nrm = (v(t[1]) - v(t[0])).cross(&(v(t[2]) - v(t[0]))).normalize();
+        assert!(nrm.z < -0.9, "Path A disguise front face must be -Z, got {nrm:?}");
     }
 }
