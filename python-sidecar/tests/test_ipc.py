@@ -153,3 +153,38 @@ def test_cabinet_pose_report_serializes():
     )
     d = rep.model_dump()
     assert d["cabinet_poses"][0]["cabinet_id"] == "V000_R000"
+
+
+from lmt_vba_sidecar.ipc import GenerateStructuredLightInput, StructuredLightMeta, CorrespondenceFile
+
+
+def test_generate_structured_light_input_mirrors_generate_pattern():
+    m = GenerateStructuredLightInput.model_validate({
+        "command": "generate_structured_light", "version": 1,
+        "project": {"screen_id": "MAIN",
+                    "cabinet_array": {"cols": 1, "rows": 1,
+                                      "absent_cells": [], "cabinet_size_mm": [500, 500]}},
+        "output_dir": "/tmp/out", "screen_resolution": [1920, 1080],
+    })
+    assert m.dot_spacing_px == 64 and m.screen_mapping_path is None
+
+
+def test_meta_and_correspondence_carry_provenance():
+    meta = StructuredLightMeta.model_validate({
+        "schema_version": 1, "screen_id": "MAIN", "screen_resolution": [1920, 1080],
+        "dot_radius_px": 6,
+        "code": {"data_bits": 9, "total_bits": 10, "parity": "even", "encoding": "binary"},
+        "sequence": {"sentinel": "white_full", "anchor": "all_on",
+                     "n_code_frames": 10, "hold_ms": 500, "fps": 30},
+        "cabinets": [{"col": 0, "row": 0, "input_rect_px": [0, 0, 540, 540],
+                      "pixel_pitch_mm": [0.93, 0.93]}],
+        "dots": [{"id": 0, "u": 240.0, "v": 240.0, "cabinet": [0, 0]}],
+    })
+    assert meta.screen_id == "MAIN" and meta.dots[0].cabinet == [0, 0]
+    corr = CorrespondenceFile.model_validate({
+        "schema_version": 1, "screen_id": "MAIN", "sl_meta_sha256": "abc",
+        "screen_resolution": [1920, 1080], "camera_image_size": [4000, 3000],
+        "source_input": "/cap/pose1.mp4",
+        "points": [{"id": 0, "u": 240.0, "v": 240.0, "x": 12.0, "y": 34.0}],
+    })
+    assert corr.sl_meta_sha256 == "abc" and corr.points[0].id == 0

@@ -143,6 +143,89 @@ class GeneratePatternInput(BaseModel):
     screen_mapping_path: str | None = None
 
 
+class GenerateStructuredLightInput(BaseModel):
+    command: Literal["generate_structured_light"]
+    version: Literal[1]
+    project: GeneratePatternProject
+    output_dir: str
+    screen_resolution: PositiveIntPair
+    # When set, per-cabinet placement (input_rect_px) + pitch come from this
+    # screen_mapping.json -- same single-source-of-truth contract as generate_pattern.
+    screen_mapping_path: str | None = None
+    dot_spacing_px: int = Field(gt=0, default=64)
+    dot_radius_px: int = Field(gt=0, default=6)
+    margin_px: int = Field(ge=0, default=64)
+    hold_ms: int = Field(gt=0, default=500)
+    fps: int = Field(gt=0, default=30)
+
+
+class StructuredLightDot(BaseModel):
+    id: int = Field(ge=0)
+    u: float
+    v: float
+    cabinet: Annotated[list[int], Field(min_length=2, max_length=2)]
+
+
+class CabinetRect(BaseModel):
+    col: int
+    row: int
+    input_rect_px: Annotated[list[int], Field(min_length=4, max_length=4)]
+    pixel_pitch_mm: PositiveSizePair
+
+
+class CodeSpec(BaseModel):
+    data_bits: int = Field(ge=1)
+    total_bits: int = Field(ge=2)
+    parity: Literal["even"] = "even"
+    encoding: Literal["binary"] = "binary"
+
+
+class SequenceSpec(BaseModel):
+    sentinel: Literal["white_full"] = "white_full"
+    anchor: Literal["all_on"] = "all_on"
+    n_code_frames: int = Field(ge=1)   # == code.total_bits
+    hold_ms: int = Field(gt=0)
+    fps: int = Field(gt=0)
+
+
+class StructuredLightMeta(BaseModel):
+    schema_version: Literal[1]
+    screen_id: str
+    screen_resolution: PositiveIntPair
+    dot_radius_px: int = Field(gt=0)
+    code: CodeSpec
+    sequence: SequenceSpec
+    cabinets: list[CabinetRect]
+    dots: list[StructuredLightDot]
+
+
+class DecodeStructuredLightInput(BaseModel):
+    command: Literal["decode_structured_light"]
+    version: Literal[1]
+    input_path: str           # a video file OR a directory of frame images
+    sl_meta_path: str
+    output_path: str
+    sentinel_threshold: float = Field(gt=0.0, le=1.0, default=0.85)
+
+
+class CorrespondencePoint(BaseModel):
+    id: int = Field(ge=0)
+    u: float   # screen pixel (from sl_meta)
+    v: float
+    x: float   # camera pixel (sub-pixel centroid)
+    y: float
+
+
+class CorrespondenceFile(BaseModel):
+    schema_version: Literal[1]
+    screen_id: str
+    sl_meta_sha256: str        # provenance: which pattern/meta produced this
+    screen_resolution: PositiveIntPair
+    camera_image_size: Annotated[list[int], Field(min_length=2, max_length=2)]
+    source_input: str          # the decoded video/dir path
+    points: list[CorrespondencePoint]
+
+
 class Uncertainty(BaseModel):
     """Externally tagged: exactly one of {isotropic, covariance} must be set.
 
@@ -233,6 +316,7 @@ class ErrorEvent(BaseModel):
         "ba_diverged",
         "procrustes_failed",
         "intrinsics_invalid",
+        "decode_failed",
         "internal_error",
     ]
     message: str
