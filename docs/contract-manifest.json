@@ -257,6 +257,24 @@
       ]
     },
     {
+      "operation_id": "export.pose_obj",
+      "summary": "Merge a cabinet_pose_report.json into one world-frame OBJ: per-cabinet unwelded panels + one integral 0-1 grid UV (--root re-bases on a cabinet, --ground sits bottom edge at 0)",
+      "cli": "lmt export pose-obj <pose_report> <target> --out <path> [--root <cabinet_id>] [--ground]",
+      "side_effect": "destructive",
+      "supports_dry_run": true,
+      "supports_stdin": false,
+      "idempotent": false,
+      "open_world": false,
+      "output_type": "ExportPoseObjResult",
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        6
+      ]
+    },
+    {
       "operation_id": "seed_example",
       "summary": "Copy a built-in example project (curved-flat / curved-arc) into a directory",
       "cli": "lmt seed-example <name> <dst>",
@@ -294,8 +312,8 @@
     },
     {
       "operation_id": "visual.generate_pattern",
-      "summary": "Generate ChArUco pattern (per-cabinet PNGs + full_screen + pattern_meta)",
-      "cli": "lmt visual generate-pattern <project> <screen_id> [--method charuco]",
+      "summary": "Generate ChArUco pattern (per-cabinet PNGs + full_screen + pattern_meta v2); --screen-mapping enables per-cabinet pitch-matched boards (non-square / unequal cabinets)",
+      "cli": "lmt visual generate-pattern <project> <screen_id> [--method charuco] [--screen-mapping <json>]",
       "side_effect": "destructive",
       "supports_dry_run": true,
       "supports_stdin": false,
