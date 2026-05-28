@@ -362,6 +362,47 @@ fn merge_mesh_outputs(target: TargetSoftware, meshes: &[MeshOutput]) -> MeshOutp
     MeshOutput { target, vertices, triangles, uv_coords }
 }
 
+/// 墙中心列在位箱体的平均发光面外法向,取归一化水平分量。
+/// 中心列 = round((cols-1)/2);该列空则取最近非空列。Path A 弧中点 θ_mid 的稳健类比:
+/// ≥180° 包角墙(全墙平均法向会抵消)用中心列仍能定出明确前向。
+/// 水平分量近 0(墙面朝上/下等病态)→ None。
+fn center_column_forward(
+    panels: &[(String, u32, u32, [[f64; 3]; 4])],
+    cols: u32,
+) -> Option<Vector3<f64>> {
+    if panels.is_empty() || cols == 0 {
+        return None;
+    }
+    let c_mid = (cols - 1) / 2;
+    let present: std::collections::BTreeSet<u32> = panels.iter().map(|(_, c, _, _)| *c).collect();
+    let target_col = if present.contains(&c_mid) {
+        c_mid
+    } else {
+        *present
+            .iter()
+            .min_by_key(|&&c| (c as i64 - c_mid as i64).abs())?
+    };
+    let mut sum = Vector3::zeros();
+    let mut n = 0u32;
+    for (_, c, _, cs) in panels.iter() {
+        if *c == target_col {
+            if let Some(f) = CabinetFrame::from_corners(cs) {
+                sum += f.z;
+                n += 1;
+            }
+        }
+    }
+    if n == 0 {
+        return None;
+    }
+    let avg = sum / n as f64;
+    let n_h = Vector3::new(avg.x, 0.0, avg.z);
+    if n_h.norm() < 1e-6 {
+        return None;
+    }
+    Some(n_h.normalize())
+}
+
 /// 一块 cabinet 的 4 个世界系角点（mm，BL,BR,TR,TL）→ 1×1 ReconstructedSurface（米，原样）。
 /// 顶点行主序 [(0,0),(1,0),(0,1),(1,1)]=[BL,BR,TL,TR]，故把 [BL,BR,TR,TL] 重排为索引 0,1,3,2。
 /// UV：把 1×1 单位 UV 重映射到本块在整屏 (cols×rows) 网格里的格子。
@@ -457,6 +498,57 @@ pub fn lookup_run_paths(db: Db, run_id: i64) -> LmtResult<(String, String)> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    fn panel(col: u32, row: u32, corners: [[f64; 3]; 4]) -> (String, u32, u32, [[f64; 3]; 4]) {
+        (format!("V{col:03}_R{row:03}"), col, row, corners)
+    }
+    /// 一块面向给定水平法向、竖直站立的箱体角点(BL,BR,TR,TL,mm)。
+    fn facing_panel(col: u32, row: u32, nx: f64, nz: f64) -> (String, u32, u32, [[f64; 3]; 4]) {
+        // right = up(+Y) × normal;normal=(nx,0,nz)
+        let n = Vector3::new(nx, 0.0, nz).normalize();
+        let up = Vector3::new(0.0, 1.0, 0.0);
+        let right = up.cross(&n).normalize(); // 沿底边方向
+        let (hw, hh) = (300.0, 170.0);
+        let c = Vector3::new(col as f64 * 700.0, 0.0, 0.0); // 任意横向铺开
+        let bl = c - right * hw - up * hh;
+        let br = c + right * hw - up * hh;
+        let tr = c + right * hw + up * hh;
+        let tl = c - right * hw + up * hh;
+        let v = |p: Vector3<f64>| [p.x, p.y, p.z];
+        (format!("V{col:03}_R{row:03}"), col, row, [v(bl), v(br), v(tr), v(tl)])
+    }
+
+    #[test]
+    fn center_column_forward_flat_wall() {
+        // 3 列平墙全朝 +X → 中心列(col1)前向 ≈ +X
+        let panels = vec![
+            facing_panel(0, 0, 1.0, 0.0),
+            facing_panel(1, 0, 1.0, 0.0),
+            facing_panel(2, 0, 1.0, 0.0),
+        ];
+        let f = center_column_forward(&panels, 3).unwrap();
+        assert!((f - Vector3::new(1.0, 0.0, 0.0)).norm() < 1e-6, "got {f:?}");
+    }
+
+    #[test]
+    fn center_column_forward_handles_wraparound() {
+        // 模拟 ≥180° 包角:法向铺满,平均会接近 0,但中心列(col1)朝 +Z 明确
+        let panels = vec![
+            facing_panel(0, 0, -1.0, 0.0),
+            facing_panel(1, 0, 0.0, 1.0), // 中心列朝 +Z
+            facing_panel(2, 0, 1.0, 0.0),
+        ];
+        let f = center_column_forward(&panels, 3).unwrap();
+        assert!((f - Vector3::new(0.0, 0.0, 1.0)).norm() < 1e-6, "got {f:?}");
+    }
+
+    #[test]
+    fn center_column_forward_degenerate_returns_none() {
+        // 墙面朝上(法向≈+Y)→ 水平分量≈0 → None
+        let flat_up = [[-300.0, 0.0, -170.0], [300.0, 0.0, -170.0], [300.0, 0.0, 170.0], [-300.0, 0.0, 170.0]];
+        let panels = vec![panel(0, 0, flat_up)];
+        assert!(center_column_forward(&panels, 1).is_none());
+    }
 
     const BENCH_REPORT: &str = r#"{
           "schema_version": "visual_pose_report.v1",
