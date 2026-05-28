@@ -403,6 +403,50 @@ fn center_column_forward(
     Some(n_h.normalize())
 }
 
+/// 标准摆法:中心列前向绕 +Y 转到 +Z + 贴地(min Y=0)+ 居中(水平质心→原点)。
+/// 只转 yaw、保 +Y up —— 真实倾斜(roll/pitch)刻意保留(保真,见 spec §3)。
+/// 整组刚性变换,逐箱体相对几何不变。无法定向(中心列水平法向≈0)→ InvalidInput。
+fn apply_canonical_frame(
+    panels: &mut [(String, u32, u32, [[f64; 3]; 4])],
+    cols: u32,
+) -> LmtResult<()> {
+    let fwd = center_column_forward(panels, cols).ok_or_else(|| {
+        LmtError::InvalidInput(
+            "cannot auto-orient: wall normal near-vertical or no usable cabinets; pass --root <cabinet_id>".into(),
+        )
+    })?;
+    // θ = atan2(fwd.x, fwd.z);R_y(-θ) 把 fwd 转到 +Z:x'=x·cosθ - z·sinθ,z'=x·sinθ + z·cosθ。
+    let theta = fwd.x.atan2(fwd.z);
+    let (s, c) = theta.sin_cos();
+    for (_, _, _, cs) in panels.iter_mut() {
+        for p in cs.iter_mut() {
+            let (x, z) = (p[0], p[2]);
+            p[0] = x * c - z * s;
+            p[2] = x * s + z * c;
+        }
+    }
+    // 贴地 + 居中(全顶点)。
+    let mut min_y = f64::INFINITY;
+    let (mut sum_x, mut sum_z, mut n) = (0.0, 0.0, 0u32);
+    for (_, _, _, cs) in panels.iter() {
+        for p in cs.iter() {
+            min_y = min_y.min(p[1]);
+            sum_x += p[0];
+            sum_z += p[2];
+            n += 1;
+        }
+    }
+    let (mean_x, mean_z) = (sum_x / n as f64, sum_z / n as f64);
+    for (_, _, _, cs) in panels.iter_mut() {
+        for p in cs.iter_mut() {
+            p[0] -= mean_x;
+            p[1] -= min_y;
+            p[2] -= mean_z;
+        }
+    }
+    Ok(())
+}
+
 /// 一块 cabinet 的 4 个世界系角点（mm，BL,BR,TR,TL）→ 1×1 ReconstructedSurface（米，原样）。
 /// 顶点行主序 [(0,0),(1,0),(0,1),(1,1)]=[BL,BR,TL,TR]，故把 [BL,BR,TR,TL] 重排为索引 0,1,3,2。
 /// UV：把 1×1 单位 UV 重映射到本块在整屏 (cols×rows) 网格里的格子。
@@ -548,6 +592,86 @@ mod tests {
         let flat_up = [[-300.0, 0.0, -170.0], [300.0, 0.0, -170.0], [300.0, 0.0, 170.0], [-300.0, 0.0, 170.0]];
         let panels = vec![panel(0, 0, flat_up)];
         assert!(center_column_forward(&panels, 1).is_none());
+    }
+
+    /// 把整组 panel 角点施加任意 yaw(绕Y)+ 平移(模拟不同架站/根箱体)。
+    fn perturb_yaw_translate(
+        panels: &[(String, u32, u32, [[f64; 3]; 4])],
+        yaw: f64,
+        t: [f64; 3],
+    ) -> Vec<(String, u32, u32, [[f64; 3]; 4])> {
+        let (s, c) = yaw.sin_cos();
+        panels
+            .iter()
+            .map(|(id, col, row, cs)| {
+                let nc = cs.map(|p| {
+                    let (x, z) = (p[0], p[2]);
+                    [x * c - z * s + t[0], p[1] + t[1], x * s + z * c + t[2]]
+                });
+                (id.clone(), *col, *row, nc)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn apply_canonical_frame_faces_plus_z_grounded_centered() {
+        // 平墙朝 +X → 标准摆法后中心列法向 ≈ +Z、min Y=0、水平质心=0
+        let mut panels = vec![
+            facing_panel(0, 0, 1.0, 0.0),
+            facing_panel(1, 0, 1.0, 0.0),
+            facing_panel(2, 0, 1.0, 0.0),
+        ];
+        apply_canonical_frame(&mut panels, 3).unwrap();
+        // 中心列法向 → +Z
+        let f = center_column_forward(&panels, 3).unwrap();
+        assert!((f - Vector3::new(0.0, 0.0, 1.0)).norm() < 1e-6, "facing {f:?}");
+        // 贴地 + 居中
+        let all: Vec<[f64; 3]> = panels.iter().flat_map(|(_, _, _, cs)| cs.iter().copied()).collect();
+        let min_y = all.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min);
+        let mean_x = all.iter().map(|p| p[0]).sum::<f64>() / all.len() as f64;
+        let mean_z = all.iter().map(|p| p[2]).sum::<f64>() / all.len() as f64;
+        assert!(min_y.abs() < 1e-6, "min_y {min_y}");
+        assert!(mean_x.abs() < 1e-6 && mean_z.abs() < 1e-6, "centroid ({mean_x},{mean_z})");
+    }
+
+    #[test]
+    fn apply_canonical_frame_invariant_under_yaw_translation() {
+        let base = vec![
+            facing_panel(0, 0, 0.3, 1.0),
+            facing_panel(1, 0, 0.0, 1.0),
+            facing_panel(2, 0, -0.3, 1.0),
+        ];
+        let mut a = base.clone();
+        apply_canonical_frame(&mut a, 3).unwrap();
+        // 叠加任意 yaw + 平移后再标准摆法 → 与 a 逐顶点一致
+        let mut b = perturb_yaw_translate(&base, 1.2345, [123.0, -45.0, 67.0]);
+        apply_canonical_frame(&mut b, 3).unwrap();
+        for ((_, _, _, ca), (_, _, _, cb)) in a.iter().zip(b.iter()) {
+            for (pa, pb) in ca.iter().zip(cb.iter()) {
+                for k in 0..3 {
+                    assert!((pa[k] - pb[k]).abs() < 1e-6, "yaw+translate not invariant: {pa:?} vs {pb:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn apply_canonical_frame_preserves_relative_geometry() {
+        // 两块成已知夹角 → 标准摆法(刚性)后夹角不变
+        let mut panels = vec![facing_panel(0, 0, 1.0, 0.0), facing_panel(1, 0, 0.0, 1.0)];
+        let ang = |cs: &[[f64; 3]; 4]| CabinetFrame::from_corners(cs).unwrap().z;
+        let before = ang(&panels[0].3).dot(&ang(&panels[1].3));
+        apply_canonical_frame(&mut panels, 2).unwrap();
+        let after = ang(&panels[0].3).dot(&ang(&panels[1].3));
+        assert!((before - after).abs() < 1e-6, "relative angle changed: {before} -> {after}");
+    }
+
+    #[test]
+    fn apply_canonical_frame_degenerate_errors() {
+        // 墙面朝上 → 无法定向 → InvalidInput(不 panic)
+        let flat_up = [[-300.0, 0.0, -170.0], [300.0, 0.0, -170.0], [300.0, 0.0, 170.0], [-300.0, 0.0, 170.0]];
+        let mut panels = vec![panel(0, 0, flat_up)];
+        assert!(matches!(apply_canonical_frame(&mut panels, 1), Err(LmtError::InvalidInput(_))));
     }
 
     const BENCH_REPORT: &str = r#"{
