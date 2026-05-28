@@ -258,7 +258,7 @@
     },
     {
       "operation_id": "export.pose_obj",
-      "summary": "Merge a cabinet_pose_report.json into one world-frame OBJ: per-cabinet unwelded panels + one integral 0-1 grid UV (--root re-bases on a cabinet, --ground sits bottom edge at 0)",
+      "summary": "Merge a cabinet_pose_report.json into one world-frame OBJ: per-cabinet unwelded panels + one integral 0-1 grid UV. disguise=canonical placement (center-column auto-orient + ground + center, per-cabinet offsets preserved); neutral=raw world frame; --root manual override; near-vertical wall normal errors and requires --root",
       "cli": "lmt export pose-obj <pose_report> <target> --out <path> [--root <cabinet_id>] [--ground]",
       "side_effect": "destructive",
       "supports_dry_run": true,

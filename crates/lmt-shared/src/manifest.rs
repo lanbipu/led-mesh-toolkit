@@ -115,7 +115,7 @@ pub fn build() -> ContractManifest {
            "lmt reconstruct get-run-report <run_id>", ReadOnly, false, false, true, None, &[0, 2, 3, 4, 5, 6]),
         op("export.obj", "Write an OBJ for a run (target: disguise|unreal|neutral)",
            "lmt export obj <run_id> <target> [--dst <path>]", Destructive, true, false, false, None, &[0, 2, 3, 4, 5, 6]),
-        op("export.pose_obj", "Merge a cabinet_pose_report.json into one world-frame OBJ: per-cabinet unwelded panels + one integral 0-1 grid UV (--root re-bases on a cabinet, --ground sits bottom edge at 0)",
+        op("export.pose_obj", "Merge a cabinet_pose_report.json into one world-frame OBJ: per-cabinet unwelded panels + one integral 0-1 grid UV. disguise=canonical placement (center-column auto-orient + ground + center, per-cabinet offsets preserved); neutral=raw world frame; --root manual override; near-vertical wall normal errors and requires --root",
            "lmt export pose-obj <pose_report> <target> --out <path> [--root <cabinet_id>] [--ground]", Destructive, true, false, false, Some("ExportPoseObjResult"), &[0, 2, 3, 4, 6]),
         op("seed_example", "Copy a built-in example project (curved-flat / curved-arc) into a directory",
            "lmt seed-example <name> <dst>", Destructive, true, false, false, None, &[0, 2, 3, 4]),
