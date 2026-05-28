@@ -277,3 +277,12 @@ def test_transitive_import_failure_does_not_say_not_implemented(tmp_path, monkey
     assert last["event"] == "error"
     assert "not yet implemented" not in last["message"]
     assert "some_required_dep" in last["message"]
+
+
+def test_dispatch_knows_structured_light_subcommands():
+    import subprocess, sys, json
+    p = subprocess.run([sys.executable, "-m", "lmt_vba_sidecar", "decode_structured_light"],
+                       input="{}", capture_output=True, text=True)
+    assert p.returncode == 1
+    ev = json.loads(p.stdout.strip().splitlines()[-1])
+    assert ev["event"] == "error" and ev["code"] == "invalid_input"
