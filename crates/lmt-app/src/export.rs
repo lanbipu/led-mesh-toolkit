@@ -139,38 +139,23 @@ pub fn run_export(
     Ok(out_abs.display().to_string())
 }
 
-/// Export one OBJ per cabinet from a `cabinet_pose_report.json`.
+/// Merge a `cabinet_pose_report.json` into ONE world-frame OBJ.
 ///
-/// ## Frame
+/// 几何：每块 cabinet 一块独立 quad（4 顶点，不焊接），世界坐标烘进顶点。
+/// UV：一张整体 0-1 网格，每块占它在 (cols×rows) 网格里的格子（cols/rows 由 cabinet_id 反推）。
+/// 几何按 `TargetSoftware::Neutral` 原样输出（pose report 已是 +Y up / +Z outward = disguise 约定，
+/// 不套 core→target 适配器）。`target` 字符串校验+记录但不改轴。
 ///
-/// The visual pose report is already in the conventional screen-local world
-/// frame (right-handed, +Y up, +Z outward, mm) — the source-side
-/// `charuco_corner_local_mm` y-up convention makes it physically faithful —
-/// which IS disguise's own convention (RH, +Y up, m). Geometry is therefore
-/// emitted RAW (`TargetSoftware::Neutral`, identity): the core→target axis
-/// adapter is intentionally NOT applied (it is built for the +Z-up internal core
-/// model frame and would mis-orient this +Y-up frame). The `target` string is
-/// validated and recorded but does not remap axes.
-///
-/// ## Placement options
-///
-/// - `root = Some(cabinet_id)`: re-express the whole scene in that cabinet's
-///   local frame (origin = its center; +x width, +y height, +z outward), so it
-///   becomes the axis-aligned reference at the origin. The same proper rotation
-///   is applied to every panel, so relative poses are preserved.
-/// - `ground = true`: shift Y so the bottom edge sits at 0 (reference = the
-///   `root` cabinet if given, else the whole assembly) instead of being centered.
-///
-/// Per-cabinet OBJs are written as `<cabinet_id>_<target>.obj`, with world
-/// coordinates baked in: import each at the origin to reproduce the layout.
+/// `--root`：以该 cabinet 局部系为世界系（它轴对齐落原点），其余块保持真实相对位姿。
+/// `--ground`：底边贴地（基准=root 块，未给 root 时=整体）。
 pub fn run_export_pose_obj(
     pose_report_path: &Path,
     target: &str,
-    out_dir: &Path,
+    out_file: &Path,
     root: Option<&str>,
     ground: bool,
 ) -> LmtResult<ExportPoseObjResult> {
-    let _ = parse_target(target)?; // validate target; geometry is raw (Neutral)
+    let _ = parse_target(target)?; // 校验 target；几何原样（Neutral）
     let report: CabinetPoseReportFile =
         serde_json::from_slice(&std::fs::read(pose_report_path)?)?;
     if report.cabinet_poses.is_empty() {
@@ -179,7 +164,15 @@ pub fn run_export_pose_obj(
         ));
     }
 
-    // Optional re-root: derive a world→local transform from the chosen cabinet.
+    // 网格维度（同时校验每个 cabinet_id 可解析）。
+    let ids: Vec<&str> = report
+        .cabinet_poses
+        .iter()
+        .map(|c| c.cabinet_id.as_str())
+        .collect();
+    let (cols, rows) = infer_grid_dims(&ids)?;
+
+    // 可选 re-root：从基准 cabinet 推 world→local 变换。
     let frame = match root {
         None => None,
         Some(rid) => {
@@ -198,41 +191,34 @@ pub fn run_export_pose_obj(
         }
     };
 
-    // Sanitize ids + apply the (optional) re-root transform to every corner.
-    let mut panels: Vec<(String, [[f64; 3]; 4])> = Vec::with_capacity(report.cabinet_poses.len());
+    // 每块：(id, col, row, 角点[已应用 re-root])。
+    let mut panels: Vec<(String, u32, u32, [[f64; 3]; 4])> =
+        Vec::with_capacity(report.cabinet_poses.len());
     for cab in &report.cabinet_poses {
-        // cabinet_id becomes a filename component: must be a safe, non-traversing name.
-        if cab.cabinet_id.is_empty()
-            || !cab.cabinet_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
-            || cab.cabinet_id == "."
-            || cab.cabinet_id == ".."
-        {
-            return Err(LmtError::InvalidInput(format!(
-                "unsafe cabinet_id in pose report: {:?}",
+        let (col, row) = parse_cabinet_col_row(&cab.cabinet_id).ok_or_else(|| {
+            LmtError::InvalidInput(format!(
+                "cabinet_id {:?} not parseable as V<col>_R<row>",
                 cab.cabinet_id
-            )));
-        }
+            ))
+        })?;
         let mut cs = cab.corners_mm;
         if let Some(f) = &frame {
             for c in cs.iter_mut() {
                 *c = f.world_to_local(c);
             }
         }
-        panels.push((cab.cabinet_id.clone(), cs));
+        panels.push((cab.cabinet_id.clone(), col, row, cs));
     }
 
-    // Optional ground-align: shift Y so the bottom edge is at 0. Reference = the
-    // --root cabinet if given (its bottom → 0; other panels keep their true
-    // relative height, so a physically-lower panel can land below 0), else the
-    // whole assembly.
+    // 可选 ground：Y 平移使底边到 0（基准=root 块，否则整体）。
     if ground {
         let min_y = panels
             .iter()
-            .filter(|(id, _)| root.map_or(true, |r| id == r))
-            .flat_map(|(_, cs)| cs.iter().map(|c| c[1]))
+            .filter(|(id, _, _, _)| root.map_or(true, |r| id == r))
+            .flat_map(|(_, _, _, cs)| cs.iter().map(|c| c[1]))
             .fold(f64::INFINITY, f64::min);
         if min_y.is_finite() {
-            for (_, cs) in panels.iter_mut() {
+            for (_, _, _, cs) in panels.iter_mut() {
                 for c in cs.iter_mut() {
                     c[1] -= min_y;
                 }
@@ -240,21 +226,32 @@ pub fn run_export_pose_obj(
         }
     }
 
-    std::fs::create_dir_all(out_dir)?;
-    // 单 quad → 1×1；cabinet_size 只参与 absent-cell 逻辑（此处无），填占位值。
+    // 每块 → 1×1 surface（格子 UV）→ MeshOutput（Neutral 原样，weld 0）；再合并。
     let unit_array = CabinetArray::rectangle(1, 1, [1.0, 1.0]);
-    let mut files = Vec::with_capacity(panels.len());
-    for (cid, cs) in &panels {
-        let surface = panel_surface(cid, cs);
-        let mesh = surface_to_mesh_output(&surface, &unit_array, TargetSoftware::Neutral, 0.0)?;
-        let out = out_dir.join(format!("{cid}_{target}.obj"));
-        write_obj(&mesh, &out)?;
-        files.push(out.display().to_string());
+    let mut meshes = Vec::with_capacity(panels.len());
+    for (cid, col, row, cs) in &panels {
+        let surface = panel_surface(cid, cs, *col, *row, cols, rows);
+        meshes.push(surface_to_mesh_output(
+            &surface,
+            &unit_array,
+            TargetSoftware::Neutral,
+            0.0,
+        )?);
     }
+    let combined = merge_mesh_outputs(TargetSoftware::Neutral, &meshes);
+
+    let out = ensure_obj_extension(out_file);
+    if let Some(parent) = out.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    write_obj(&combined, &out)?;
+
     Ok(ExportPoseObjResult {
         target: target.to_string(),
-        cabinet_count: files.len(),
-        files,
+        cabinet_count: panels.len(),
+        file: out.display().to_string(),
     })
 }
 
@@ -269,6 +266,13 @@ pub fn check_pose_obj_inputs(pose_report_path: &Path, root: Option<&str>) -> Lmt
             "pose report has no cabinet_poses".into(),
         ));
     }
+    // dry-run 与 execute 对齐：不可解析的 cabinet_id 现在就拒。
+    let ids: Vec<&str> = report
+        .cabinet_poses
+        .iter()
+        .map(|c| c.cabinet_id.as_str())
+        .collect();
+    infer_grid_dims(&ids)?;
     if let Some(rid) = root {
         if !report.cabinet_poses.iter().any(|c| c.cabinet_id == rid) {
             return Err(LmtError::NotFound(format!(
@@ -350,9 +354,16 @@ fn merge_mesh_outputs(target: TargetSoftware, meshes: &[MeshOutput]) -> MeshOutp
 }
 
 /// 一块 cabinet 的 4 个世界系角点（mm，BL,BR,TR,TL）→ 1×1 ReconstructedSurface（米，原样）。
-/// 网格顶点行主序 [(0,0),(1,0),(0,1),(1,1)]=[BL,BR,TL,TR]，故把 [BL,BR,TR,TL] 重排为
-/// 索引 0,1,3,2，quad 不扭曲。
-fn panel_surface(cabinet_id: &str, corners_mm: &[[f64; 3]; 4]) -> ReconstructedSurface {
+/// 顶点行主序 [(0,0),(1,0),(0,1),(1,1)]=[BL,BR,TL,TR]，故把 [BL,BR,TR,TL] 重排为索引 0,1,3,2。
+/// UV：把 1×1 单位 UV 重映射到本块在整屏 (cols×rows) 网格里的格子。
+fn panel_surface(
+    cabinet_id: &str,
+    corners_mm: &[[f64; 3]; 4],
+    col: u32,
+    row: u32,
+    cols: u32,
+    rows: u32,
+) -> ReconstructedSurface {
     let m = |i: usize| {
         Vector3::new(
             corners_mm[i][0] / 1000.0,
@@ -361,9 +372,18 @@ fn panel_surface(cabinet_id: &str, corners_mm: &[[f64; 3]; 4]) -> ReconstructedS
         )
     };
     let topology = GridTopology { cols: 1, rows: 1 };
+    let uv_coords = compute_grid_uv(topology)
+        .into_iter()
+        .map(|uv| {
+            nalgebra::Vector2::new(
+                (col as f64 + uv.x) / cols as f64,
+                (row as f64 + uv.y) / rows as f64,
+            )
+        })
+        .collect();
     ReconstructedSurface {
         screen_id: cabinet_id.to_string(),
-        uv_coords: compute_grid_uv(topology),
+        uv_coords,
         vertices: vec![m(0), m(1), m(3), m(2)],
         topology,
         quality_metrics: QualityMetrics {
@@ -441,60 +461,65 @@ mod tests {
         }"#;
 
     #[test]
-    fn export_pose_obj_writes_one_world_frame_obj_per_cabinet() {
+    fn export_pose_obj_writes_single_merged_obj_with_grid_uv() {
         let dir = tempdir().unwrap();
         let rp = dir.path().join("BENCH_cabinet_pose_report.json");
         std::fs::write(&rp, BENCH_REPORT).unwrap();
-        let out_dir = dir.path().join("out");
+        let out = dir.path().join("wall.obj");
 
-        let res = run_export_pose_obj(&rp, "neutral", &out_dir, None, false).unwrap();
+        let res = run_export_pose_obj(&rp, "neutral", &out, None, false).unwrap();
         assert_eq!(res.cabinet_count, 2);
-        assert_eq!(res.files.len(), 2);
+        assert!(out.is_file());
 
-        let obj0 = out_dir.join("V000_R000_neutral.obj");
-        let obj1 = out_dir.join("V000_R001_neutral.obj");
-        assert!(obj0.is_file() && obj1.is_file());
+        let text = std::fs::read_to_string(&out).unwrap();
+        // 2 块 × 4 顶点 = 8 个 v；2 块 × 2 三角 = 4 个 f
+        assert_eq!(text.lines().filter(|l| l.starts_with("v ")).count(), 8);
+        assert_eq!(text.lines().filter(|l| l.starts_with("f ")).count(), 4);
+        // neutral = 原样世界坐标（米）→ V000_R000 的 BL (-0.3,-0.17,0)
+        assert!(text.contains("v -0.3 -0.17 0"), "got:\n{text}");
 
-        let text0 = std::fs::read_to_string(&obj0).unwrap();
-        assert_eq!(text0.lines().filter(|l| l.starts_with("v ")).count(), 4);
-        assert_eq!(text0.lines().filter(|l| l.starts_with("f ")).count(), 2);
-        // neutral = raw world frame in meters → BL corner (-0.3,-0.17,0) baked into geometry
-        assert!(text0.contains("v -0.3 -0.17 0"), "got:\n{text0}");
+        // UV 是整体网格：BENCH 两块=V000_R000/V000_R001 → cols=1,rows=2
+        // 不同 U 值 = cols+1 = 2；不同 V 值 = rows+1 = 3
+        let us: std::collections::BTreeSet<String> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("vt "))
+            .map(|l| l.split_whitespace().next().unwrap().to_string())
+            .collect();
+        let vs: std::collections::BTreeSet<String> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("vt "))
+            .map(|l| l.split_whitespace().nth(1).unwrap().to_string())
+            .collect();
+        assert_eq!(us.len(), 2, "distinct U should be cols+1=2: {us:?}");
+        assert_eq!(vs.len(), 3, "distinct V should be rows+1=3: {vs:?}");
     }
 
     #[test]
     fn export_pose_obj_disguise_target_equals_raw_world_frame() {
-        // Fix 1 regression lock: "disguise" must produce the same raw world-frame
-        // geometry as "neutral". The axis adapter must NOT be applied to the visual
-        // world frame (which is already in disguise convention). If the adapter were
-        // applied, BL would become v -0.3 0 0.17 (x,z,-y swap) — wrong.
         let dir = tempdir().unwrap();
         let rp = dir.path().join("BENCH_cabinet_pose_report.json");
         std::fs::write(&rp, BENCH_REPORT).unwrap();
-        let out_dir = dir.path().join("out_disguise");
+        let out = dir.path().join("wall_disguise.obj");
 
-        let res = run_export_pose_obj(&rp, "disguise", &out_dir, None, false).unwrap();
+        let res = run_export_pose_obj(&rp, "disguise", &out, None, false).unwrap();
         assert_eq!(res.target, "disguise");
         assert_eq!(res.cabinet_count, 2);
 
-        let obj0 = out_dir.join("V000_R000_disguise.obj");
-        assert!(obj0.is_file());
-        let text0 = std::fs::read_to_string(&obj0).unwrap();
-        // Must equal the raw world frame — NOT the axis-swapped v -0.3 0 0.17
+        let text = std::fs::read_to_string(&out).unwrap();
         assert!(
-            text0.contains("v -0.3 -0.17 0"),
-            "disguise output should equal raw world frame; got:\n{text0}"
+            text.contains("v -0.3 -0.17 0"),
+            "disguise output should equal raw world frame; got:\n{text}"
         );
         assert!(
-            !text0.contains("v -0.3 0 0.17"),
-            "axis-swapped vertex found — adapter was wrongly applied; got:\n{text0}"
+            !text.contains("v -0.3 0 0.17"),
+            "axis-swapped vertex found — adapter was wrongly applied; got:\n{text}"
         );
     }
 
     #[test]
-    fn export_pose_obj_rejects_unsafe_cabinet_id() {
-        // Fix 3: cabinet_id from external JSON must be sanitized before use in path.
-        for bad_id in &["../escape", "a/b", "", ".", ".."] {
+    fn export_pose_obj_rejects_unparseable_cabinet_id() {
+        // 单文件下 cabinet_id 不再是文件名；不可解析为 V<col>_R<row> 的 id → InvalidInput。
+        for bad_id in &["../escape", "a/b", "", "V000", "RandomName"] {
             let dir = tempdir().unwrap();
             let report = format!(
                 r#"{{
@@ -509,34 +534,27 @@ mod tests {
             );
             let rp = dir.path().join("pose_report.json");
             std::fs::write(&rp, &report).unwrap();
-            let out_dir = dir.path().join("out");
+            let out = dir.path().join("wall.obj");
 
-            let result = run_export_pose_obj(&rp, "neutral", &out_dir, None, false);
+            let result = run_export_pose_obj(&rp, "neutral", &out, None, false);
             assert!(
                 matches!(result, Err(LmtError::InvalidInput(_))),
                 "expected InvalidInput for cabinet_id={bad_id:?}, got {result:?}"
             );
-            // Nothing should be written outside out_dir (out_dir itself may be created)
-            let escaped = dir.path().join("escape");
-            assert!(!escaped.exists(), "path traversal file written for cabinet_id={bad_id:?}");
         }
     }
 
     #[test]
     fn export_pose_obj_root_makes_reference_axis_aligned_and_grounded() {
-        // --root V000_R001 + --ground: V000_R001 becomes the axis-aligned
-        // reference — its panel lies in the XY plane (z≈0) with its bottom edge
-        // at y=0. --root not found must be NotFound.
         let dir = tempdir().unwrap();
         let rp = dir.path().join("BENCH_cabinet_pose_report.json");
         std::fs::write(&rp, BENCH_REPORT).unwrap();
-        let out_dir = dir.path().join("out_root");
+        let out = dir.path().join("wall.obj");
 
-        let res =
-            run_export_pose_obj(&rp, "neutral", &out_dir, Some("V000_R001"), true).unwrap();
+        let res = run_export_pose_obj(&rp, "neutral", &out, Some("V000_R001"), true).unwrap();
         assert_eq!(res.cabinet_count, 2);
 
-        let text = std::fs::read_to_string(out_dir.join("V000_R001_neutral.obj")).unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
         let verts: Vec<[f64; 3]> = text
             .lines()
             .filter_map(|l| l.strip_prefix("v "))
@@ -545,19 +563,19 @@ mod tests {
                 [n[0], n[1], n[2]]
             })
             .collect();
-        assert_eq!(verts.len(), 4);
-        // reference panel is axis-aligned in the XY plane → z ≈ 0
-        assert!(verts.iter().all(|v| v[2].abs() < 1e-3), "ref panel not in XY plane: {verts:?}");
-        // ground: bottom edge at y = 0
-        let min_y = verts.iter().map(|v| v[1]).fold(f64::INFINITY, f64::min);
-        assert!(min_y.abs() < 1e-3, "ground: min y should be 0, got {min_y}");
-        // width ≈ 1.209 m, height ≈ 0.680 m (from the V000_R001 corners)
-        let max_y = verts.iter().map(|v| v[1]).fold(f64::NEG_INFINITY, f64::max);
+        assert_eq!(verts.len(), 8, "2 cabinets × 4 verts");
+        // 基准块（V000_R001）re-root 后落在 XY 平面 → 取 z≈0 的 4 个顶点
+        let refp: Vec<[f64; 3]> = verts.into_iter().filter(|v| v[2].abs() < 1e-3).collect();
+        assert_eq!(refp.len(), 4, "reference panel should be the 4 z≈0 verts: {refp:?}");
+        // ground：基准块底边 y=0
+        let min_y = refp.iter().map(|v| v[1]).fold(f64::INFINITY, f64::min);
+        assert!(min_y.abs() < 1e-3, "ground: ref min y should be 0, got {min_y}");
+        // 高 ≈ 0.680 m
+        let max_y = refp.iter().map(|v| v[1]).fold(f64::NEG_INFINITY, f64::max);
         assert!((max_y - 0.680).abs() < 0.01, "height ≈ 0.68m, got {max_y}");
 
-        // unknown --root → NotFound
-        let err = run_export_pose_obj(&rp, "neutral", &out_dir, Some("V999_R999"), false)
-            .unwrap_err();
+        // 未知 --root → NotFound
+        let err = run_export_pose_obj(&rp, "neutral", &out, Some("V999_R999"), false).unwrap_err();
         assert!(matches!(err, LmtError::NotFound(_)), "got {err:?}");
     }
 

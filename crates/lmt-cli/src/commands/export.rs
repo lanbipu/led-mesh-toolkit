@@ -17,10 +17,10 @@ pub fn run(cmd: ExportCmd, mode: Mode, db_arg: Option<&Path>, yes: bool, dry_run
         ExportCmd::PoseObj {
             pose_report,
             target,
-            out_dir,
+            out,
             root,
             ground,
-        } => pose_obj(mode, &pose_report, &target, &out_dir, root.as_deref(), ground, yes, dry_run),
+        } => pose_obj(mode, &pose_report, &target, &out, root.as_deref(), ground, yes, dry_run),
     }
 }
 
@@ -139,7 +139,7 @@ fn pose_obj(
     mode: Mode,
     pose_report: &str,
     target: &str,
-    out_dir: &Path,
+    out: &Path,
     root: Option<&str>,
     ground: bool,
     yes: bool,
@@ -169,24 +169,23 @@ fn pose_obj(
                     ),
                 );
             }
-            // Parity with execute: reject a non-empty report / unknown --root now,
-            // so --dry-run doesn't green-light an export that execute would fail.
             if let Err(e) = lmt_app::export::check_pose_obj_inputs(Path::new(pose_report), root) {
                 return output::err(mode, ApiError::from(e));
             }
+            let resolved = lmt_app::export::ensure_obj_extension(out);
             let payload = serde_json::json!({
                 "dry_run": true,
                 "pose_report": pose_report,
                 "target": target,
                 "root": root,
                 "ground": ground,
-                "would_write_under": out_dir.display().to_string(),
+                "would_write": resolved.display().to_string(),
             });
             output::ok(mode, payload, |_| {
                 let _ = writeln!(
                     std::io::stdout(),
-                    "[dry-run] would export per-cabinet OBJ from {pose_report} into {}",
-                    out_dir.display()
+                    "[dry-run] would export merged OBJ from {pose_report} to {}",
+                    resolved.display()
                 );
             })
         }
@@ -194,17 +193,17 @@ fn pose_obj(
             match lmt_app::export::run_export_pose_obj(
                 Path::new(pose_report),
                 target,
-                out_dir,
+                out,
                 root,
                 ground,
             ) {
                 Ok(r) => output::ok(mode, r, |p| {
                     let _ = writeln!(
                         std::io::stdout(),
-                        "wrote {} OBJ ({} target) under {}",
+                        "wrote {} cabinets ({} target) into {}",
                         p.cabinet_count,
                         p.target,
-                        out_dir.display()
+                        p.file
                     );
                 }),
                 Err(e) => output::err(mode, ApiError::from(e)),

@@ -328,12 +328,12 @@ pub struct CabinetPoseEntry {
     pub corners_mm: [[f64; 3]; 4],
 }
 
-/// `lmt export pose-obj` 结果：每块屏一个 OBJ。
+/// `lmt export pose-obj` 结果：所有箱体合并为一个 OBJ。
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExportPoseObjResult {
     pub target: String,
     pub cabinet_count: usize,
-    pub files: Vec<String>,
+    pub file: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

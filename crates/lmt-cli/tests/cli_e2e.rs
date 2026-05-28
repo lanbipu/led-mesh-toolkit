@@ -1598,24 +1598,19 @@ fn pose_report_json() -> &'static str {
  {"cabinet_id":"V000_R001","corners_mm":[[321,-391,-4],[793,-376,-1117],[803,303,-1104],[331,289,8]]}]}"#
 }
 
-/// happy: 2-cabinet report → exit 0, envelope ok, cabinet_count==2, both OBJ files exist.
+/// happy: 2-cabinet report → exit 0, envelope ok, cabinet_count==2, single OBJ exists.
 #[test]
 fn export_pose_obj_happy() {
     let tmp = TempDir::new().unwrap();
     let report = tmp.path().join("cabinet_pose_report.json");
     std::fs::write(&report, pose_report_json()).unwrap();
-    let out_dir = tmp.path().join("out");
+    let out = tmp.path().join("wall.obj");
 
     let assert = lmt()
         .args([
-            "--json",
-            "--yes",
-            "export",
-            "pose-obj",
-            report.to_str().unwrap(),
-            "neutral",
-            "--out-dir",
-            out_dir.to_str().unwrap(),
+            "--json", "--yes", "export", "pose-obj",
+            report.to_str().unwrap(), "neutral",
+            "--out", out.to_str().unwrap(),
         ])
         .assert()
         .success();
@@ -1623,28 +1618,24 @@ fn export_pose_obj_happy() {
     let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
     assert_eq!(env["ok"], true, "envelope ok: {env}");
     assert_eq!(env["data"]["cabinet_count"], 2, "cabinet_count: {env}");
-    assert!(out_dir.join("V000_R000_neutral.obj").is_file(), "V000_R000 OBJ must exist");
-    assert!(out_dir.join("V000_R001_neutral.obj").is_file(), "V000_R001 OBJ must exist");
+    assert!(out.is_file(), "merged OBJ must exist");
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(text.lines().filter(|l| l.starts_with("v ")).count(), 8);
 }
 
-/// dry-run: out-dir must NOT be created, exit 0, dry_run==true in envelope.
+/// dry-run: output file must NOT be created, exit 0, dry_run==true in envelope.
 #[test]
 fn export_pose_obj_dry_run_writes_nothing() {
     let tmp = TempDir::new().unwrap();
     let report = tmp.path().join("cabinet_pose_report.json");
     std::fs::write(&report, pose_report_json()).unwrap();
-    let out_dir = tmp.path().join("out");
+    let out = tmp.path().join("wall.obj");
 
     let assert = lmt()
         .args([
-            "--json",
-            "--dry-run",
-            "export",
-            "pose-obj",
-            report.to_str().unwrap(),
-            "neutral",
-            "--out-dir",
-            out_dir.to_str().unwrap(),
+            "--json", "--dry-run", "export", "pose-obj",
+            report.to_str().unwrap(), "neutral",
+            "--out", out.to_str().unwrap(),
         ])
         .assert()
         .success();
@@ -1652,7 +1643,7 @@ fn export_pose_obj_dry_run_writes_nothing() {
     let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
     assert_eq!(env["ok"], true, "envelope ok: {env}");
     assert_eq!(env["data"]["dry_run"], true, "dry_run flag: {env}");
-    assert!(!out_dir.exists(), "dry-run must not create out-dir");
+    assert!(!out.exists(), "dry-run must not create the output file");
 }
 
 /// missing report → non-zero exit, envelope ok==false.
@@ -1660,51 +1651,38 @@ fn export_pose_obj_dry_run_writes_nothing() {
 fn export_pose_obj_missing_report_is_error() {
     let tmp = TempDir::new().unwrap();
     let missing = tmp.path().join("nope.json");
-    let out_dir = tmp.path().join("out");
+    let out = tmp.path().join("wall.obj");
 
     let assert = lmt()
         .args([
-            "--json",
-            "--yes",
-            "export",
-            "pose-obj",
-            missing.to_str().unwrap(),
-            "neutral",
-            "--out-dir",
-            out_dir.to_str().unwrap(),
+            "--json", "--yes", "export", "pose-obj",
+            missing.to_str().unwrap(), "neutral",
+            "--out", out.to_str().unwrap(),
         ])
         .assert()
         .failure();
 
-    let out = assert.get_output();
-    assert_ne!(out.status.code(), Some(0), "must be non-zero exit");
-    let stderr = std::str::from_utf8(&out.stderr).unwrap().trim_end();
+    let out_assert = assert.get_output();
+    assert_ne!(out_assert.status.code(), Some(0), "must be non-zero exit");
+    let stderr = std::str::from_utf8(&out_assert.stderr).unwrap().trim_end();
     let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
     assert_eq!(env["ok"], false, "envelope ok must be false: {env}");
 }
 
-/// --root + --ground: chosen cabinet becomes the axis-aligned reference at the
-/// origin with its bottom edge at y=0.
+/// --root + --ground: reference panel axis-aligned (z≈0) with bottom edge at y=0.
 #[test]
 fn export_pose_obj_root_and_ground() {
     let tmp = TempDir::new().unwrap();
     let report = tmp.path().join("cabinet_pose_report.json");
     std::fs::write(&report, pose_report_json()).unwrap();
-    let out_dir = tmp.path().join("out");
+    let out = tmp.path().join("wall.obj");
 
     let assert = lmt()
         .args([
-            "--json",
-            "--yes",
-            "export",
-            "pose-obj",
-            report.to_str().unwrap(),
-            "neutral",
-            "--out-dir",
-            out_dir.to_str().unwrap(),
-            "--root",
-            "V000_R001",
-            "--ground",
+            "--json", "--yes", "export", "pose-obj",
+            report.to_str().unwrap(), "neutral",
+            "--out", out.to_str().unwrap(),
+            "--root", "V000_R001", "--ground",
         ])
         .assert()
         .success();
@@ -1712,23 +1690,20 @@ fn export_pose_obj_root_and_ground() {
     let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
     assert_eq!(env["ok"], true, "envelope ok: {env}");
 
-    let text = std::fs::read_to_string(out_dir.join("V000_R001_neutral.obj")).unwrap();
-    let ys: Vec<f64> = text
+    let text = std::fs::read_to_string(&out).unwrap();
+    let verts: Vec<[f64; 3]> = text
         .lines()
         .filter_map(|l| l.strip_prefix("v "))
-        .map(|l| l.split_whitespace().nth(1).unwrap().parse::<f64>().unwrap())
+        .map(|l| {
+            let n: Vec<f64> = l.split_whitespace().map(|t| t.parse().unwrap()).collect();
+            [n[0], n[1], n[2]]
+        })
         .collect();
-    let zs: Vec<f64> = text
-        .lines()
-        .filter_map(|l| l.strip_prefix("v "))
-        .map(|l| l.split_whitespace().nth(2).unwrap().parse::<f64>().unwrap())
-        .collect();
-    assert_eq!(ys.len(), 4);
-    // reference panel axis-aligned in the XY plane → z ≈ 0
-    assert!(zs.iter().all(|z| z.abs() < 1e-3), "ref panel not in XY plane: {zs:?}");
-    // ground → bottom edge at y = 0
-    let min_y = ys.iter().cloned().fold(f64::INFINITY, f64::min);
-    assert!(min_y.abs() < 1e-3, "ground: min y should be 0, got {min_y}");
+    assert_eq!(verts.len(), 8);
+    let refp: Vec<[f64; 3]> = verts.into_iter().filter(|v| v[2].abs() < 1e-3).collect();
+    assert_eq!(refp.len(), 4, "reference panel = 4 z≈0 verts: {refp:?}");
+    let min_y = refp.iter().map(|v| v[1]).fold(f64::INFINITY, f64::min);
+    assert!(min_y.abs() < 1e-3, "ground: ref min y should be 0, got {min_y}");
 }
 
 /// dry-run must reject an unknown --root (parity with execute), not green-light it.
@@ -1737,28 +1712,22 @@ fn export_pose_obj_dry_run_validates_root() {
     let tmp = TempDir::new().unwrap();
     let report = tmp.path().join("cabinet_pose_report.json");
     std::fs::write(&report, pose_report_json()).unwrap();
-    let out_dir = tmp.path().join("out");
+    let out = tmp.path().join("wall.obj");
 
     let assert = lmt()
         .args([
-            "--json",
-            "--dry-run",
-            "export",
-            "pose-obj",
-            report.to_str().unwrap(),
-            "neutral",
-            "--out-dir",
-            out_dir.to_str().unwrap(),
-            "--root",
-            "NONEXISTENT_CAB",
+            "--json", "--dry-run", "export", "pose-obj",
+            report.to_str().unwrap(), "neutral",
+            "--out", out.to_str().unwrap(),
+            "--root", "NONEXISTENT_CAB",
         ])
         .assert()
         .failure();
 
-    let out = assert.get_output();
-    assert_ne!(out.status.code(), Some(0), "unknown --root must fail dry-run");
-    let stderr = std::str::from_utf8(&out.stderr).unwrap().trim_end();
+    let out_assert = assert.get_output();
+    assert_ne!(out_assert.status.code(), Some(0), "unknown --root must fail dry-run");
+    let stderr = std::str::from_utf8(&out_assert.stderr).unwrap().trim_end();
     let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
     assert_eq!(env["ok"], false, "envelope ok must be false: {env}");
-    assert!(!out_dir.exists(), "dry-run must not create out-dir");
+    assert!(!out.exists(), "dry-run must not create the output file");
 }
