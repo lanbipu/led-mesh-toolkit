@@ -1,7 +1,7 @@
 use lmt_core::export::build::surface_to_mesh_output;
 use lmt_core::export::obj::write_obj;
 use lmt_core::shape::CabinetArray;
-use lmt_core::surface::{GridTopology, QualityMetrics, ReconstructedSurface, TargetSoftware};
+use lmt_core::surface::{GridTopology, MeshOutput, QualityMetrics, ReconstructedSurface, TargetSoftware};
 use lmt_core::uv::compute_grid_uv;
 use lmt_shared::data::{runs, Db};
 use lmt_shared::dto::{CabinetPoseReportFile, ExportPoseObjResult, ReconstructionReport, ShapeMode};
@@ -333,6 +333,22 @@ fn infer_grid_dims(ids: &[&str]) -> LmtResult<(u32, u32)> {
     Ok((max_col + 1, max_row + 1))
 }
 
+/// 把每块 cabinet 的 MeshOutput 拼成一个（顶点不去重=不焊接，三角面索引按累计偏移）。
+fn merge_mesh_outputs(target: TargetSoftware, meshes: &[MeshOutput]) -> MeshOutput {
+    let mut vertices = Vec::new();
+    let mut triangles = Vec::new();
+    let mut uv_coords = Vec::new();
+    for m in meshes {
+        let offset = vertices.len() as u32;
+        vertices.extend_from_slice(&m.vertices);
+        uv_coords.extend_from_slice(&m.uv_coords);
+        for t in &m.triangles {
+            triangles.push([t[0] + offset, t[1] + offset, t[2] + offset]);
+        }
+    }
+    MeshOutput { target, vertices, triangles, uv_coords }
+}
+
 /// 一块 cabinet 的 4 个世界系角点（mm，BL,BR,TR,TL）→ 1×1 ReconstructedSurface（米，原样）。
 /// 网格顶点行主序 [(0,0),(1,0),(0,1),(1,1)]=[BL,BR,TL,TR]，故把 [BL,BR,TR,TL] 重排为
 /// 索引 0,1,3,2，quad 不扭曲。
@@ -572,5 +588,33 @@ mod tests {
         // 缺 V001_R000：dims 仍按 max+1 推（2 列 × 2 行）
         let ids = ["V000_R000", "V000_R001", "V001_R001"];
         assert_eq!(infer_grid_dims(&ids).unwrap(), (2, 2));
+    }
+
+    #[test]
+    fn merge_mesh_outputs_concatenates_and_offsets_indices() {
+        use lmt_core::surface::MeshOutput;
+        let mk = |x: f64| MeshOutput {
+            target: TargetSoftware::Neutral,
+            vertices: vec![
+                Vector3::new(x, 0.0, 0.0),
+                Vector3::new(x + 1.0, 0.0, 0.0),
+                Vector3::new(x, 1.0, 0.0),
+                Vector3::new(x + 1.0, 1.0, 0.0),
+            ],
+            triangles: vec![[0, 1, 3], [0, 3, 2]],
+            uv_coords: vec![
+                nalgebra::Vector2::new(0.0, 0.0),
+                nalgebra::Vector2::new(1.0, 0.0),
+                nalgebra::Vector2::new(0.0, 1.0),
+                nalgebra::Vector2::new(1.0, 1.0),
+            ],
+        };
+        let merged = merge_mesh_outputs(TargetSoftware::Neutral, &[mk(0.0), mk(10.0)]);
+        assert_eq!(merged.vertices.len(), 8);
+        assert_eq!(merged.uv_coords.len(), 8);
+        assert_eq!(merged.triangles.len(), 4);
+        assert_eq!(merged.triangles[2], [4, 5, 7]);
+        assert_eq!(merged.triangles[3], [4, 7, 6]);
+        assert_eq!(merged.vertices[4].x, 10.0);
     }
 }
