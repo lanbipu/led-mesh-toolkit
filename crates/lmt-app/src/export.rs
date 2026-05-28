@@ -311,6 +311,28 @@ impl CabinetFrame {
     }
 }
 
+/// 从 cabinet_id 解析末尾的 `V<col>_R<row>`（如 "V012_R007" → (12,7)）。
+/// 容忍前缀（"MAIN_V012_R007" 也可）。不匹配返回 None。
+fn parse_cabinet_col_row(cabinet_id: &str) -> Option<(u32, u32)> {
+    let (head, row_str) = cabinet_id.rsplit_once("_R")?;
+    let (_, col_str) = head.rsplit_once('V')?;
+    Some((col_str.parse().ok()?, row_str.parse().ok()?))
+}
+
+/// 总列/行数 = max(col)+1 / max(row)+1。任一 id 不可解析 → InvalidInput。
+fn infer_grid_dims(ids: &[&str]) -> LmtResult<(u32, u32)> {
+    let mut max_col = 0u32;
+    let mut max_row = 0u32;
+    for id in ids {
+        let (c, r) = parse_cabinet_col_row(id).ok_or_else(|| {
+            LmtError::InvalidInput(format!("cabinet_id {id:?} not parseable as V<col>_R<row>"))
+        })?;
+        max_col = max_col.max(c);
+        max_row = max_row.max(r);
+    }
+    Ok((max_col + 1, max_row + 1))
+}
+
 /// 一块 cabinet 的 4 个世界系角点（mm，BL,BR,TR,TL）→ 1×1 ReconstructedSurface（米，原样）。
 /// 网格顶点行主序 [(0,0),(1,0),(0,1),(1,1)]=[BL,BR,TL,TR]，故把 [BL,BR,TR,TL] 重排为
 /// 索引 0,1,3,2，quad 不扭曲。
@@ -521,5 +543,34 @@ mod tests {
         let err = run_export_pose_obj(&rp, "neutral", &out_dir, Some("V999_R999"), false)
             .unwrap_err();
         assert!(matches!(err, LmtError::NotFound(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn parse_cabinet_col_row_extracts_indices() {
+        assert_eq!(parse_cabinet_col_row("V000_R000"), Some((0, 0)));
+        assert_eq!(parse_cabinet_col_row("V012_R007"), Some((12, 7)));
+        assert_eq!(parse_cabinet_col_row("V120_R024"), Some((120, 24)));
+        // 不匹配 → None
+        assert_eq!(parse_cabinet_col_row("../escape"), None);
+        assert_eq!(parse_cabinet_col_row("a/b"), None);
+        assert_eq!(parse_cabinet_col_row(""), None);
+        assert_eq!(parse_cabinet_col_row("V000"), None);
+    }
+
+    #[test]
+    fn infer_grid_dims_takes_max_plus_one() {
+        let ids = ["V000_R000", "V000_R001"];
+        assert_eq!(infer_grid_dims(&ids).unwrap(), (1, 2));
+        let ids = ["V000_R000", "V002_R000", "V001_R001"];
+        assert_eq!(infer_grid_dims(&ids).unwrap(), (3, 2));
+        let ids = ["V000_R000", "bad"];
+        assert!(matches!(infer_grid_dims(&ids), Err(LmtError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn infer_grid_dims_handles_absent_cells() {
+        // 缺 V001_R000：dims 仍按 max+1 推（2 列 × 2 行）
+        let ids = ["V000_R000", "V000_R001", "V001_R001"];
+        assert_eq!(infer_grid_dims(&ids).unwrap(), (2, 2));
     }
 }
