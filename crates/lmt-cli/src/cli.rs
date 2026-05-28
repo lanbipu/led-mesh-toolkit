@@ -310,6 +310,24 @@ pub enum VisualCmd {
         #[arg(long)]
         screen_mapping: Option<String>,
     },
+    /// 生成结构光点阵序列(帧 PNG + sequence.mp4 + sl_meta.json)。side_effect: destructive
+    #[command(name = "generate-structured-light")]
+    GenerateStructuredLight {
+        /// 项目根目录。
+        project_path: String,
+        /// screen id。
+        screen_id: String,
+        /// 点间距(像素)。
+        #[arg(long, default_value_t = 64)]
+        dot_spacing: u32,
+        /// 点半径(像素)。
+        #[arg(long, default_value_t = 6)]
+        dot_radius: u32,
+        /// 可选 screen_mapping.json:按每箱体 input_rect_px 放点(支持非均匀/缺失箱体)。
+        /// 相对路径按项目根解析。
+        #[arg(long)]
+        screen_mapping: Option<String>,
+    },
     /// 多视角照片 → measured.yaml + cabinet_pose_report.json。side_effect: destructive
     Reconstruct {
         /// 项目根目录。

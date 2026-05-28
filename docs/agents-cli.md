@@ -40,6 +40,7 @@ lmt --db /path/to/lmt.sqlite project list-recent
 | `lmt seed-example <name> <dst>` | destructive | Copy a built-in example (curved-flat / curved-arc) into `<dst>/<name>` |
 | `lmt visual calibrate <project> <screen_id> <checkerboard_dir> [--square-mm <f>] [--inner <RxC>]` | destructive | Checkerboard images → `calibration/<screen_id>_intrinsics.json` |
 | `lmt visual generate-pattern <project> <screen_id> [--method charuco] [--screen-mapping <json>]` | destructive | Generate ChArUco pattern — per-cabinet PNGs + `full_screen` + `pattern_meta` (schema **v2**) under `patterns/<screen_id>/`. `--screen-mapping`: read per-cabinet size/pitch from a `screen_mapping.json` (path resolved against the project root) and generate a pitch-matched board per cabinet (non-square / unequal cabinets supported); boards are placed at each cabinet's `input_rect_px` and the framebuffer size is their bounding box. The mapping must cover every present cabinet exactly (missing/extra id → `invalid_input`). Without the flag, the uniform grid is used (square cabinets reproduce the legacy 9×9/40-marker board). Result reports `total_markers` (per-cabinet counts vary in v2). |
+| `lmt visual generate-structured-light <project> <screen_id> [--dot-spacing N] [--dot-radius N] [--screen-mapping <json>]` | destructive | Generate a structured-light dot-array capture sequence under `patterns/<screen_id>/sl/`: `frames/*.png` (white sentinel + all-on anchor + binary-blink-coded dot frames), `sequence.mp4` (drop-in full-screen playback), `sl_meta.json` (per-cabinet rects + dot screen coords + code/sequence spec, with `screen_id`). Mapping-aware: with `--screen-mapping` dots are tiled inside each cabinet's `input_rect_px`, honoring absent/non-uniform cabinets; without it, the uniform grid is used (even-divisibility required). Identity is carried in each dot's blink sequence (binary + even parity), not appearance — no dictionary-capacity limit. Result reports `n_dots` and `n_frames`. |
 | `lmt visual reconstruct <project> <screen_id> --capture-manifest <json> [--method charuco]` | destructive | Multi-view photos → `measurements/measured.yaml` + `measurements/<screen_id>_cabinet_pose_report.json` (model-constrained BA, zero total station) |
 | `lmt visual simulate <config> --out <dir>` | destructive | Generate a synthetic geometry dataset (`scene.npz` + `meta.json`) for BA validation |
 | `lmt visual eval <dataset> [--method charuco] [--seed-matrix <list>]` | write_safe | Evaluate a method vs ground truth on a synthetic dataset (gauge-invariant metrics) |
@@ -97,6 +98,19 @@ directly and not expect `{"ok": true, ...}` wrapping.
   native WebView (WKWebView on macOS, WebView2 on Windows) and only works inside
   the Tauri GUI process. CLI agents can get the HTML from `instruction-card`
   and run their own renderer (headless Chrome, wkhtmltopdf, etc.).
+
+### Not exposed in the GUI (CLI-only)
+
+The entire `visual` command group — `calibrate`, `generate-pattern`,
+`generate-structured-light`, `reconstruct`, `simulate`, `eval`, `compare-known`
+— is CLI-only by design: it has no `#[tauri::command]` shim and is not
+registered in the GUI's `generate_handler!`. The camera/structured-light
+pipeline is an agent/headless workflow (long-running sidecar runs, no
+native-webview dependency), so the deliverables are files on disk that any
+front-end can consume. `generate-structured-light` follows this convention. The
+service-layer helper (`lmt_app::visual::run_generate_structured_light`) is a
+plain function, so a future GUI shim is a thin transport wrapper if one is ever
+needed.
 
 ## Global flags
 
@@ -225,7 +239,7 @@ GUI 启动 / `add-recent` / `reconstruct surface` 之类的写命令都会触发
 | --- | :---: | --- |
 | `read_only` | yes | `schema`, `project list-recent` / `load`, `measurements load`, `total-station instruction-card`, `reconstruct list-runs` / `get-run-report` |
 | `write_safe` | yes (no `--yes`) | `project add-recent` (still honors `--dry-run`), `visual eval`, `visual compare-known` |
-| `destructive` | no (requires `--yes` or `--dry-run`) | `project remove-recent` / `save`, `total-station import`, `reconstruct surface`, `export obj`, `export pose-obj`, `visual calibrate`, `visual generate-pattern`, `visual reconstruct`, `visual simulate` |
+| `destructive` | no (requires `--yes` or `--dry-run`) | `project remove-recent` / `save`, `total-station import`, `reconstruct surface`, `export obj`, `export pose-obj`, `visual calibrate`, `visual generate-pattern`, `visual generate-structured-light`, `visual reconstruct`, `visual simulate` |
 
 An MCP tool wrapper should propagate these as the tool's `side_effect`
 annotation and route `destructive` tools through a confirmation step.

@@ -123,6 +123,10 @@ pub fn build() -> ContractManifest {
            "lmt visual calibrate <project> <screen_id> <checkerboard_dir> [--square-mm <f>] [--inner <RxC>]", Destructive, true, false, false, Some("CalibrateResult"), &[0, 2, 3, 4, 13, 16]),
         op("visual.generate_pattern", "Generate ChArUco pattern (per-cabinet PNGs + full_screen + pattern_meta v2); --screen-mapping enables per-cabinet pitch-matched boards (non-square / unequal cabinets)",
            "lmt visual generate-pattern <project> <screen_id> [--method charuco] [--screen-mapping <json>]", Destructive, true, false, false, Some("GeneratePatternResult"), &[0, 2, 3, 4, 6, 7]),
+        op("visual.generate_structured_light", "Generate a structured-light dot-array capture sequence (frames + sequence.mp4 + sl_meta.json) under patterns/<screen_id>/sl/; mapping-aware (--screen-mapping tiles dots inside each cabinet's input_rect_px)",
+           "lmt visual generate-structured-light <project> <screen_id> [--dot-spacing N] [--dot-radius N] [--screen-mapping <json>]", Destructive, true, false, false, Some("GenerateStructuredLightResult"), &[0, 2, 3, 4, 6, 7]),
+        op("visual.decode_structured_light", "Decode a recorded structured-light capture (video or frame dir) into a provenance-stamped screen<->camera correspondence file",
+           "lmt visual decode-structured-light <input> <sl_meta> --out <corr.json>", Destructive, true, false, false, Some("DecodeStructuredLightResult"), &[0, 2, 3, 4, 13, 18]),
         op("visual.reconstruct", "Multi-view photos -> measured.yaml + cabinet_pose_report.json (model-constrained BA, zero total station)",
            "lmt visual reconstruct <project> <screen_id> --capture-manifest <json> [--method charuco]", Destructive, true, false, false, Some("VisualReconstructResult"), &[0, 2, 3, 4, 6, 7, 13, 14, 15, 16, 17]),
         op("visual.simulate", "Generate a synthetic geometry dataset (scene.npz) for BA validation",
@@ -171,6 +175,8 @@ mod tests {
             "seed_example",
             "visual.calibrate",
             "visual.generate_pattern",
+            "visual.generate_structured_light",
+            "visual.decode_structured_light",
             "visual.reconstruct",
             "visual.simulate",
             "visual.eval",
@@ -178,7 +184,7 @@ mod tests {
         ] {
             assert!(ids.contains(&expected), "manifest missing operation_id {expected}; got {ids:?}");
         }
-        assert_eq!(m.operations.len(), 23, "operation count changed — update both build() and this test");
+        assert_eq!(m.operations.len(), 25, "operation count changed — update both build() and this test");
     }
 
     #[test]
@@ -220,6 +226,8 @@ mod tests {
             "seed_example",
             "visual.calibrate",
             "visual.generate_pattern",
+            "visual.generate_structured_light",
+            "visual.decode_structured_light",
             "visual.reconstruct",
             "visual.simulate",
         ] {

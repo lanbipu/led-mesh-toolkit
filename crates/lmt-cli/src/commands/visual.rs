@@ -58,6 +58,16 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             mode, &project_path, &screen_id, &method,
             screen_mapping.as_deref(), yes, dry_run,
         ),
+        VisualCmd::GenerateStructuredLight {
+            project_path,
+            screen_id,
+            dot_spacing,
+            dot_radius,
+            screen_mapping,
+        } => generate_structured_light(
+            mode, &project_path, &screen_id, dot_spacing, dot_radius,
+            screen_mapping.as_deref(), yes, dry_run,
+        ),
     }
 }
 
@@ -273,6 +283,62 @@ fn generate_pattern(
                         "generated {} cabinets, {} total markers → {}",
                         p.cabinet_count,
                         p.total_markers,
+                        p.output_dir
+                    );
+                }),
+                Err(e) => output::err(mode, ApiError::from(e)),
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// generate_structured_light
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+fn generate_structured_light(
+    mode: Mode,
+    project_path: &str,
+    screen_id: &str,
+    dot_spacing: u32,
+    dot_radius: u32,
+    screen_mapping: Option<&str>,
+    yes: bool,
+    dry_run: bool,
+) -> i32 {
+    let decision = match util::gate_destructive(yes, dry_run, "visual generate-structured-light") {
+        Ok(d) => d,
+        Err(e) => return output::err(mode, e),
+    };
+
+    match decision {
+        DestructiveDecision::DryRun => {
+            let payload = serde_json::json!({
+                "dry_run": true,
+                "would_write": format!("{project_path}/patterns/{screen_id}/sl/"),
+            });
+            output::ok(mode, payload, |_| {
+                let _ = writeln!(
+                    std::io::stdout(),
+                    "[dry-run] would generate structured-light sequence for screen {screen_id}"
+                );
+            })
+        }
+        DestructiveDecision::Execute => {
+            match lmt_app::visual::run_generate_structured_light(
+                Path::new(project_path),
+                screen_id,
+                dot_spacing,
+                dot_radius,
+                screen_mapping.map(Path::new),
+            ) {
+                Ok(r) => output::ok(mode, r, |p| {
+                    let _ = writeln!(
+                        std::io::stdout(),
+                        "generated {} dots across {} frames → {}",
+                        p.n_dots,
+                        p.n_frames,
                         p.output_dir
                     );
                 }),

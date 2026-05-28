@@ -10,14 +10,16 @@
 use std::path::Path;
 
 use lmt_adapter_visual_ba::api::{
-    calibrate, compare_known, eval, generate_pattern, reconstruct, simulate, CalibrateArgs,
-    CompareKnownArgs, EvalArgs, GeneratePatternArgs, ReconstructArgs, SimulateArgs,
+    calibrate, compare_known, eval, generate_pattern, generate_structured_light, reconstruct,
+    simulate, CalibrateArgs, CompareKnownArgs, EvalArgs, GeneratePatternArgs,
+    GenerateStructuredLightArgs, ReconstructArgs, SimulateArgs,
 };
 use lmt_adapter_visual_ba::ipc;
 
 use lmt_shared::dto::{
     CabinetPoseSummary, CabinetSizeCheck, CalibrateResult, CompareKnownResult, EvalResult,
-    GeneratePatternResult, PairCheck, SimulateResult, VisualReconstructResult,
+    GeneratePatternResult, GenerateStructuredLightResult, PairCheck, SimulateResult,
+    VisualReconstructResult,
 };
 use lmt_shared::error::{LmtError, LmtResult};
 
@@ -305,33 +307,20 @@ pub fn run_calibrate(
 // generate_pattern
 // ---------------------------------------------------------------------------
 
-/// Generate ChArUco calibration patterns for one screen's cabinets, written to
-/// `<project>/patterns/<screen_id>`.
-pub fn run_generate_pattern(
-    project_path: &Path,
+/// Resolve the framebuffer `[w, h]` for one screen.
+///
+/// In `--screen-mapping` mode the framebuffer is the bounding box of the
+/// per-cabinet `input_rect_px` (cabinets may be unequal / gapped); `pixels_per_
+/// cabinet` is not used. In uniform mode it is `pixels_per_cabinet × cabinet_count`.
+///
+/// Shared by `run_generate_pattern` and `run_generate_structured_light` (both
+/// must agree on the screen resolution they pass to the sidecar).
+fn compute_screen_resolution(
+    sm_abs: &Option<std::path::PathBuf>,
+    screen_cfg: &lmt_shared::dto::ScreenConfig,
     screen_id: &str,
-    method: &str,
-    screen_mapping_path: Option<&Path>,
-) -> LmtResult<GeneratePatternResult> {
-    if method != "charuco" {
-        return Err(LmtError::InvalidInput(format!(
-            "unsupported pattern method '{method}' (only 'charuco')"
-        )));
-    }
-
-    let cfg = load_project_yaml_from_path(project_path)?;
-    let screen_cfg = load_screen(&cfg, screen_id)?;
-    let cabinet_array = ipc_cabinet_array(screen_cfg);
-
-    // Resolve the screen_mapping path (project-root-relative if not absolute).
-    let sm_abs = screen_mapping_path.map(|p| {
-        if p.is_absolute() { p.to_path_buf() } else { project_path.join(p) }
-    });
-
-    // In --screen-mapping mode the framebuffer size is the bounding box of the
-    // per-cabinet input_rect_px (cabinets may be unequal / gapped); pixels_per_
-    // cabinet is not used. In uniform mode it is pixels_per_cabinet × cabinet_count.
-    let screen_resolution = match &sm_abs {
+) -> LmtResult<[u32; 2]> {
+    match sm_abs {
         Some(p) => {
             let txt = std::fs::read_to_string(p).map_err(|e| {
                 LmtError::InvalidInput(format!("screen_mapping '{}' unreadable: {e}", p.display()))
@@ -375,7 +364,7 @@ pub fn run_generate_pattern(
                     "screen_mapping framebuffer {max_w}x{max_h} exceeds u32 range"
                 )));
             }
-            [max_w as u32, max_h as u32]
+            Ok([max_w as u32, max_h as u32])
         }
         None => {
             let ppc = screen_cfg.pixels_per_cabinet.ok_or_else(|| {
@@ -384,9 +373,35 @@ pub fn run_generate_pattern(
                 ))
             })?;
             let [cols, rows] = screen_cfg.cabinet_count;
-            [ppc[0] * cols, ppc[1] * rows]
+            Ok([ppc[0] * cols, ppc[1] * rows])
         }
-    };
+    }
+}
+
+/// Generate ChArUco calibration patterns for one screen's cabinets, written to
+/// `<project>/patterns/<screen_id>`.
+pub fn run_generate_pattern(
+    project_path: &Path,
+    screen_id: &str,
+    method: &str,
+    screen_mapping_path: Option<&Path>,
+) -> LmtResult<GeneratePatternResult> {
+    if method != "charuco" {
+        return Err(LmtError::InvalidInput(format!(
+            "unsupported pattern method '{method}' (only 'charuco')"
+        )));
+    }
+
+    let cfg = load_project_yaml_from_path(project_path)?;
+    let screen_cfg = load_screen(&cfg, screen_id)?;
+    let cabinet_array = ipc_cabinet_array(screen_cfg);
+
+    // Resolve the screen_mapping path (project-root-relative if not absolute).
+    let sm_abs = screen_mapping_path.map(|p| {
+        if p.is_absolute() { p.to_path_buf() } else { project_path.join(p) }
+    });
+
+    let screen_resolution = compute_screen_resolution(&sm_abs, screen_cfg, screen_id)?;
 
     let output_dir = project_path.join("patterns").join(screen_id);
     std::fs::create_dir_all(&output_dir)?;
@@ -407,6 +422,54 @@ pub fn run_generate_pattern(
         output_dir: out.output_dir,
         cabinet_count: out.cabinet_count as usize,
         total_markers: out.total_markers,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// generate_structured_light
+// ---------------------------------------------------------------------------
+
+/// Generate a structured-light dot sequence for one screen into
+/// `<project>/patterns/<screen_id>/sl`. Mapping-aware: with `screen_mapping_path`
+/// the framebuffer is the input_rect_px bounding box (mirrors `run_generate_pattern`).
+pub fn run_generate_structured_light(
+    project_path: &Path,
+    screen_id: &str,
+    dot_spacing_px: u32,
+    dot_radius_px: u32,
+    screen_mapping_path: Option<&Path>,
+) -> LmtResult<GenerateStructuredLightResult> {
+    let cfg = load_project_yaml_from_path(project_path)?;
+    let screen_cfg = load_screen(&cfg, screen_id)?;
+    let cabinet_array = ipc_cabinet_array(screen_cfg);
+
+    // Resolve the screen_mapping path (project-root-relative if not absolute).
+    let sm_abs = screen_mapping_path.map(|p| {
+        if p.is_absolute() { p.to_path_buf() } else { project_path.join(p) }
+    });
+    let screen_resolution = compute_screen_resolution(&sm_abs, screen_cfg, screen_id)?;
+
+    let output_dir = project_path.join("patterns").join(screen_id).join("sl");
+    std::fs::create_dir_all(output_dir.parent().unwrap())?;
+
+    let args = GenerateStructuredLightArgs {
+        project_screen_id: screen_id.to_string(),
+        cabinet_array,
+        output_dir: output_dir.display().to_string(),
+        screen_resolution,
+        screen_mapping_path: sm_abs.map(|p| p.display().to_string()),
+        dot_spacing_px,
+        dot_radius_px,
+        progress_tx: None,
+        cancel: None,
+    };
+
+    let out = rt()?.block_on(generate_structured_light(args)).map_err(map_vba_err)?;
+
+    Ok(GenerateStructuredLightResult {
+        output_dir: out.output_dir,
+        n_dots: out.n_dots as usize,
+        n_frames: out.n_frames as usize,
     })
 }
 

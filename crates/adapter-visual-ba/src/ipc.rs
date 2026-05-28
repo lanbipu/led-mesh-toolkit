@@ -247,6 +247,25 @@ pub struct CabinetSummary {
     pub quality: String,
 }
 
+// --- structured-light meta mirror (matches StructuredLightMeta in
+// python-sidecar/.../ipc.py). The adapter reads only the fields it needs for
+// the result count (dot count + sequence.n_code_frames); the full meta stays on
+// disk for the decode step. ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlDot {
+    pub id: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructuredLightMeta {
+    pub schema_version: u32,
+    pub dots: Vec<SlDot>,
+    /// Kept untyped: we only read `sequence.n_code_frames` for the frame count.
+    #[serde(default)]
+    pub sequence: serde_json::Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolErrorEvent {
     pub code: String,

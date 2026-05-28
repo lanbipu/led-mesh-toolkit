@@ -315,6 +315,83 @@ pub async fn generate_pattern(args: GeneratePatternArgs) -> VbaResult<GeneratePa
 }
 
 // ---------------------------------------------------------------------------
+// generate_structured_light
+// ---------------------------------------------------------------------------
+
+pub struct GenerateStructuredLightArgs {
+    pub project_screen_id: String,
+    pub cabinet_array: IpcCabinetArray,
+    pub output_dir: String,
+    pub screen_resolution: [u32; 2],
+    /// When set, per-cabinet placement (input_rect_px) + pitch come from this
+    /// screen_mapping.json instead of the uniform grid.
+    pub screen_mapping_path: Option<String>,
+    pub dot_spacing_px: u32,
+    pub dot_radius_px: u32,
+    pub progress_tx: Option<mpsc::Sender<Event>>,
+    pub cancel: Option<oneshot::Receiver<()>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GenerateStructuredLightOut {
+    pub output_dir: String,
+    pub n_dots: u32,
+    pub n_frames: u32,
+}
+
+pub async fn generate_structured_light(
+    args: GenerateStructuredLightArgs,
+) -> VbaResult<GenerateStructuredLightOut> {
+    let mut payload = json!({
+        "command": "generate_structured_light",
+        "version": 1,
+        "project": {
+            "screen_id": &args.project_screen_id,
+            "cabinet_array": &args.cabinet_array,
+        },
+        "output_dir": &args.output_dir,
+        "screen_resolution": args.screen_resolution,
+        "dot_spacing_px": args.dot_spacing_px,
+        "dot_radius_px": args.dot_radius_px,
+    });
+    // Omit screen_mapping_path when None so the sidecar uses uniform generation.
+    if let Some(p) = &args.screen_mapping_path {
+        payload["screen_mapping_path"] = json!(p);
+    }
+
+    // generate_structured_light's result event is an empty ResultData; the real
+    // product is the files on disk. Run for the side effects + error surfacing,
+    // then read the produced sl_meta.json for counts (mirrors generate_pattern).
+    let _value = run_sidecar(SidecarRequest {
+        subcommand: "generate_structured_light".into(),
+        payload,
+        progress_tx: args.progress_tx,
+        cancel: args.cancel,
+    })
+    .await?;
+
+    let meta_path = Path::new(&args.output_dir).join("sl_meta.json");
+    let meta: crate::ipc::StructuredLightMeta = serde_json::from_str(
+        &std::fs::read_to_string(&meta_path)
+            .map_err(|e| VbaError::InvalidInput(format!("sl_meta.json unreadable: {e}")))?,
+    )
+    .map_err(|e| VbaError::InvalidInput(format!("sl_meta.json decode failed: {e}")))?;
+
+    // total_bits == sequence.n_code_frames; frames = WHITE + ALL-ON anchor +
+    // total_bits code frames + WHITE = total_bits + 3.
+    let total_bits = meta
+        .sequence
+        .get("n_code_frames")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    Ok(GenerateStructuredLightOut {
+        output_dir: args.output_dir,
+        n_dots: meta.dots.len() as u32,
+        n_frames: total_bits.saturating_add(3),
+    })
+}
+
+// ---------------------------------------------------------------------------
 // simulate
 // ---------------------------------------------------------------------------
 

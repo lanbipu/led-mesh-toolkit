@@ -311,6 +311,23 @@ pub struct GeneratePatternResult {
     pub total_markers: u32,
 }
 
+/// `lmt visual generate-structured-light` 结果：点阵序列生成到
+/// `patterns/<screen_id>/sl/`(frames + sequence.mp4 + sl_meta.json)。
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GenerateStructuredLightResult {
+    pub output_dir: String,
+    pub n_dots: usize,
+    pub n_frames: usize,
+}
+
+/// `lmt visual decode-structured-light` 结果：解码出的屏幕↔相机对应文件路径
+/// 与解码成功的点数。
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DecodeStructuredLightResult {
+    pub output_path: String,
+    pub n_dots_decoded: usize,
+}
+
 // ── Pose-OBJ export DTO types ─────────────────────────────────────────────────
 
 /// 读 `cabinet_pose_report.json`（visual reconstruct 产出）用的精简视图，

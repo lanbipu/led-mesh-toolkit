@@ -1797,3 +1797,37 @@ fn export_pose_obj_disguise_degenerate_dry_run_also_errors() {
     assert_eq!(env["ok"], false, "dry-run degenerate disguise must error: {env}");
     assert!(!out.exists(), "dry-run must not create file");
 }
+
+// ---------------------------------------------------------------------------
+// generate-structured-light / decode-structured-light: refuse + dry-run.
+// These validate the gate_destructive + dry-run plumbing with no sidecar
+// (refuse/dry-run never spawn the sidecar). Happy-path generation/decode logic
+// is unit-tested in the Python sidecar.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn generate_structured_light_refuses_without_yes() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 1, 1);
+    let assert = lmt().args(["--json", "visual", "generate-structured-light",
+        proj.to_str().unwrap(), "MAIN"]).assert().failure();
+    let out = assert.get_output();
+    assert_eq!(out.status.code(), Some(2));
+    let env: Value = serde_json::from_str(std::str::from_utf8(&out.stderr).unwrap().trim_end()).unwrap();
+    assert_eq!(env["error"]["code"], "invalid_input");
+}
+
+#[test]
+fn generate_structured_light_dry_run_writes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 1, 1);
+    let assert = lmt().args(["--json", "--dry-run", "visual", "generate-structured-light",
+        proj.to_str().unwrap(), "MAIN"]).assert().success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["dry_run"], true);
+    assert!(!proj.join("patterns/MAIN/sl").exists());
+}
+
