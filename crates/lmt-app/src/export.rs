@@ -260,9 +260,13 @@ pub fn run_export_pose_obj(
 }
 
 /// Dry-run pre-flight for [`run_export_pose_obj`]: the pose report must be
-/// readable, non-empty, and (if `root` is given) contain that cabinet — so
-/// `--dry-run` does not green-light an export that execute would reject.
-pub fn check_pose_obj_inputs(pose_report_path: &Path, root: Option<&str>) -> LmtResult<()> {
+/// readable, non-empty, ids 可解析,(若 `root` 给了)含该 cabinet,且
+/// (disguise 无 root 时)标准摆法能定向 —— 使 `--dry-run` 不放行 execute 会拒的导出。
+pub fn check_pose_obj_inputs(
+    pose_report_path: &Path,
+    target: &str,
+    root: Option<&str>,
+) -> LmtResult<()> {
     let report: CabinetPoseReportFile =
         serde_json::from_slice(&std::fs::read(pose_report_path)?)?;
     if report.cabinet_poses.is_empty() {
@@ -276,12 +280,29 @@ pub fn check_pose_obj_inputs(pose_report_path: &Path, root: Option<&str>) -> Lmt
         .iter()
         .map(|c| c.cabinet_id.as_str())
         .collect();
-    infer_grid_dims(&ids)?;
+    let (cols, _rows) = infer_grid_dims(&ids)?;
     if let Some(rid) = root {
         if !report.cabinet_poses.iter().any(|c| c.cabinet_id == rid) {
             return Err(LmtError::NotFound(format!(
                 "--root cabinet '{rid}' not in pose report"
             )));
+        }
+    }
+    // dry-run 与 execute 对齐：disguise 无 root 走标准摆法,这里预检能否定向
+    // (退化墙 execute 会 InvalidInput,dry-run 必须同样拒)。
+    if root.is_none() && target == "disguise" {
+        let panels: Vec<(String, u32, u32, [[f64; 3]; 4])> = report
+            .cabinet_poses
+            .iter()
+            .filter_map(|c| {
+                parse_cabinet_col_row(&c.cabinet_id)
+                    .map(|(col, row)| (c.cabinet_id.clone(), col, row, c.corners_mm))
+            })
+            .collect();
+        if center_column_forward(&panels, cols).is_none() {
+            return Err(LmtError::InvalidInput(
+                "cannot auto-orient: wall normal near-vertical or no usable cabinets; pass --root <cabinet_id>".into(),
+            ));
         }
     }
     Ok(())
@@ -375,7 +396,7 @@ fn center_column_forward(
     if panels.is_empty() || cols == 0 {
         return None;
     }
-    let c_mid = (cols - 1) / 2;
+    let c_mid = cols / 2; // = round((cols-1)/2);偶数列取上中列(与 spec 一致,非 floor)
     let present: std::collections::BTreeSet<u32> = panels.iter().map(|(_, c, _, _)| *c).collect();
     let target_col = if present.contains(&c_mid) {
         c_mid
@@ -595,6 +616,41 @@ mod tests {
         let flat_up = [[-300.0, 0.0, -170.0], [300.0, 0.0, -170.0], [300.0, 0.0, 170.0], [-300.0, 0.0, 170.0]];
         let panels = vec![panel(0, 0, flat_up)];
         assert!(center_column_forward(&panels, 1).is_none());
+    }
+
+    #[test]
+    fn center_column_forward_even_width_rounds_up_center_column() {
+        // 偶数列(cols=2):中心列 = cols/2 = 1(上中列,round),非 floor 的 0。
+        // col0 朝 +X、col1 朝 +Z → 取 col1 → 前向 ≈ +Z(若 floor 会得 +X)。
+        let panels = vec![facing_panel(0, 0, 1.0, 0.0), facing_panel(1, 0, 0.0, 1.0)];
+        let f = center_column_forward(&panels, 2).unwrap();
+        assert!(
+            (f - Vector3::new(0.0, 0.0, 1.0)).norm() < 1e-6,
+            "even-width center col should round up to col1 (+Z), got {f:?}"
+        );
+    }
+
+    #[test]
+    fn check_pose_obj_inputs_disguise_rejects_degenerate_but_neutral_ok() {
+        let dir = tempdir().unwrap();
+        let rp = dir.path().join("degenerate.json");
+        // 两块都躺平(法向≈+Y)→ disguise 无法定向
+        std::fs::write(
+            &rp,
+            r#"{"schema_version":"visual_pose_report.v1","frame":{},"cabinet_poses":[
+ {"cabinet_id":"V000_R000","corners_mm":[[-300,0,-170],[300,0,-170],[300,0,170],[-300,0,170]]},
+ {"cabinet_id":"V001_R000","corners_mm":[[400,0,-170],[1000,0,-170],[1000,0,170],[400,0,170]]}]}"#,
+        )
+        .unwrap();
+        // disguise 无 root → 预检拒(与 execute 的 apply_canonical_frame 一致)
+        assert!(matches!(
+            check_pose_obj_inputs(&rp, "disguise", None),
+            Err(LmtError::InvalidInput(_))
+        ));
+        // neutral 不走标准摆法 → 放行
+        assert!(check_pose_obj_inputs(&rp, "neutral", None).is_ok());
+        // disguise + 显式 --root → 放行(手动模式,不自动定向)
+        assert!(check_pose_obj_inputs(&rp, "disguise", Some("V000_R000")).is_ok());
     }
 
     /// 把整组 panel 角点施加任意 yaw(绕Y)+ 平移(模拟不同架站/根箱体)。

@@ -169,7 +169,7 @@ fn pose_obj(
                     ),
                 );
             }
-            if let Err(e) = lmt_app::export::check_pose_obj_inputs(Path::new(pose_report), root) {
+            if let Err(e) = lmt_app::export::check_pose_obj_inputs(Path::new(pose_report), target, root) {
                 return output::err(mode, ApiError::from(e));
             }
             let resolved = lmt_app::export::ensure_obj_extension(out);

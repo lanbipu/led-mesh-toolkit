@@ -1775,3 +1775,25 @@ fn export_pose_obj_disguise_degenerate_errors() {
     assert_eq!(env["ok"], false, "degenerate must error: {env}");
     assert!(!out.exists(), "must not write file on degenerate");
 }
+
+/// dry-run 也要拒退化 disguise 墙(与 execute 一致,否则放行 execute 会失败的导出)。
+#[test]
+fn export_pose_obj_disguise_degenerate_dry_run_also_errors() {
+    let tmp = TempDir::new().unwrap();
+    let report = tmp.path().join("cabinet_pose_report.json");
+    std::fs::write(&report, r#"{"schema_version":"visual_pose_report.v1","frame":{},"cabinet_poses":[
+ {"cabinet_id":"V000_R000","corners_mm":[[-300,0,-170],[300,0,-170],[300,0,170],[-300,0,170]]},
+ {"cabinet_id":"V001_R000","corners_mm":[[400,0,-170],[1000,0,-170],[1000,0,170],[400,0,170]]}]}"#).unwrap();
+    let out = tmp.path().join("wall.obj");
+
+    let assert = lmt()
+        .args(["--json", "--dry-run", "export", "pose-obj",
+               report.to_str().unwrap(), "disguise", "--out", out.to_str().unwrap()])
+        .assert()
+        .failure();
+    let env: Value = serde_json::from_str(
+        std::str::from_utf8(&assert.get_output().stderr).unwrap().trim_end()
+    ).expect("stderr JSON envelope");
+    assert_eq!(env["ok"], false, "dry-run degenerate disguise must error: {env}");
+    assert!(!out.exists(), "dry-run must not create file");
+}
