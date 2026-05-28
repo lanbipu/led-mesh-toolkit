@@ -157,7 +157,7 @@ pub fn run_export_pose_obj(
     root: Option<&str>,
     ground: bool,
 ) -> LmtResult<ExportPoseObjResult> {
-    let _ = parse_target(target)?; // 校验 target；几何原样（Neutral）
+    let target_enum = parse_target(target)?; // 校验 target；几何原样（Neutral）
     let report: CabinetPoseReportFile =
         serde_json::from_slice(&std::fs::read(pose_report_path)?)?;
     if report.cabinet_poses.is_empty() {
@@ -212,8 +212,10 @@ pub fn run_export_pose_obj(
         panels.push((cab.cabinet_id.clone(), col, row, cs));
     }
 
-    // 可选 ground：Y 平移使底边到 0（基准=root 块，否则整体）。
-    if ground {
+    // 摆放：root→手动(+ground);disguise 无 root→标准摆法;否则(neutral)→原始(+可选 ground)。
+    if root.is_none() && target_enum == TargetSoftware::Disguise {
+        apply_canonical_frame(&mut panels, cols)?;
+    } else if ground {
         let min_y = panels
             .iter()
             .filter(|(id, _, _, _)| root.map_or(true, |r| id == r))
@@ -720,25 +722,33 @@ mod tests {
     }
 
     #[test]
-    fn export_pose_obj_disguise_target_equals_raw_world_frame() {
+    fn export_pose_obj_disguise_applies_canonical_placement() {
         let dir = tempdir().unwrap();
         let rp = dir.path().join("BENCH_cabinet_pose_report.json");
         std::fs::write(&rp, BENCH_REPORT).unwrap();
         let out = dir.path().join("wall_disguise.obj");
 
         let res = run_export_pose_obj(&rp, "disguise", &out, None, false).unwrap();
-        assert_eq!(res.target, "disguise");
         assert_eq!(res.cabinet_count, 2);
 
         let text = std::fs::read_to_string(&out).unwrap();
-        assert!(
-            text.contains("v -0.3 -0.17 0"),
-            "disguise output should equal raw world frame; got:\n{text}"
-        );
-        assert!(
-            !text.contains("v -0.3 0 0.17"),
-            "axis-swapped vertex found — adapter was wrongly applied; got:\n{text}"
-        );
+        let verts: Vec<[f64; 3]> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("v "))
+            .map(|l| {
+                let n: Vec<f64> = l.split_whitespace().map(|t| t.parse().unwrap()).collect();
+                [n[0], n[1], n[2]]
+            })
+            .collect();
+        assert_eq!(verts.len(), 8);
+        // 标准摆法:贴地 + 水平居中
+        let min_y = verts.iter().map(|v| v[1]).fold(f64::INFINITY, f64::min);
+        let mean_x = verts.iter().map(|v| v[0]).sum::<f64>() / 8.0;
+        let mean_z = verts.iter().map(|v| v[2]).sum::<f64>() / 8.0;
+        assert!(min_y.abs() < 1e-6, "grounded: min_y={min_y}");
+        assert!(mean_x.abs() < 1e-6 && mean_z.abs() < 1e-6, "centered: ({mean_x},{mean_z})");
+        // 不再是原始帧(原始 V000_R000 的 BL 是 -0.3,-0.17,0)
+        assert!(!text.contains("v -0.3 -0.17 0"), "disguise should be canonical, not raw:\n{text}");
     }
 
     #[test]

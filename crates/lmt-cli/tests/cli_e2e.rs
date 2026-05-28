@@ -1731,3 +1731,47 @@ fn export_pose_obj_dry_run_validates_root() {
     assert_eq!(env["ok"], false, "envelope ok must be false: {env}");
     assert!(!out.exists(), "dry-run must not create the output file");
 }
+
+/// disguise 不带摆放参数 → 标准摆法:贴地 + 水平居中。
+#[test]
+fn export_pose_obj_disguise_canonical_no_flags() {
+    let tmp = TempDir::new().unwrap();
+    let report = tmp.path().join("cabinet_pose_report.json");
+    std::fs::write(&report, pose_report_json()).unwrap();
+    let out = tmp.path().join("wall.obj");
+
+    lmt()
+        .args(["--json", "--yes", "export", "pose-obj",
+               report.to_str().unwrap(), "disguise", "--out", out.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let text = std::fs::read_to_string(&out).unwrap();
+    let ys: Vec<f64> = text.lines().filter_map(|l| l.strip_prefix("v "))
+        .map(|l| l.split_whitespace().nth(1).unwrap().parse::<f64>().unwrap()).collect();
+    let min_y = ys.iter().cloned().fold(f64::INFINITY, f64::min);
+    assert!(min_y.abs() < 1e-3, "disguise canonical must be grounded, got min_y={min_y}");
+}
+
+/// 退化墙(全部面朝上)→ disguise 无法定向 → 非零退出 + envelope ok=false + 不写文件。
+#[test]
+fn export_pose_obj_disguise_degenerate_errors() {
+    let tmp = TempDir::new().unwrap();
+    let report = tmp.path().join("cabinet_pose_report.json");
+    // 两块都躺平(法向 ≈ +Y)→ 水平法向 0
+    std::fs::write(&report, r#"{"schema_version":"visual_pose_report.v1","frame":{},"cabinet_poses":[
+ {"cabinet_id":"V000_R000","corners_mm":[[-300,0,-170],[300,0,-170],[300,0,170],[-300,0,170]]},
+ {"cabinet_id":"V001_R000","corners_mm":[[400,0,-170],[1000,0,-170],[1000,0,170],[400,0,170]]}]}"#).unwrap();
+    let out = tmp.path().join("wall.obj");
+
+    let assert = lmt()
+        .args(["--json", "--yes", "export", "pose-obj",
+               report.to_str().unwrap(), "disguise", "--out", out.to_str().unwrap()])
+        .assert()
+        .failure();
+    let env: Value = serde_json::from_str(
+        std::str::from_utf8(&assert.get_output().stderr).unwrap().trim_end()
+    ).expect("stderr JSON envelope");
+    assert_eq!(env["ok"], false, "degenerate must error: {env}");
+    assert!(!out.exists(), "must not write file on degenerate");
+}
