@@ -1,7 +1,9 @@
 use lmt_core::export::build::surface_to_mesh_output;
 use lmt_core::export::obj::write_obj;
 use lmt_core::shape::CabinetArray;
-use lmt_core::surface::{GridTopology, MeshOutput, QualityMetrics, ReconstructedSurface, TargetSoftware};
+use lmt_core::surface::{
+    GridTopology, MeshOutput, QualityMetrics, ReconstructedSurface, TargetSoftware, MAX_GRID_DIM,
+};
 use lmt_core::uv::compute_grid_uv;
 use lmt_shared::data::{runs, Db};
 use lmt_shared::dto::{CabinetPoseReportFile, ExportPoseObjResult, ReconstructionReport, ShapeMode};
@@ -324,6 +326,8 @@ fn parse_cabinet_col_row(cabinet_id: &str) -> Option<(u32, u32)> {
 }
 
 /// 总列/行数 = max(col)+1 / max(row)+1。任一 id 不可解析 → InvalidInput。
+/// 越界 index（≥ MAX_GRID_DIM）也拒：既防 `max+1` 溢出（pose report 是外部文件，
+/// 可含 `V4294967295_R000` 这类极值），又与 GridTopology 的 cols/rows 上限一致。
 fn infer_grid_dims(ids: &[&str]) -> LmtResult<(u32, u32)> {
     let mut max_col = 0u32;
     let mut max_row = 0u32;
@@ -331,6 +335,11 @@ fn infer_grid_dims(ids: &[&str]) -> LmtResult<(u32, u32)> {
         let (c, r) = parse_cabinet_col_row(id).ok_or_else(|| {
             LmtError::InvalidInput(format!("cabinet_id {id:?} not parseable as V<col>_R<row>"))
         })?;
+        if c >= MAX_GRID_DIM || r >= MAX_GRID_DIM {
+            return Err(LmtError::InvalidInput(format!(
+                "cabinet_id {id:?} grid index out of range (must be < {MAX_GRID_DIM})"
+            )));
+        }
         max_col = max_col.max(c);
         max_row = max_row.max(r);
     }
@@ -606,6 +615,20 @@ mod tests {
         // 缺 V001_R000：dims 仍按 max+1 推（2 列 × 2 行）
         let ids = ["V000_R000", "V000_R001", "V001_R001"];
         assert_eq!(infer_grid_dims(&ids).unwrap(), (2, 2));
+    }
+
+    #[test]
+    fn infer_grid_dims_rejects_out_of_range_index() {
+        // u32::MAX 可解析但 max+1 会溢出 → 必须先拒（外部 pose report 是系统边界）。
+        assert!(matches!(
+            infer_grid_dims(&["V4294967295_R000"]),
+            Err(LmtError::InvalidInput(_))
+        ));
+        // index == MAX_GRID_DIM 越界（合法上限是 < MAX_GRID_DIM）。
+        assert!(matches!(
+            infer_grid_dims(&["V000_R10000"]),
+            Err(LmtError::InvalidInput(_))
+        ));
     }
 
     #[test]
