@@ -2010,6 +2010,26 @@ fn decode_structured_light_happy_with_roi_provenance_and_debug() {
         "<out>.debug.png must exist");
 }
 
+/// The manifest's decode-structured-light CLI string documents the new flags and
+/// keeps the exit-code set unchanged (no new error codes per spec A.3).
+/// (Operations live under the `manifest` envelope, keyed by `operation_id`.)
+#[test]
+fn decode_structured_light_manifest_documents_new_flags() {
+    let assert = lmt().args(["--json", "manifest"]).assert().success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    let ops = env["data"]["operations"].as_array()
+        .expect("manifest envelope must list operations");
+    let decode = ops.iter()
+        .find(|o| o["operation_id"] == "visual.decode_structured_light")
+        .expect("decode op present in manifest");
+    let cli = decode["cli"].as_str().unwrap();
+    assert!(cli.contains("--screen-roi"), "manifest CLI must mention --screen-roi: {cli}");
+    assert!(cli.contains("--emit-debug-image"), "manifest CLI must mention --emit-debug-image: {cli}");
+    let codes: Vec<i64> = decode["exit_codes"].as_array().unwrap()
+        .iter().map(|c| c.as_i64().unwrap()).collect();
+    assert_eq!(codes, vec![0, 2, 3, 4, 13, 18], "exit codes unchanged");
+}
+
 #[test]
 fn reconstruct_structured_light_refuses_without_yes() {
     let tmp = TempDir::new().unwrap();
