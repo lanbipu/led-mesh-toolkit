@@ -1922,6 +1922,46 @@ fn decode_structured_light_help_lists_new_flags() {
     assert!(out.contains("--emit-debug-image"), "help must document --emit-debug-image: {out}");
 }
 
+/// Bad --screen-roi format is rejected as invalid_input (exit 2) BEFORE the
+/// destructive gate — mirrors reconstruct-structured-light's >=2-corr pre-check.
+#[test]
+fn decode_structured_light_invalid_roi_format() {
+    let tmp = TempDir::new().unwrap();
+    let meta = tmp.path().join("sl_meta.json");
+    std::fs::write(&meta, "{}").unwrap();
+    let assert = lmt().args(["--json", "visual", "decode-structured-light",
+        tmp.path().to_str().unwrap(), meta.to_str().unwrap(),
+        "--out", tmp.path().join("c.json").to_str().unwrap(),
+        "--screen-roi", "10,20,oops"]).assert().failure();
+    let out = assert.get_output();
+    assert_eq!(out.status.code(), Some(2), "bad ROI must be exit 2");
+    let env: Value = serde_json::from_str(std::str::from_utf8(&out.stderr).unwrap().trim_end()).unwrap();
+    assert_eq!(env["error"]["code"], "invalid_input");
+}
+
+/// dry-run with --emit-debug-image lists BOTH the corr file and <out>.debug.png
+/// under would_write, and writes nothing.
+#[test]
+fn decode_structured_light_with_roi_and_debug_dry_run() {
+    let tmp = TempDir::new().unwrap();
+    let meta = tmp.path().join("sl_meta.json");
+    std::fs::write(&meta, "{}").unwrap();
+    let out_path = tmp.path().join("c.json");
+    let assert = lmt().args(["--json", "--dry-run", "visual", "decode-structured-light",
+        tmp.path().to_str().unwrap(), meta.to_str().unwrap(),
+        "--out", out_path.to_str().unwrap(),
+        "--screen-roi", "10,20,300,200", "--emit-debug-image"]).assert().success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["dry_run"], true);
+    let ww = env["data"]["would_write"].as_array().expect("would_write is a list");
+    let joined: Vec<String> = ww.iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    assert!(joined.iter().any(|s| s.ends_with("c.json")), "lists corr: {joined:?}");
+    assert!(joined.iter().any(|s| s.ends_with("c.json.debug.png")), "lists debug png: {joined:?}");
+    assert!(!out_path.exists());
+    assert!(!tmp.path().join("c.json.debug.png").exists());
+}
+
 #[test]
 fn reconstruct_structured_light_refuses_without_yes() {
     let tmp = TempDir::new().unwrap();
