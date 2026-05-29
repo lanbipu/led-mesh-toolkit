@@ -34,3 +34,149 @@ def validate_sl_provenance(corr_files: list[CorrespondenceFile], *,
         raise ValueError(
             f"screen_id '{only_screen}' in correspondences != project screen "
             f"'{expected_screen_id}'")
+
+
+import hashlib
+import json
+import pathlib
+
+import numpy as np
+
+from lmt_vba_sidecar.io_utils import write_event
+from lmt_vba_sidecar.ipc import (
+    ErrorEvent, ProgressEvent, ReconstructStructuredLightInput, StructuredLightMeta,
+)
+from lmt_vba_sidecar.model_constrained_ba import Observation
+from lmt_vba_sidecar.nominal import nominal_cabinet_centers_model_frame
+from lmt_vba_sidecar.observability import ObservabilityError, check_observability
+from lmt_vba_sidecar.reconstruct import ROOT_CABINET, _undistort_obs, solve_and_emit
+from lmt_vba_sidecar.sl_geometry import sl_cabinet_corners_mm, sl_local_mm
+
+
+def run_reconstruct_structured_light(cmd: ReconstructStructuredLightInput) -> int:
+    write_event(ProgressEvent(event="progress", stage="load", percent=0.0, message="loading sl_meta + correspondences"))
+
+    # --- 1. sl_meta: SCHEMA-validate (not raw json), so malformed meta -> invalid_input
+    #         instead of an internal_error traceback. screen_id is a system-boundary
+    #         check (sl_meta is an external file). ---
+    meta_path = pathlib.Path(cmd.sl_meta_path)
+    try:
+        meta = StructuredLightMeta.model_validate_json(meta_path.read_text())
+        expected_sha = hashlib.sha256(meta_path.read_bytes()).hexdigest()
+    except (OSError, ValueError) as e:
+        write_event(ErrorEvent(event="error", code="invalid_input", message=f"sl_meta load/validate failed: {e}", fatal=True))
+        return 1
+    if meta.screen_id != cmd.project.screen_id:
+        write_event(ErrorEvent(event="error", code="invalid_input",
+            message=f"sl_meta screen_id '{meta.screen_id}' != project screen '{cmd.project.screen_id}'", fatal=True))
+        return 1
+
+    rect_by_cr = {(c.col, c.row): tuple(int(v) for v in c.input_rect_px) for c in meta.cabinets}
+    pitch_by_cr = {(c.col, c.row): (float(c.pixel_pitch_mm[0]), float(c.pixel_pitch_mm[1])) for c in meta.cabinets}
+    # CANONICAL screen coords come from sl_meta, NOT the correspondence file. The
+    # screen-coordinate invariant (one id -> one fixed (u,v)) must be STRUCTURAL: a
+    # stale/edited corr that kept id+sha but moved (u,v) must not shift p_local.
+    cab_by_id = {d.id: (tuple(d.cabinet), float(d.u), float(d.v)) for d in meta.dots}
+
+    # --- 2. correspondence files + provenance gate ---
+    from lmt_vba_sidecar.ipc import CorrespondenceFile
+    corr_files: list[CorrespondenceFile] = []
+    for p in cmd.correspondence_paths:
+        try:
+            corr_files.append(CorrespondenceFile.model_validate_json(pathlib.Path(p).read_text()))
+        except (OSError, ValueError) as e:
+            write_event(ErrorEvent(event="error", code="invalid_input", message=f"correspondence '{p}' unreadable: {e}", fatal=True))
+            return 1
+    try:
+        validate_sl_provenance(corr_files, expected_sha=expected_sha, expected_screen_id=cmd.project.screen_id)
+    except ValueError as e:
+        write_event(ErrorEvent(event="error", code="invalid_input", message=str(e), fatal=True))
+        return 1
+
+    # --- 3. intrinsics ---
+    try:
+        intr = json.loads(pathlib.Path(cmd.intrinsics_path).read_text())
+        K = np.array(intr["K"], dtype=float)
+        dist = np.array(intr["dist_coeffs"], dtype=float)
+        image_size = tuple(int(v) for v in intr["image_size"])
+    except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+        write_event(ErrorEvent(event="error", code="intrinsics_invalid", message=f"intrinsics load failed: {e}", fatal=True))
+        return 1
+    for c in corr_files:
+        if tuple(c.camera_image_size) != image_size:
+            write_event(ErrorEvent(event="error", code="invalid_input",
+                message=f"correspondence camera_image_size {tuple(c.camera_image_size)} != intrinsics image_size {image_size}",
+                fatal=True))
+            return 1
+
+    # --- 4. nominal model (project) + cabinet-set match. nominal_m.keys() IS the
+    #         project present-cell set (nominal.py skips absent_cells), so this ties
+    #         the sl_meta universe to the project: a stale sl_meta or an edited
+    #         project layout (same screen_id+sha) is rejected instead of silently
+    #         reconstructing the wrong cabinet universe. ---
+    try:
+        nominal_m = nominal_cabinet_centers_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
+    except ValueError as e:
+        write_event(ErrorEvent(event="error", code="invalid_input", message=str(e), fatal=True))
+        return 1
+    present = sorted(rect_by_cr.keys(), key=lambda cr: (cr[1], cr[0]))
+    if set(present) != set(nominal_m.keys()):
+        write_event(ErrorEvent(event="error", code="invalid_input",
+            message=f"sl_meta cabinet set {present} != project present cells "
+                    f"{sorted(nominal_m.keys())} (stale sl_meta or edited project layout)", fatal=True))
+        return 1
+    if ROOT_CABINET not in present:
+        write_event(ErrorEvent(event="error", code="invalid_input",
+            message="root cabinet V000_R000 (0,0) not present in sl_meta cabinets", fatal=True))
+        return 1
+    cab_to_idx = {cr: i for i, cr in enumerate(present)}
+    root_idx = cab_to_idx[ROOT_CABINET]
+    n_cabinets = len(present)
+
+    # --- 5. assemble observations (one camera per correspondence file). p_local uses
+    #         CANONICAL (cu,cv) from sl_meta; ONLY the camera pixel (pt.x,pt.y) comes
+    #         from the correspondence file. ---
+    write_event(ProgressEvent(event="progress", stage="subpixel_refine", percent=0.3, message="assembling observations"))
+    observations: list[Observation] = []
+    per_view_cab_corners: dict[tuple[int, int], list[tuple[np.ndarray, np.ndarray]]] = {}
+    per_cabinet_views: dict[int, set[int]] = {}
+    per_cabinet_points: dict[int, int] = {}
+    for cam_idx, cf in enumerate(corr_files):
+        for pt in cf.points:
+            info = cab_by_id.get(int(pt.id))
+            if info is None:
+                continue  # decoded id not in this sl_meta (defensive)
+            cr, cu, cv = info
+            cab_idx = cab_to_idx.get(cr)
+            if cab_idx is None:
+                continue  # dot references a cabinet not in meta.cabinets (hand-edited meta)
+            p_local = sl_local_mm(rect_by_cr[cr], cu, cv, pitch_by_cr[cr][0], pitch_by_cr[cr][1])
+            pixel = _undistort_obs(np.array([pt.x, pt.y], dtype=float), K, dist)
+            observations.append(Observation(camera_idx=cam_idx, cabinet_idx=cab_idx, p_local=p_local, pixel=pixel))
+            per_view_cab_corners.setdefault((cam_idx, cab_idx), []).append((p_local, pixel))
+            per_cabinet_views.setdefault(cab_idx, set()).add(cam_idx)
+            per_cabinet_points[cab_idx] = per_cabinet_points.get(cab_idx, 0) + 1
+
+    if not observations:
+        write_event(ErrorEvent(event="error", code="detection_failed",
+            message="no usable correspondences across any pose", fatal=True))
+        return 1
+
+    # --- 6. observability ---
+    try:
+        check_observability(observations, n_cabinets, min_views=2, min_points=8)
+    except ObservabilityError as e:
+        write_event(ErrorEvent(event="error", code="observability_failed", message=str(e), fatal=True))
+        return 1
+
+    # --- 7-11. shared solve + emit ---
+    def corners_provider(cabinet_id: str) -> np.ndarray:
+        col, row = int(cabinet_id[1:4]), int(cabinet_id[6:9])  # V{col:03d}_R{row:03d}
+        return sl_cabinet_corners_mm(rect_by_cr[(col, row)], *pitch_by_cr[(col, row)])
+
+    return solve_and_emit(
+        K=K, observations=observations, per_view_cab_corners=per_view_cab_corners,
+        n_cameras=len(corr_files), cab_to_idx=cab_to_idx, root_idx=root_idx,
+        n_cabinets=n_cabinets, nominal_m=nominal_m,
+        per_cabinet_views=per_cabinet_views, per_cabinet_points=per_cabinet_points,
+        corners_local_provider=corners_provider, pose_report_path=cmd.pose_report_path)

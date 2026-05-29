@@ -286,3 +286,12 @@ def test_dispatch_knows_structured_light_subcommands():
     assert p.returncode == 1
     ev = json.loads(p.stdout.strip().splitlines()[-1])
     assert ev["event"] == "error" and ev["code"] == "invalid_input"
+
+
+def test_dispatch_knows_reconstruct_structured_light():
+    import subprocess, sys, json
+    p = subprocess.run([sys.executable, "-m", "lmt_vba_sidecar", "reconstruct_structured_light"],
+                       input="{}", capture_output=True, text=True)
+    assert p.returncode == 1
+    ev = json.loads(p.stdout.strip().splitlines()[-1])
+    assert ev["event"] == "error" and ev["code"] == "invalid_input"
