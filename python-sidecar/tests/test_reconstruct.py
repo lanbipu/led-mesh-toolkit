@@ -411,3 +411,68 @@ def test_solve_pnp_handles_4_points_and_skips_degenerate():
     assert _solve_pnp(obs(collinear5), K) is None
     # < 4 points -> None
     assert _solve_pnp(obs(spread4[:3]), K) is None
+
+
+def test_solve_pnp_branches_returns_inliers_and_two_ippe_branches():
+    from lmt_vba_sidecar.reconstruct import _solve_pnp_branches
+    K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
+    # Oblique view (tilt ~40 deg about y) of a coplanar grid -> IPPE gives 2 branches.
+    ang = np.deg2rad(40.0)
+    R = np.array([[np.cos(ang), 0, np.sin(ang)], [0, 1, 0], [-np.sin(ang), 0, np.cos(ang)]])
+    t = np.array([40.0, 30.0, 2200.0])
+    obj = np.array([[x, y, 0.0] for x in (-300.0, -100.0, 100.0, 300.0)
+                    for y in (-170.0, 0.0, 170.0)], dtype=float)
+    xc = (R @ obj.T).T + t
+    pix = (K @ xc.T).T
+    pix = pix[:, :2] / pix[:, 2:3]
+    corners = list(zip(obj, pix))
+
+    res = _solve_pnp_branches(corners, K)
+    assert res is not None
+    branches, inlier_mask = res
+    # All clean points are inliers.
+    assert inlier_mask.sum() == len(corners)
+    # IPPE yields 1 or 2 branches; when 2, the camera-frame normals share z-sign
+    # (Codex finding-1: front-facing cannot disambiguate; only lateral flips).
+    assert 1 <= len(branches) <= 2
+    if len(branches) == 2:
+        n0 = branches[0][0] @ np.array([0.0, 0.0, 1.0])
+        n1 = branches[1][0] @ np.array([0.0, 0.0, 1.0])
+        # In the OBJECT frame both branches' surface points face the camera, so
+        # the camera-frame z-component of the rotated normal shares sign.
+        zc0 = (R.T if False else branches[0][0]) @ np.array([0.0, 0.0, 1.0])
+        assert np.sign(n0[2]) == np.sign(n1[2])
+
+
+def test_solve_pnp_branches_rejects_gross_outlier():
+    from lmt_vba_sidecar.reconstruct import _solve_pnp_branches
+    K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
+    R = cv2.Rodrigues(np.array([0.1, 0.2, 0.05]))[0]
+    t = np.array([50.0, 30.0, 2200.0])
+    obj = np.array([[x, y, 0.0] for x in (-300.0, -100.0, 100.0, 300.0)
+                    for y in (-170.0, 0.0, 170.0)], dtype=float)
+    xc = (R @ obj.T).T + t
+    pix = (K @ xc.T).T
+    pix = pix[:, :2] / pix[:, 2:3]
+    # Corrupt the last point's pixel by 400px -> must be a RANSAC outlier.
+    pix[-1] += np.array([400.0, 400.0])
+    corners = list(zip(obj, pix))
+    res = _solve_pnp_branches(corners, K)
+    assert res is not None
+    _branches, inlier_mask = res
+    assert inlier_mask[-1] == False
+    assert inlier_mask[:-1].all()
+
+
+def test_solve_pnp_branches_none_for_few_or_degenerate():
+    from lmt_vba_sidecar.reconstruct import _solve_pnp_branches
+    K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
+    obj3 = [(np.array([x, 0.0, 0.0]), np.array([x, 0.0])) for x in (-1.0, 0.0, 1.0)]
+    assert _solve_pnp_branches(obj3, K) is None  # < 4
+    R = cv2.Rodrigues(np.array([0.1, 0.2, 0.05]))[0]
+    t = np.array([50.0, 30.0, 2200.0])
+    collinear = np.array([[x, 0.0, 0.0] for x in np.linspace(-300, 300, 6)], dtype=float)
+    xc = (R @ collinear.T).T + t
+    pix = (K @ xc.T).T
+    pix = pix[:, :2] / pix[:, 2:3]
+    assert _solve_pnp_branches(list(zip(collinear, pix)), K) is None

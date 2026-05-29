@@ -67,6 +67,12 @@ from lmt_vba_sidecar.screen_mapping import ScreenMapping, ScreenMappingError
 
 ROOT_CABINET = (0, 0)  # V000_R000 is the gauge cabinet (world == its frame)
 MIN_PNP_CORNERS = 4
+# Stage A PnP-RANSAC: gross-outlier reject threshold + RANSAC config (sidecar
+# internal constants; NOT a CLI knob). 2-3px is below the minimum resolvable
+# inter-dot spacing in the image, so near-neighbor mis-IDs still exceed it.
+PNP_RANSAC_REPROJ_PX = 3.0
+PNP_RANSAC_CONFIDENCE = 0.99
+PNP_RANSAC_ITERS = 100
 FALLBACK_ISOTROPIC_M = 0.005
 
 # --- per-cabinet SOFT quality thresholds (tunable) ---
@@ -492,28 +498,81 @@ def solve_and_emit(
     return 0
 
 
-def _solve_pnp(corners, K):
-    """corners: list[(p_local_mm, pixel_undistorted)] -> (R, t) camera_from_obj, or None.
+def _solve_pnp_branches(corners, K):
+    """corners: list[(p_local_mm, pixel_undistorted)] ->
+    (branches, inlier_mask) or None.
 
-    Returns None for < 4 correspondences (solvePnP minimum) and for geometrically
-    degenerate sets. ChArUco object points are coplanar, so cv2's ITERATIVE solver
-    uses a homography init that works with >= 4 points; but a (near-)collinear corner
-    subset is degenerate and makes ITERATIVE fall back to its DLT path, which raises
-    when given < 6 points. Catch that and skip the view (this pose is only a BA seed;
-    other views still bridge the cabinet).
+    branches: list of 1-2 (R, t) camera_from_obj poses. The planar PnP mirror
+    ambiguity (IPPE) yields up to two near-equal-reprojection branches; both
+    are returned so the model-frame assembly can disambiguate (Part C). Branch
+    order is OpenCV's (ascending reprojection error).
+    inlier_mask: bool ndarray (len(corners),) from solvePnPRansac — gross
+    outliers are False (Part C disambiguation + Stage A both consume this).
+
+    Returns None for < 4 correspondences and for geometrically degenerate sets
+    (near-collinear -> cv2.error). tvec is reshaped to (3,).
     """
-    if len(corners) < 4:
+    if len(corners) < MIN_PNP_CORNERS:
         return None
     obj = np.array([p for p, _ in corners], dtype=np.float64)
     img = np.array([px for _, px in corners], dtype=np.float64)
     try:
-        ok, rvec, tvec = cv2.solvePnP(obj, img, K, None, flags=cv2.SOLVEPNP_ITERATIVE)
+        ok, _rvec, _tvec, inliers = cv2.solvePnPRansac(
+            obj, img, K, None, iterationsCount=PNP_RANSAC_ITERS,
+            reprojectionError=PNP_RANSAC_REPROJ_PX, confidence=PNP_RANSAC_CONFIDENCE,
+            flags=cv2.SOLVEPNP_ITERATIVE,
+        )
     except cv2.error:
         return None
     if not ok:
         return None
-    R, _ = cv2.Rodrigues(rvec)
-    return R, tvec.reshape(3)
+    mask = np.zeros(len(corners), dtype=bool)
+    if inliers is not None:
+        mask[inliers.reshape(-1)] = True
+    else:
+        mask[:] = True
+    if int(mask.sum()) < MIN_PNP_CORNERS:
+        return None
+    in_obj = obj[mask]
+    in_img = img[mask]
+    # Two-branch planar solve on the inliers (IPPE needs coplanar z=0 points).
+    try:
+        retval, rvecs, tvecs = cv2.solvePnPGeneric(
+            in_obj, in_img, K, None, flags=cv2.SOLVEPNP_IPPE
+        )[:3]
+    except cv2.error:
+        return None
+    if retval < 1:
+        return None
+    branches = []
+    for i in range(retval):
+        rvec = np.asarray(rvecs[i], dtype=float)
+        tvec = np.asarray(tvecs[i], dtype=float).reshape(3)
+        # Near-collinear / degenerate inputs let solvePnPRansac "succeed" but make
+        # solvePnPGeneric(IPPE) emit NaN poses; reject those to preserve the
+        # degenerate -> None contract (legacy _solve_pnp returned None here).
+        if not (np.isfinite(rvec).all() and np.isfinite(tvec).all()):
+            continue
+        R, _ = cv2.Rodrigues(rvec)
+        branches.append((R, tvec))
+    if not branches:
+        return None
+    return branches, mask
+
+
+def _solve_pnp(corners, K):
+    """corners: list[(p_local_mm, pixel_undistorted)] -> (R, t) or None.
+
+    Backward-compatible single-pose form: the RANSAC+IPPE best branch (branch 0,
+    lowest reprojection). Used by callers that don't disambiguate (camera init).
+    Returns None on the same degenerate / too-few conditions as
+    _solve_pnp_branches.
+    """
+    res = _solve_pnp_branches(corners, K)
+    if res is None:
+        return None
+    branches, _mask = res
+    return branches[0]
 
 
 def _avg_rotation(rotations):
