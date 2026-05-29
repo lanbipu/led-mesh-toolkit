@@ -424,6 +424,18 @@ fn reconstruct_structured_light(
     yes: bool,
     dry_run: bool,
 ) -> i32 {
+    // Enforce the >= 2 camera-pose contract (mirrors the sidecar's min_length=2)
+    // BEFORE the gate, so --dry-run doesn't falsely report success for a command
+    // that would always fail on execute.
+    if correspondences.len() < 2 {
+        return output::err(
+            mode,
+            ApiError::new(
+                error_codes::INVALID_INPUT,
+                "reconstruct-structured-light needs >= 2 --corr files (one per camera pose)",
+            ),
+        );
+    }
     let decision =
         match util::gate_destructive(yes, dry_run, "visual reconstruct-structured-light") {
             Ok(d) => d,
