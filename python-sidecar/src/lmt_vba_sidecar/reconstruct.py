@@ -59,7 +59,13 @@ from lmt_vba_sidecar.ipc import (
     Uncertainty,
     WarningEvent,
 )
-from lmt_vba_sidecar.model_constrained_ba import Observation, model_constrained_ba
+from lmt_vba_sidecar.model_constrained_ba import (
+    Observation,
+    model_constrained_ba,
+    _residuals,
+    _nonroot_cabinets,
+    _pack,
+)
 from lmt_vba_sidecar.nominal import (
     nominal_cabinet_centers_model_frame,
     nominal_cabinet_normals_model_frame,
@@ -85,6 +91,12 @@ FALLBACK_ISOTROPIC_M = 0.005
 # (reconstruct aborts at observability_failed first).
 QUALITY_MIN_VIEWS = 4  # below this (but >=2) -> "low_observation"
 QUALITY_MAX_CABINET_RMS_PX = 2.0  # per-cabinet reproj RMS above this -> "high_residual"
+
+# --- Stage B robust-residual trim (PRIMARY geometric authority) ---
+STAGE_B_MAX_ITERS = 3
+STAGE_B_MAD_K = 3.0
+STAGE_B_ABS_PX_FLOOR = 3.0
+STAGE_B_GROUP_MEDIAN_PX = 4.0  # whole-(cam,cab)-group coherence guard
 
 
 def _classify_cabinet_quality(observed_views: int, reproj_rms_px: float) -> str:
@@ -133,6 +145,78 @@ def _per_cabinet_reproj_rms(
         idx: float(np.sqrt(sq_sum[idx] / counts[idx]))
         for idx in sq_sum
     }
+
+
+def _obs_residual_norms(K, result, observations, root_idx):
+    """Per-observation reprojection residual norm (px), using the CURRENT
+    iteration's poses (recomputed, not stale sol.fun)."""
+    nonroot = _nonroot_cabinets(
+        max(observations, key=lambda o: o.cabinet_idx).cabinet_idx + 1, root_idx)
+    # Reuse model_constrained_ba._residuals by packing the solved state.
+    cabs = dict(result.cabinet_poses)
+    for j in nonroot:
+        cabs.setdefault(j, (np.eye(3), np.zeros(3)))
+    x = _pack(result.camera_poses, cabs, nonroot)
+    res = _residuals(x, len(result.camera_poses), nonroot, root_idx, K, observations)
+    r = res.reshape(-1, 2)
+    return np.sqrt((r * r).sum(axis=1))
+
+
+def stage_b_robust_solve(*, K, observations, n_cameras, n_cabinets,
+                         root_cabinet_idx, init_cameras, init_cabinets,
+                         per_cabinet_min_points):
+    """Iterative robust-residual trim wrapping model_constrained_ba (PRIMARY
+    geometric authority). Recomputes residuals each iter (sol.fun is stale),
+    drops norm > max(k*MAD, abs_px_floor) plus whole-(cam,cab)-group coherence
+    outliers, re-solves, <=3 iters. Never trims any cabinet below
+    per_cabinet_min_points. Returns (result, rejected_per_cab, total,
+    surviving_observations) where surviving_observations is the trimmed obs list
+    the final solve ran on (caller reuses it for _per_cabinet_reproj_rms,
+    per-cabinet view/point recompute, and the post-trim observability check)."""
+    obs = list(observations)
+    rejected_per_cab: dict[int, int] = {}
+    result = model_constrained_ba(
+        K=K, observations=obs, n_cameras=n_cameras, n_cabinets=n_cabinets,
+        root_cabinet_idx=root_cabinet_idx, init_cameras=init_cameras,
+        init_cabinets=init_cabinets, loss="huber")
+    for _ in range(STAGE_B_MAX_ITERS):
+        norms = _obs_residual_norms(K, result, obs, root_cabinet_idx)
+        mad = float(np.median(np.abs(norms - np.median(norms)))) or 0.0
+        thr = max(STAGE_B_MAD_K * mad, STAGE_B_ABS_PX_FLOOR)
+        # group coherence: median residual per (cam,cab)
+        group_norms: dict[tuple[int, int], list[float]] = {}
+        for o, nrm in zip(obs, norms):
+            group_norms.setdefault((o.camera_idx, o.cabinet_idx), []).append(nrm)
+        bad_groups = {g for g, v in group_norms.items()
+                      if float(np.median(v)) > STAGE_B_GROUP_MEDIAN_PX}
+        # candidate drops: pointwise OR in a bad group
+        drop = [(nrm > thr) or ((o.camera_idx, o.cabinet_idx) in bad_groups)
+                for o, nrm in zip(obs, norms)]
+        if not any(drop):
+            break
+        # floor guard: per cabinet, never go below min_points
+        from collections import Counter
+        kept_counts = Counter(o.cabinet_idx for o, d in zip(obs, drop) if not d)
+        cab_counts = Counter(o.cabinet_idx for o in obs)
+        new_obs = []
+        n_dropped_this_iter = 0
+        for o, d in zip(obs, drop):
+            if d and kept_counts.get(o.cabinet_idx, 0) >= per_cabinet_min_points:
+                rejected_per_cab[o.cabinet_idx] = rejected_per_cab.get(o.cabinet_idx, 0) + 1
+                n_dropped_this_iter += 1
+            else:
+                new_obs.append(o)
+                if d:  # wanted to drop but floor blocked it -> protect by keeping
+                    kept_counts[o.cabinet_idx] = kept_counts.get(o.cabinet_idx, 0) + 1
+        if n_dropped_this_iter == 0:
+            break
+        obs = new_obs
+        result = model_constrained_ba(
+            K=K, observations=obs, n_cameras=n_cameras, n_cabinets=n_cabinets,
+            root_cabinet_idx=root_cabinet_idx, init_cameras=init_cameras,
+            init_cabinets=init_cabinets, loss="huber")
+    total = sum(rejected_per_cab.values())
+    return result, rejected_per_cab, total, obs
 
 
 def _undistort_obs(pix: np.ndarray, K: np.ndarray, dist: np.ndarray) -> np.ndarray:
@@ -427,14 +511,13 @@ def solve_and_emit(
         pose = _pnp_camera(cam_idx, root_idx, init_cabinets, per_view_cab_corners, K)
         init_cameras.append(pose)
 
-    # --- 8. BA ---
-    result = model_constrained_ba(
-        K=K, observations=observations,
-        n_cameras=n_cameras, n_cabinets=n_cabinets,
-        root_cabinet_idx=root_idx,
-        init_cameras=init_cameras, init_cabinets=init_cabinets,
-        loss="huber",
-    )
+    # --- 8. BA (Stage B robust-residual trim — PRIMARY geometric authority) ---
+    result, rejected_per_cab_stage_b, n_rej_stage_b, surviving_observations = \
+        stage_b_robust_solve(
+            K=K, observations=observations, n_cameras=n_cameras,
+            n_cabinets=n_cabinets, root_cabinet_idx=root_idx,
+            init_cameras=init_cameras, init_cabinets=init_cabinets,
+            per_cabinet_min_points=8)
     if not result.converged:
         write_event(ErrorEvent(
             event="error", code="ba_diverged",
@@ -445,9 +528,27 @@ def solve_and_emit(
 
     # --- 9. per-cabinet geometry ---
     write_event(ProgressEvent(event="progress", stage="output", percent=0.9, message="building pose report"))
+    # recompute per-cabinet indices from the trimmed (surviving) observations
+    per_cabinet_views = {}
+    per_cabinet_points = {}
+    for o in surviving_observations:
+        per_cabinet_views.setdefault(o.cabinet_idx, set()).add(o.camera_idx)
+        per_cabinet_points[o.cabinet_idx] = per_cabinet_points.get(o.cabinet_idx, 0) + 1
+    # post-trim observability: trimming an outlier-heavy cabinet below the floor
+    # is a hard stop (no silent wrong measured.yaml).
+    for idx in range(n_cabinets):
+        n_pts = per_cabinet_points.get(idx, 0)
+        if n_pts < 8:
+            cid = _cabinet_id(*idx_to_cab[idx])
+            write_event(ErrorEvent(
+                event="error", code="observability_failed",
+                message=(f"after rejecting {n_rej_stage_b} outliers, cabinet {cid} "
+                         f"has only {n_pts} observations (<8)"),
+                fatal=True))
+            return 1
     # Per-cabinet reprojection RMS from the solved poses (same projection as BA).
     per_cabinet_rms = _per_cabinet_reproj_rms(
-        K, result.camera_poses, result.cabinet_poses, observations
+        K, result.camera_poses, result.cabinet_poses, surviving_observations
     )
     cabinet_poses: list[CabinetPose] = []
     measured_points: list[MeasuredPoint] = []

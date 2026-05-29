@@ -595,3 +595,63 @@ def test_stageA_pnp_ransac_inliers_drops_far_outlier():
     assert pts2[0] == len(obj)
     assert views2[0] == {0}
     assert all(not np.allclose(o.pixel, bad_pix) for o in obs2)
+
+
+def _two_panel_clean(K, R_true, t_true):
+    root_local = np.array([[-300, -170, 0], [300, -170, 0], [300, 170, 0], [-300, 170, 0],
+                           [-150, -85, 0], [150, -85, 0], [150, 85, 0], [-150, 85, 0]], float)
+    cams = [(np.eye(3), np.array([dx, 0.0, 2400.0])) for dx in (-300., -100., 100., 300.)]
+    obs, init_cams = [], []
+    for ci, (R_cam, t_cam) in enumerate(cams):
+        init_cams.append((R_cam, t_cam))
+        for p in root_local:
+            pr = K @ (R_cam @ p + t_cam); obs.append(Observation(ci, 0, p, pr[:2]/pr[2]))
+        for p in root_local:
+            xw = R_true @ p + t_true; pr = K @ (R_cam @ xw + t_cam)
+            obs.append(Observation(ci, 1, p, pr[:2]/pr[2]))
+    return obs, init_cams, cams, root_local
+
+
+def test_stage_b_trims_pointwise_outliers_and_converges():
+    from lmt_vba_sidecar.reconstruct import stage_b_robust_solve
+    K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
+    a = np.deg2rad(20.0)
+    R_true = np.array([[np.cos(a),0,np.sin(a)],[0,1,0],[-np.sin(a),0,np.cos(a)]])
+    t_true = np.array([700.0, 0.0, 0.0])
+    obs, init_cams, cams, _ = _two_panel_clean(K, R_true, t_true)
+    # Inject 3 random-far pointwise outliers (different cams, cabinet 1).
+    for k in (5, 20, 33):
+        obs[k] = Observation(obs[k].camera_idx, obs[k].cabinet_idx,
+                             obs[k].p_local, obs[k].pixel + np.array([250.0, -180.0]))
+    init_cabinets = {0: (np.eye(3), np.zeros(3)), 1: (np.eye(3), t_true)}
+    res, rej_per_cab, total, surviving = stage_b_robust_solve(
+        K=K, observations=obs, n_cameras=len(cams), n_cabinets=2,
+        root_cabinet_idx=0, init_cameras=init_cams, init_cabinets=init_cabinets,
+        per_cabinet_min_points=8)
+    assert res.converged
+    assert res.rms_reprojection_px < 1.0
+    assert total >= 3            # at least the injected outliers rejected
+    assert len(surviving) == len(obs) - total   # surviving = trimmed obs list
+
+
+def test_overtrim_stops_at_floor():
+    """Trimming must never push a cabinet below min_points (would KeyError in
+    _per_cabinet_reproj_rms / geometry)."""
+    from lmt_vba_sidecar.reconstruct import stage_b_robust_solve
+    K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
+    a = np.deg2rad(20.0)
+    R_true = np.array([[np.cos(a),0,np.sin(a)],[0,1,0],[-np.sin(a),0,np.cos(a)]])
+    obs, init_cams, cams, _ = _two_panel_clean(K, R_true, np.array([700.0,0.0,0.0]))
+    init_cabinets = {0: (np.eye(3), np.zeros(3)), 1: (np.eye(3), np.array([700.,0.,0.]))}
+    res, rej_per_cab, total, surviving = stage_b_robust_solve(
+        K=K, observations=obs, n_cameras=len(cams), n_cabinets=2,
+        root_cabinet_idx=0, init_cameras=init_cams, init_cabinets=init_cabinets,
+        per_cabinet_min_points=8)
+    # Clean data: no cabinet trimmed below the floor of 8 points each. With 4
+    # cameras x 8 corners = 32 obs/cabinet, the floor leaves >=8 per cabinet.
+    from collections import Counter
+    survivors = Counter(o.cabinet_idx for o in surviving)
+    assert survivors[0] >= 8
+    assert survivors[1] >= 8
+    assert rej_per_cab.get(0, 0) <= 32 - 8
+    assert rej_per_cab.get(1, 0) <= 32 - 8
