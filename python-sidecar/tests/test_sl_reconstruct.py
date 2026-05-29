@@ -3,16 +3,24 @@ from lmt_vba_sidecar.ipc import CorrespondenceFile
 from lmt_vba_sidecar.sl_reconstruct import validate_sl_provenance
 
 
-def _corr(screen_id="MAIN", sha="abc"):
+def _corr(screen_id="MAIN", sha="abc", src="/cap/p.mp4"):
     return CorrespondenceFile.model_validate({
         "schema_version": 1, "screen_id": screen_id, "sl_meta_sha256": sha,
         "screen_resolution": [960, 540], "camera_image_size": [4000, 3000],
-        "source_input": "/cap/p.mp4",
+        "source_input": src,
         "points": [{"id": 0, "u": 1.0, "v": 2.0, "x": 3.0, "y": 4.0}]})
 
 
 def test_provenance_accepts_consistent_set():
-    validate_sl_provenance([_corr(), _corr()], expected_sha="abc", expected_screen_id="MAIN")
+    validate_sl_provenance([_corr(src="/cap/p0.mp4"), _corr(src="/cap/p1.mp4")],
+                           expected_sha="abc", expected_screen_id="MAIN")
+
+
+def test_provenance_rejects_duplicate_source_input():
+    # same capture decoded twice -> would inflate observed views past the gate
+    with pytest.raises(ValueError, match="source_input"):
+        validate_sl_provenance([_corr(src="same"), _corr(src="same")],
+                               expected_sha="abc", expected_screen_id="MAIN")
 
 
 def test_provenance_rejects_mixed_screen_id():
@@ -135,16 +143,38 @@ def test_synthetic_sl_reconstruction_recovers_cabinet_offset_mm(tmp_path):
 
 
 def _valid_corr(tmp_path, sha, n=2, screen_res=(960, 480)):
-    """n minimal corr files that pass provenance (shared screen_id MAIN + sha)."""
+    """n minimal corr files that pass provenance (shared screen_id MAIN + sha,
+    DISTINCT source_input per file so the duplicate-view gate is not tripped)."""
     paths = []
     for i in range(n):
         cp = tmp_path / f"vc{i}.json"
         cp.write_text(json.dumps({
             "schema_version": 1, "screen_id": "MAIN", "sl_meta_sha256": sha,
             "screen_resolution": list(screen_res), "camera_image_size": [4000, 3000],
-            "source_input": "x", "points": [{"id": 0, "u": 1, "v": 1, "x": 1, "y": 1}]}))
+            "source_input": f"cap{i}", "points": [{"id": 0, "u": 1, "v": 1, "x": 1, "y": 1}]}))
         paths.append(str(cp))
     return paths
+
+
+def test_run_rejects_duplicate_source_input(tmp_path):
+    # two corr files with the SAME source_input = same capture decoded twice;
+    # must not be counted as two camera views (would bypass min_views gate).
+    meta_path = _gen_two_cabinet_meta(tmp_path)
+    sha = hashlib.sha256(meta_path.read_bytes()).hexdigest()
+    intr_path, _ = _write_intrinsics(tmp_path)
+    for i in range(2):
+        (tmp_path / f"dup{i}.json").write_text(json.dumps({
+            "schema_version": 1, "screen_id": "MAIN", "sl_meta_sha256": sha,
+            "screen_resolution": [960, 480], "camera_image_size": [4000, 3000],
+            "source_input": "/cap/SAME.mp4", "points": [{"id": 0, "u": 1, "v": 1, "x": 1, "y": 1}]}))
+    cmd = ReconstructStructuredLightInput.model_validate({
+        "command": "reconstruct_structured_light", "version": 1,
+        "project": {"screen_id": "MAIN",
+                    "cabinet_array": {"cols": 2, "rows": 1, "absent_cells": [],
+                                      "cabinet_size_mm": [500, 500]}},
+        "correspondence_paths": [str(tmp_path / "dup0.json"), str(tmp_path / "dup1.json")],
+        "sl_meta_path": str(meta_path), "intrinsics_path": str(intr_path)})
+    assert run_reconstruct_structured_light(cmd) == 1
 
 
 def test_run_rejects_malformed_sl_meta(tmp_path):

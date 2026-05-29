@@ -34,6 +34,14 @@ def validate_sl_provenance(corr_files: list[CorrespondenceFile], *,
         raise ValueError(
             f"screen_id '{only_screen}' in correspondences != project screen "
             f"'{expected_screen_id}'")
+    # Each correspondence must be a DISTINCT camera pose. The same capture decoded
+    # twice (identical source_input) would be enumerated as two cam_idx values,
+    # inflating per-cabinet observed-views and bypassing the min_views=2
+    # observability gate while feeding BA degenerate duplicate views.
+    sources = [c.source_input for c in corr_files]
+    if len(set(sources)) != len(sources):
+        dupes = sorted({s for s in sources if sources.count(s) > 1})
+        raise ValueError(f"duplicate correspondence source_input (same capture decoded twice?): {dupes}")
 
 
 import hashlib
