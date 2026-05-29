@@ -27,6 +27,8 @@ Pipeline:
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import hashlib
 import json
 import os
@@ -317,14 +319,44 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
         write_event(ErrorEvent(event="error", code="observability_failed", message=str(e), fatal=True))
         return 1
 
-    # --- 7. init ---
-    write_event(ProgressEvent(event="progress", stage="bundle_adjustment", percent=0.5, message="initializing"))
-    # Cabinet nominal world (model) positions, mm, with root re-centered to origin.
+    # --- 7. nominal model (kept here: needs cmd.project) ---
     try:
         nominal_m = nominal_cabinet_centers_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
     except ValueError as e:
         write_event(ErrorEvent(event="error", code="invalid_input", message=str(e), fatal=True))
         return 1
+
+    return solve_and_emit(
+        K=K, observations=observations, per_view_cab_corners=per_view_cab_corners,
+        n_cameras=len(view_images), cab_to_idx=cab_to_idx, root_idx=root_idx,
+        n_cabinets=n_cabinets, nominal_m=nominal_m,
+        per_cabinet_views=per_cabinet_views, per_cabinet_points=per_cabinet_points,
+        corners_local_provider=lambda cid: _active_surface_corners_mm(screen_mapping, cid),
+        pose_report_path=cmd.pose_report_path,
+    )
+
+
+def solve_and_emit(
+    *,
+    K: np.ndarray,
+    observations: list[Observation],
+    per_view_cab_corners: dict[tuple[int, int], list[tuple[np.ndarray, np.ndarray]]],
+    n_cameras: int,
+    cab_to_idx: dict[tuple[int, int], int],
+    root_idx: int,
+    n_cabinets: int,
+    nominal_m: dict[tuple[int, int], tuple[float, float, float]],
+    per_cabinet_views: dict[int, set[int]],
+    per_cabinet_points: dict[int, int],
+    corners_local_provider: Callable[[str], np.ndarray],
+    pose_report_path: str | None,
+) -> int:
+    """Shared init -> model_constrained_ba -> per-cabinet geometry -> report ->
+    ResultEvent. Used by both run_reconstruct (charuco) and
+    sl_reconstruct.run_reconstruct_structured_light. corners_local_provider maps
+    a cabinet_id string to its (4,3) active-surface corners in local mm."""
+    # --- 7. init ---
+    write_event(ProgressEvent(event="progress", stage="bundle_adjustment", percent=0.5, message="initializing"))
     if ROOT_CABINET not in nominal_m:
         write_event(ErrorEvent(
             event="error", code="invalid_input",
@@ -354,7 +386,6 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
     # that don't see the root well, PnP against any seen cabinet, then compose
     # with that cabinet's nominal world pose: T_cam_world = T_cam_cab @ T_cab_world.
     init_cameras: list[tuple[np.ndarray, np.ndarray]] = []
-    n_cameras = len(view_images)
     for cam_idx in range(n_cameras):
         pose = _pnp_camera(cam_idx, root_idx, init_cabinets, per_view_cab_corners, K)
         init_cameras.append(pose)
@@ -388,7 +419,7 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
         col, row = idx_to_cab[idx]
         cid = _cabinet_id(col, row)
         R, t = result.cabinet_poses[idx]
-        corners_local = _active_surface_corners_mm(screen_mapping, cid)
+        corners_local = corners_local_provider(cid)
         center, normal, _size, world_corners = reconstruct_cabinet_geometry(R, t, corners_local)
         n_views = len(per_cabinet_views.get(idx, set()))
         n_points = per_cabinet_points.get(idx, 0)
@@ -436,13 +467,13 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
         ))
 
     # --- 10. write pose report ---
-    if cmd.pose_report_path:
+    if pose_report_path:
         report = CabinetPoseReport(
             schema_version="visual_pose_report.v1",
             frame=FrameSpec(root_cabinet=list(ROOT_CABINET)),
             cabinet_poses=cabinet_poses,
         )
-        _atomic_write_json(cmd.pose_report_path, report.model_dump_json(indent=2))
+        _atomic_write_json(pose_report_path, report.model_dump_json(indent=2))
 
     # --- 11. result ---
     write_event(ResultEvent(
