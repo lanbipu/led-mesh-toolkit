@@ -1912,6 +1912,125 @@ fn decode_structured_light_dry_run_writes_nothing() {
 }
 
 #[test]
+fn decode_structured_light_help_lists_new_flags() {
+    let assert = lmt()
+        .args(["visual", "decode-structured-light", "--help"])
+        .assert()
+        .success();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(out.contains("--screen-roi"), "help must document --screen-roi: {out}");
+    assert!(out.contains("--emit-debug-image"), "help must document --emit-debug-image: {out}");
+}
+
+/// Bad --screen-roi format is rejected as invalid_input (exit 2) BEFORE the
+/// destructive gate — mirrors reconstruct-structured-light's >=2-corr pre-check.
+#[test]
+fn decode_structured_light_invalid_roi_format() {
+    let tmp = TempDir::new().unwrap();
+    let meta = tmp.path().join("sl_meta.json");
+    std::fs::write(&meta, "{}").unwrap();
+    let assert = lmt().args(["--json", "visual", "decode-structured-light",
+        tmp.path().to_str().unwrap(), meta.to_str().unwrap(),
+        "--out", tmp.path().join("c.json").to_str().unwrap(),
+        "--screen-roi", "10,20,oops"]).assert().failure();
+    let out = assert.get_output();
+    assert_eq!(out.status.code(), Some(2), "bad ROI must be exit 2");
+    let env: Value = serde_json::from_str(std::str::from_utf8(&out.stderr).unwrap().trim_end()).unwrap();
+    assert_eq!(env["error"]["code"], "invalid_input");
+}
+
+/// dry-run with --emit-debug-image lists BOTH the corr file and <out>.debug.png
+/// under would_write, and writes nothing.
+#[test]
+fn decode_structured_light_with_roi_and_debug_dry_run() {
+    let tmp = TempDir::new().unwrap();
+    let meta = tmp.path().join("sl_meta.json");
+    std::fs::write(&meta, "{}").unwrap();
+    let out_path = tmp.path().join("c.json");
+    let assert = lmt().args(["--json", "--dry-run", "visual", "decode-structured-light",
+        tmp.path().to_str().unwrap(), meta.to_str().unwrap(),
+        "--out", out_path.to_str().unwrap(),
+        "--screen-roi", "10,20,300,200", "--emit-debug-image"]).assert().success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["dry_run"], true);
+    let ww = env["data"]["would_write"].as_array().expect("would_write is a list");
+    let joined: Vec<String> = ww.iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    assert!(joined.iter().any(|s| s.ends_with("c.json")), "lists corr: {joined:?}");
+    assert!(joined.iter().any(|s| s.ends_with("c.json.debug.png")), "lists debug png: {joined:?}");
+    assert!(!out_path.exists());
+    assert!(!tmp.path().join("c.json.debug.png").exists());
+}
+
+/// decode-structured-light happy path through the REAL sidecar: generate a
+/// gray-background sequence, decode it, assert the envelope + corr.json carries
+/// screen_roi provenance and the debug png lands at <out>.debug.png. This is the
+/// CLI-seam check that the three-pass frontend still decodes the gray-bg material
+/// (S1) end to end (per-pixel decode coverage is unit-tested in the sidecar).
+#[cfg(unix)]
+#[test]
+fn decode_structured_light_happy_with_roi_provenance_and_debug() {
+    let tmp = TempDir::new().unwrap();
+    let wrapper = match make_sidecar_wrapper(tmp.path()) {
+        Some(w) => w,
+        None => {
+            eprintln!("skipping decode_structured_light_happy: python-sidecar venv not found");
+            return;
+        }
+    };
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 1, 1);
+    // Generate the SL sequence (frames + sl_meta.json) via the real sidecar.
+    lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &wrapper)
+        .args(["--json", "--yes", "visual", "generate-structured-light",
+            proj.to_str().unwrap(), "MAIN"])
+        .assert()
+        .success();
+    let sl_dir = proj.join("patterns/MAIN/sl");
+    let frames = sl_dir.join("frames");
+    let meta = sl_dir.join("sl_meta.json");
+    let out = tmp.path().join("corr.json");
+
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &wrapper)
+        .args(["--json", "--yes", "visual", "decode-structured-light",
+            frames.to_str().unwrap(), meta.to_str().unwrap(),
+            "--out", out.to_str().unwrap(), "--emit-debug-image"])
+        .assert()
+        .success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true, "envelope ok: {env}");
+    assert!(env["data"]["n_dots_decoded"].as_u64().unwrap() > 0);
+
+    let corr: Value = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+    assert!(corr["screen_roi"].is_array(), "corr.json must stamp screen_roi: {corr}");
+    assert!(out.with_extension("json.debug.png").is_file()
+        || std::path::Path::new(&format!("{}.debug.png", out.display())).is_file(),
+        "<out>.debug.png must exist");
+}
+
+/// The manifest's decode-structured-light CLI string documents the new flags and
+/// keeps the exit-code set unchanged (no new error codes per spec A.3).
+/// (Operations live under the `manifest` envelope, keyed by `operation_id`.)
+#[test]
+fn decode_structured_light_manifest_documents_new_flags() {
+    let assert = lmt().args(["--json", "manifest"]).assert().success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    let ops = env["data"]["operations"].as_array()
+        .expect("manifest envelope must list operations");
+    let decode = ops.iter()
+        .find(|o| o["operation_id"] == "visual.decode_structured_light")
+        .expect("decode op present in manifest");
+    let cli = decode["cli"].as_str().unwrap();
+    assert!(cli.contains("--screen-roi"), "manifest CLI must mention --screen-roi: {cli}");
+    assert!(cli.contains("--emit-debug-image"), "manifest CLI must mention --emit-debug-image: {cli}");
+    let codes: Vec<i64> = decode["exit_codes"].as_array().unwrap()
+        .iter().map(|c| c.as_i64().unwrap()).collect();
+    assert_eq!(codes, vec![0, 2, 3, 4, 13, 18], "exit codes unchanged");
+}
+
+#[test]
 fn reconstruct_structured_light_refuses_without_yes() {
     let tmp = TempDir::new().unwrap();
     let proj = tmp.path().join("proj");

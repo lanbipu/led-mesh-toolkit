@@ -356,6 +356,17 @@ pub enum VisualCmd {
         /// 输出的对应文件 corr.json 路径。
         #[arg(long)]
         out: String,
+        /// 全白哨兵帧判定阈值(整帧均值/255,范围 0–1)。不传=0.85。
+        /// 屏幕没填满画面或背景非黑(如可视化器灰底)时调低(如 0.4)。
+        #[arg(long)]
+        sentinel_threshold: Option<f64>,
+        /// 手动屏幕 ROI,格式 `X,Y,W,H`(像素)。不传=从全片时序活动图自动推导。
+        /// 自动失败(只有屏外细长运动、无实心矩形)时用它兜底。
+        #[arg(long)]
+        screen_roi: Option<String>,
+        /// 额外写出 `<out>.debug.png`:Pass 3 seed 的纯黑底+白点掩膜,供肉眼核对。
+        #[arg(long)]
+        emit_debug_image: bool,
     },
     /// 多机位结构光对应文件 → measured.yaml + cabinet_pose_report.json
     /// (model-constrained BA,复用 charuco 重建内核)。side_effect: destructive

@@ -284,6 +284,10 @@ pub struct CorrespondenceFile {
     pub schema_version: u32,
     pub screen_id: String,
     pub sl_meta_sha256: String,
+    /// Detection provenance: the screen ROI actually used (mirrors Python).
+    /// Optional so older corr.json without it still deserialize.
+    #[serde(default)]
+    pub screen_roi: Option<[u32; 4]>,
     pub points: Vec<CorrespondencePoint>,
 }
 
@@ -343,5 +347,22 @@ impl MeasuredPointDto {
                 camera_count: self.source.visual_ba.camera_count,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod corr_roi_tests {
+    use super::CorrespondenceFile;
+
+    #[test]
+    fn correspondence_file_screen_roi_optional() {
+        // Old corr.json without screen_roi still deserializes.
+        let old = r#"{"schema_version":1,"screen_id":"MAIN","sl_meta_sha256":"x","points":[]}"#;
+        let f: CorrespondenceFile = serde_json::from_str(old).unwrap();
+        assert!(f.screen_roi.is_none());
+        // New corr.json carries the used ROI.
+        let new = r#"{"schema_version":1,"screen_id":"MAIN","sl_meta_sha256":"x","screen_roi":[1,2,3,4],"points":[]}"#;
+        let f2: CorrespondenceFile = serde_json::from_str(new).unwrap();
+        assert_eq!(f2.screen_roi, Some([1, 2, 3, 4]));
     }
 }

@@ -74,7 +74,13 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             input_path,
             sl_meta,
             out,
-        } => decode_structured_light(mode, &input_path, &sl_meta, &out, yes, dry_run),
+            sentinel_threshold,
+            screen_roi,
+            emit_debug_image,
+        } => decode_structured_light(
+            mode, &input_path, &sl_meta, &out, sentinel_threshold,
+            screen_roi.as_deref(), emit_debug_image, yes, dry_run,
+        ),
         VisualCmd::ReconstructStructuredLight {
             project_path,
             screen_id,
@@ -377,14 +383,51 @@ fn generate_structured_light(
 // decode_structured_light
 // ---------------------------------------------------------------------------
 
+/// Parse a `X,Y,W,H` ROI string into four u32. Returns None on any malformed
+/// part (mapped by the caller to INVALID_INPUT before the destructive gate).
+fn parse_screen_roi(s: &str) -> Option<[u32; 4]> {
+    let parts: Vec<&str> = s.split(',').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    let mut out = [0u32; 4];
+    for (i, p) in parts.iter().enumerate() {
+        out[i] = p.trim().parse::<u32>().ok()?;
+    }
+    Some(out)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn decode_structured_light(
     mode: Mode,
     input_path: &str,
     sl_meta: &str,
     out: &str,
+    sentinel_threshold: Option<f64>,
+    screen_roi: Option<&str>,
+    emit_debug_image: bool,
     yes: bool,
     dry_run: bool,
 ) -> i32 {
+    // Validate ROI format BEFORE the destructive gate, so --dry-run does not
+    // falsely report success for a command that would always fail on execute
+    // (mirrors reconstruct-structured-light's >=2-corr pre-check).
+    let roi: Option<[u32; 4]> = match screen_roi {
+        Some(s) => match parse_screen_roi(s) {
+            Some(r) => Some(r),
+            None => {
+                return output::err(
+                    mode,
+                    ApiError::new(
+                        error_codes::INVALID_INPUT,
+                        "--screen-roi must be four comma-separated non-negative integers: X,Y,W,H",
+                    ),
+                );
+            }
+        },
+        None => None,
+    };
+
     let decision = match util::gate_destructive(yes, dry_run, "visual decode-structured-light") {
         Ok(d) => d,
         Err(e) => return output::err(mode, e),
@@ -392,9 +435,13 @@ fn decode_structured_light(
 
     match decision {
         DestructiveDecision::DryRun => {
+            let mut would_write = vec![out.to_string()];
+            if emit_debug_image {
+                would_write.push(format!("{out}.debug.png"));
+            }
             let payload = serde_json::json!({
                 "dry_run": true,
-                "would_write": out,
+                "would_write": would_write,
             });
             output::ok(mode, payload, |_| {
                 let _ = writeln!(std::io::stdout(), "[dry-run] would decode → {out}");
@@ -405,6 +452,9 @@ fn decode_structured_light(
                 Path::new(input_path),
                 Path::new(sl_meta),
                 Path::new(out),
+                sentinel_threshold,
+                roi,
+                emit_debug_image,
             ) {
                 Ok(r) => output::ok(mode, r, |p| {
                     let _ = writeln!(

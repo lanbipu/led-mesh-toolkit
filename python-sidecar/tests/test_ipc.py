@@ -204,3 +204,40 @@ def test_reconstruct_structured_light_input_defaults():
     assert m.project.shape_prior == "flat"          # ReconstructProject default
     assert m.pose_report_path is None
     assert len(m.correspondence_paths) == 2
+
+
+from lmt_vba_sidecar.ipc import DecodeStructuredLightInput, CorrespondenceFile
+
+
+def test_decode_input_accepts_screen_roi_and_emit_debug():
+    cmd = DecodeStructuredLightInput.model_validate({
+        "command": "decode_structured_light", "version": 1,
+        "input_path": "frames", "sl_meta_path": "sl_meta.json",
+        "output_path": "corr.json",
+        "screen_roi": [10, 20, 300, 200], "emit_debug_image": True,
+    })
+    assert cmd.screen_roi == (10, 20, 300, 200)
+    assert cmd.emit_debug_image is True
+
+
+def test_decode_input_defaults_screen_roi_none_emit_false():
+    cmd = DecodeStructuredLightInput.model_validate({
+        "command": "decode_structured_light", "version": 1,
+        "input_path": "frames", "sl_meta_path": "sl_meta.json",
+        "output_path": "corr.json",
+    })
+    assert cmd.screen_roi is None
+    assert cmd.emit_debug_image is False
+
+
+def test_correspondence_file_screen_roi_optional():
+    base = {
+        "schema_version": 1, "screen_id": "MAIN",
+        "sl_meta_sha256": "deadbeef",
+        "screen_resolution": [960, 540],
+        "camera_image_size": [960, 540],
+        "source_input": "frames", "points": [],
+    }
+    assert CorrespondenceFile.model_validate(base).screen_roi is None
+    with_roi = CorrespondenceFile.model_validate({**base, "screen_roi": [5, 6, 100, 80]})
+    assert with_roi.screen_roi == (5, 6, 100, 80)

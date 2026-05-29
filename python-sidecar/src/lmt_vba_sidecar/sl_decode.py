@@ -42,31 +42,94 @@ def load_frames(input_path: str) -> list[np.ndarray]:
     return frames
 
 
-def segment_code_region(frames: list[np.ndarray], *, sentinel_threshold: float) -> tuple[int, int]:
-    """Code region = frames strictly between the opening and closing white
-    sentinel RUNS. A recorded capture (and the held-frame sequence.mp4) repeats
-    each logical frame over many camera frames, so each sentinel spans a
-    CONTIGUOUS RUN — skip the whole opening run and stop before the whole closing
-    run, not just the first/last bright frame (else index_plateaus sees the
-    leftover sentinel frames as extra white plateaus and the decode fails)."""
-    mb = np.array([float(f.mean()) for f in frames])
+def derive_screen_roi(frames: list[np.ndarray]) -> tuple[int, int, int, int]:
+    """Pass 1: per-pixel temporal range (max-min) over the whole clip -> screen ROI.
+
+    The screen rectangle is swept by the white sentinel + blinking dots, so it is
+    a SOLID high-activity region. Off-screen movers (person/car) are thin, sparse,
+    non-solid blobs. We threshold the activity map at a fixed fraction of its peak,
+    keep the largest solid (well-filled) component, and return its bounding box.
+    Brightness never enters the decision.
+
+    Known limitation: the threshold is a fraction of the GLOBAL peak temporal
+    range, so a DIM/oblique screen filmed alongside a BRIGHTER off-screen MOVING
+    object (whose motion dominates the peak) can fall below the cut and be missed.
+    For that case pass an explicit --screen-roi X,Y,W,H (manual override)."""
+    stack = np.stack(frames).astype(np.int16)
+    activity = (stack.max(axis=0) - stack.min(axis=0)).astype(np.uint8)
+    a_max = int(activity.max())
+    if a_max == 0:
+        raise ValueError("no temporal activity; nothing blinks (static clip?)")
+    # Threshold at a fixed fraction of peak activity, NOT Otsu: when the screen
+    # fills the camera frame (the canonical case), the whole activity map is
+    # uniformly high (unimodal), and Otsu carves that uniform region into specks.
+    # "Changed by > half the peak range" cleanly marks the swept screen region.
+    mask = (activity > max(1, a_max // 2)).astype(np.uint8) * 255
+    n, _lbl, stats, _cent = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    # A screen ROI is BOTH solid (bbox well-filled) AND large; off-screen movers
+    # are tiny specks that are individually "100% filled" but cover a negligible
+    # fraction of the frame. Keep the largest-area solid component and reject if
+    # it is still too small to be a screen.
+    frame_area = float(activity.shape[0] * activity.shape[1])
+    best: tuple[int, int, int, int] | None = None
+    best_area = 0
+    for i in range(1, n):
+        x, y, w, h, area = (int(stats[i][c]) for c in range(5))
+        if w < 4 or h < 4:
+            continue
+        fill = area / float(w * h)        # how solidly the bbox is filled
+        if fill < 0.5:                    # not a solid rectangle
+            continue
+        if area > best_area:
+            best_area, best = area, (x, y, w, h)
+    if best is None or best_area < 0.01 * frame_area:   # only thin/small movers
+        raise ValueError(
+            "could not auto-derive a solid screen ROI from temporal activity; "
+            "pass --screen-roi X,Y,W,H to specify it manually")
+    return best
+
+
+def segment_code_region(frames: list[np.ndarray], *, sentinel_threshold: float,
+                        roi: tuple[int, int, int, int] | None = None) -> tuple[int, int]:
+    """Code region = ONE cycle: the frames between the first white-sentinel RUN
+    and the NEXT one. Robust to three real-world capture shapes:
+      - single playthrough: [sentinel, code, sentinel] -> the region between them.
+      - LOOPED capture: [sentinel, cycle, sentinel, cycle, ...] (e.g. disguise
+        looping the .seq); we take the FIRST complete inter-sentinel cycle rather
+        than spanning every loop (which would make index_plateaus see N*cycles).
+      - a recording that STARTS mid-cycle (missed the opening sentinel): as long
+        as it contains >= 2 sentinel runs, the first complete cycle is recovered.
+    Each sentinel spans a CONTIGUOUS bright run (held frames, or two adjacent
+    loop-boundary whites), so we work in runs, not single bright frames."""
+    def _crop(f: np.ndarray) -> np.ndarray:
+        if roi is None:
+            return f
+        x, y, w, h = roi
+        return f[y:y + h, x:x + w]
+    mb = np.array([float(_crop(f).mean()) for f in frames])
     bright = mb > sentinel_threshold * 255.0
-    idx = np.where(bright)[0]
-    if idx.size < 2:
+    runs: list[tuple[int, int]] = []          # contiguous bright runs = sentinels
+    i, n = 0, len(frames)
+    while i < n:
+        if bright[i]:
+            j = i
+            while j < n and bright[j]:
+                j += 1
+            runs.append((i, j))
+            i = j
+        else:
+            i += 1
+    if len(runs) < 2:
         raise ValueError("could not find two white sentinel frames")
-    s = int(idx[0])
-    while s < len(frames) and bright[s]:
-        s += 1                       # first frame after the opening sentinel run
-    e = int(idx[-1])
-    while e >= 0 and bright[e]:
-        e -= 1
-    e += 1                           # first frame of the closing run (exclusive end)
+    s = runs[0][1]      # first frame after the first sentinel run
+    e = runs[1][0]      # first frame of the next sentinel run (exclusive end)
     if s >= e:
         raise ValueError("no code region between white sentinels")
     return s, e
 
 
-def index_plateaus(region: list[np.ndarray], *, expected: int) -> list[int]:
+def index_plateaus(region: list[np.ndarray], *, expected: int,
+                   roi: tuple[int, int, int, int] | None = None) -> list[int]:
     """Split into `expected` plateaus; return the middle index of each. Raises if
     the count != expected. `expected` == total_bits + 1 (anchor + code frames).
 
@@ -80,8 +143,14 @@ def index_plateaus(region: list[np.ndarray], *, expected: int) -> list[int]:
         raise ValueError("empty code region")
     if len(region) == expected:
         return list(range(len(region)))
+    def _crop(f: np.ndarray) -> np.ndarray:
+        if roi is None:
+            return f
+        x, y, w, h = roi
+        return f[y:y + h, x:x + w]
     changed = np.array([0] + [
-        int((np.abs(region[i].astype(np.int16) - region[i - 1].astype(np.int16)) > 64).sum())
+        int((np.abs(_crop(region[i]).astype(np.int16)
+                    - _crop(region[i - 1]).astype(np.int16)) > 64).sum())
         for i in range(1, len(region))])
     thr = max(1, int(changed.max()) // 4)
     bounds = [0] + [i for i in range(1, len(region)) if changed[i] > thr] + [len(region)]
@@ -91,18 +160,58 @@ def index_plateaus(region: list[np.ndarray], *, expected: int) -> list[int]:
     return [(a + b) // 2 for (a, b) in segs]
 
 
-def _centroids(frame: np.ndarray) -> list[tuple[float, float]]:
-    _, bw = cv2.threshold(frame, 128, 255, cv2.THRESH_BINARY)
-    n, _l, _s, cent = cv2.connectedComponentsWithStats(bw, connectivity=8)
-    return [(float(cent[i][0]), float(cent[i][1])) for i in range(1, n)]
+def _seed_dots(anchor: np.ndarray, *, roi: tuple[int, int, int, int],
+               dot_radius_px: int) -> list[tuple[float, float]]:
+    """Pass 3.1-3.2: Otsu-threshold the all-on anchor WITHIN the ROI (so id=0 is
+    seeded too), keep round components sized like a dot. Returns frame-coords
+    sub-pixel centroids. Adaptive threshold (not global 128) catches dim/oblique
+    dots; the ROI excludes off-screen bright clutter."""
+    x, y, w, h = roi
+    crop = anchor[y:y + h, x:x + w]
+    _t, bw = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    n, _lbl, stats, cent = cv2.connectedComponentsWithStats(bw, connectivity=8)
+    r = float(dot_radius_px)
+    area_lo, area_hi = 0.25 * np.pi * r * r, 9.0 * np.pi * r * r
+    side_hi = 6.0 * r
+    out: list[tuple[float, float]] = []
+    for i in range(1, n):
+        cw, ch, area = int(stats[i][2]), int(stats[i][3]), int(stats[i][4])
+        if not (area_lo <= area <= area_hi):
+            continue
+        if cw > side_hi or ch > side_hi:        # reject big/elongated blobs
+            continue
+        out.append((float(cent[i][0]) + x, float(cent[i][1]) + y))
+    return out
 
 
-def _read_bit_at(frame: np.ndarray, x: float, y: float) -> int:
-    """1 if the dot at (x,y) is lit in this frame (sample a small patch)."""
+def _read_bits_relative(code_frames: list[np.ndarray], x: float, y: float,
+                        anchor: np.ndarray) -> list[int]:
+    """Pass 3.3: read each code frame's on/off for the dot at (x,y) RELATIVE to
+    that dot's own min/max across the code frames (not a global 128). Robustly
+    handles dim/oblique dots whose lit level sits below the background.
+
+    The all-on `anchor` supplies this dot's per-dot LIT reference level. When a
+    dot's samples are CONSTANT across the code region the code frames alone can't
+    tell on from off, so we compare the constant level against the anchor-lit
+    level: a dot still ~as bright as in the anchor is constant-LIT (all ones), a
+    dark one is constant-OFF (all zeros). This keeps an all-ones codeword (the max
+    id when data_bits is odd — lit in every code frame) decoding to its true id
+    instead of silently collapsing to a duplicate id=0; id=0 (off every code
+    frame) still reads all zeros."""
     ix, iy = int(round(x)), int(round(y))
-    y0, y1 = max(0, iy - 1), min(frame.shape[0], iy + 2)
-    x0, x1 = max(0, ix - 1), min(frame.shape[1], ix + 2)
-    return 1 if float(frame[y0:y1, x0:x1].mean()) > 128.0 else 0
+
+    def _patch(f: np.ndarray) -> float:
+        y0, y1 = max(0, iy - 1), min(f.shape[0], iy + 2)
+        x0, x1 = max(0, ix - 1), min(f.shape[1], ix + 2)
+        return float(f[y0:y1, x0:x1].mean())
+
+    samples = [_patch(f) for f in code_frames]
+    lo, hi = min(samples), max(samples)
+    if hi - lo < 1e-6:
+        on_level = _patch(anchor)
+        return [1 if lo > on_level * 0.5 else 0] * len(samples)
+    mid = (lo + hi) / 2.0
+    return [1 if s > mid else 0 for s in samples]
 
 
 def run_decode_structured_light(cmd: DecodeStructuredLightInput) -> int:
@@ -111,6 +220,7 @@ def run_decode_structured_light(cmd: DecodeStructuredLightInput) -> int:
     sl_meta_sha256 = hashlib.sha256(meta_path.read_bytes()).hexdigest()
     data_bits = int(meta["code"]["data_bits"])
     total_bits = int(meta["code"]["total_bits"])
+    dot_radius_px = int(meta["dot_radius_px"])
     uv_by_id = {int(d["id"]): (float(d["u"]), float(d["v"])) for d in meta["dots"]}
 
     frames = load_frames(cmd.input_path)
@@ -123,20 +233,40 @@ def run_decode_structured_light(cmd: DecodeStructuredLightInput) -> int:
             message=f"only {len(frames)} frames; need >= {total_bits + 3}", fatal=True))
         return 1
     cam_h, cam_w = frames[0].shape[:2]
+
+    # Pass 1: ROI (manual override wins; else auto from temporal activity).
     try:
-        s, e = segment_code_region(frames, sentinel_threshold=cmd.sentinel_threshold)
-        reps = index_plateaus(frames[s:e], expected=total_bits + 1)
+        if cmd.screen_roi is not None:
+            roi = tuple(int(v) for v in cmd.screen_roi)
+        else:
+            roi = derive_screen_roi(frames)
+    except ValueError as exc:
+        write_event(ErrorEvent(event="error", code="detection_failed",
+            message=str(exc), fatal=True))
+        return 1
+
+    # Pass 2: sentinel segmentation + plateau indexing, restricted to the ROI.
+    try:
+        s, e = segment_code_region(frames, sentinel_threshold=cmd.sentinel_threshold, roi=roi)
+        reps = index_plateaus(frames[s:e], expected=total_bits + 1, roi=roi)
     except ValueError as exc:
         write_event(ErrorEvent(event="error", code="decode_failed", message=str(exc), fatal=True))
         return 1
 
     anchor = frames[s + reps[0]]
     code_frames = [frames[s + r] for r in reps[1:]]      # total_bits frames
-    seeds = _centroids(anchor)                            # every dot, incl id=0
+
+    # Pass 3: seed in ROI (Otsu), filter by shape, read per-dot relative, decode.
+    seeds = _seed_dots(anchor, roi=roi, dot_radius_px=dot_radius_px)
+    if cmd.emit_debug_image:
+        dbg = np.zeros((cam_h, cam_w), dtype=np.uint8)
+        for (sx, sy) in seeds:
+            cv2.circle(dbg, (int(round(sx)), int(round(sy))), dot_radius_px, 255, -1)
+        cv2.imwrite(f"{cmd.output_path}.debug.png", dbg)
 
     points = []
     for (x, y) in seeds:
-        bits = [_read_bit_at(f, x, y) for f in code_frames]
+        bits = _read_bits_relative(code_frames, x, y, anchor)
         dot_id = decode_bits(bits, data_bits)
         if dot_id is None or dot_id not in uv_by_id:
             continue
@@ -155,6 +285,7 @@ def run_decode_structured_light(cmd: DecodeStructuredLightInput) -> int:
         "screen_resolution": meta["screen_resolution"],
         "camera_image_size": [int(cam_w), int(cam_h)],
         "source_input": cmd.input_path,
+        "screen_roi": [int(v) for v in roi],
         "points": points,
     }
     pathlib.Path(cmd.output_path).write_text(json.dumps(corr, indent=2))
