@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import pytest
 from lmt_vba_sidecar.sl_decode import load_frames, segment_code_region, index_plateaus
@@ -164,3 +165,39 @@ def test_correspondence_has_provenance(tmp_path):
     assert corr["screen_id"] == "MAIN"
     assert corr["sl_meta_sha256"] == expect_hash
     assert corr["camera_image_size"] == [960, 540]
+
+
+from lmt_vba_sidecar.sl_decode import _seed_dots, _read_bits_relative
+
+
+def test_seed_dots_otsu_finds_dots_in_bright_roi():
+    # Anchor with two lit dots over a bright (200) ROI background; global-128
+    # would flood, Otsu must isolate the two dots.
+    anchor = np.full((120, 160), 200, np.uint8)
+    cv2.circle(anchor, (70, 60), 6, 255, -1)
+    cv2.circle(anchor, (110, 60), 6, 255, -1)
+    roi = (50, 40, 80, 50)
+    seeds = _seed_dots(anchor, roi=roi, dot_radius_px=6)
+    assert len(seeds) == 2
+    xs = sorted(round(x) for (x, _y) in seeds)
+    assert abs(xs[0] - 70) <= 2 and abs(xs[1] - 110) <= 2
+
+
+def test_seed_dots_filters_oversized_blob():
+    anchor = np.full((120, 160), 30, np.uint8)
+    cv2.circle(anchor, (70, 60), 6, 255, -1)        # a real dot
+    anchor[55:90, 95:130] = 255                     # a big non-dot block
+    roi = (50, 40, 80, 50)
+    seeds = _seed_dots(anchor, roi=roi, dot_radius_px=6)
+    assert len(seeds) == 1
+
+
+def test_read_bits_relative_uses_own_min_max_not_global_128():
+    # A DIM dot: lit ~90, off ~20 (both below the global-128 brightness threshold).
+    # Relative reading (own min/max) must still read [1, 0].
+    lit = np.full((120, 160), 20, np.uint8)
+    cv2.circle(lit, (70, 60), 6, 90, -1)
+    off = np.full((120, 160), 20, np.uint8)
+    code_frames = [lit, off]
+    bits = _read_bits_relative(code_frames, 70.0, 60.0)
+    assert bits == [1, 0]

@@ -164,6 +164,47 @@ def _read_bit_at(frame: np.ndarray, x: float, y: float) -> int:
     return 1 if float(frame[y0:y1, x0:x1].mean()) > 128.0 else 0
 
 
+def _seed_dots(anchor: np.ndarray, *, roi: tuple[int, int, int, int],
+               dot_radius_px: int) -> list[tuple[float, float]]:
+    """Pass 3.1-3.2: Otsu-threshold the all-on anchor WITHIN the ROI (so id=0 is
+    seeded too), keep round components sized like a dot. Returns frame-coords
+    sub-pixel centroids. Adaptive threshold (not global 128) catches dim/oblique
+    dots; the ROI excludes off-screen bright clutter."""
+    x, y, w, h = roi
+    crop = anchor[y:y + h, x:x + w]
+    _t, bw = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    n, _lbl, stats, cent = cv2.connectedComponentsWithStats(bw, connectivity=8)
+    r = float(dot_radius_px)
+    area_lo, area_hi = 0.25 * np.pi * r * r, 9.0 * np.pi * r * r
+    side_hi = 6.0 * r
+    out: list[tuple[float, float]] = []
+    for i in range(1, n):
+        cw, ch, area = int(stats[i][2]), int(stats[i][3]), int(stats[i][4])
+        if not (area_lo <= area <= area_hi):
+            continue
+        if cw > side_hi or ch > side_hi:        # reject big/elongated blobs
+            continue
+        out.append((float(cent[i][0]) + x, float(cent[i][1]) + y))
+    return out
+
+
+def _read_bits_relative(code_frames: list[np.ndarray], x: float, y: float) -> list[int]:
+    """Pass 3.3: read each code frame's on/off for the dot at (x,y) RELATIVE to
+    that dot's own min/max across the code frames (not a global 128). Robustly
+    handles dim/oblique dots whose lit level sits below the background."""
+    ix, iy = int(round(x)), int(round(y))
+    samples = []
+    for f in code_frames:
+        y0, y1 = max(0, iy - 1), min(f.shape[0], iy + 2)
+        x0, x1 = max(0, ix - 1), min(f.shape[1], ix + 2)
+        samples.append(float(f[y0:y1, x0:x1].mean()))
+    lo, hi = min(samples), max(samples)
+    if hi - lo < 1e-6:
+        return [0] * len(samples)
+    mid = (lo + hi) / 2.0
+    return [1 if s > mid else 0 for s in samples]
+
+
 def run_decode_structured_light(cmd: DecodeStructuredLightInput) -> int:
     meta_path = pathlib.Path(cmd.sl_meta_path)
     meta = json.loads(meta_path.read_text())
