@@ -60,7 +60,10 @@ from lmt_vba_sidecar.ipc import (
     WarningEvent,
 )
 from lmt_vba_sidecar.model_constrained_ba import Observation, model_constrained_ba
-from lmt_vba_sidecar.nominal import nominal_cabinet_centers_model_frame
+from lmt_vba_sidecar.nominal import (
+    nominal_cabinet_centers_model_frame,
+    nominal_cabinet_normals_model_frame,
+)
 from lmt_vba_sidecar.observability import ObservabilityError, check_observability
 from lmt_vba_sidecar.screen_mapping import ScreenMapping, ScreenMappingError
 
@@ -328,6 +331,7 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
     # --- 7. nominal model (kept here: needs cmd.project) ---
     try:
         nominal_m = nominal_cabinet_centers_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
+        nominal_normals_m = nominal_cabinet_normals_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
     except ValueError as e:
         write_event(ErrorEvent(event="error", code="invalid_input", message=str(e), fatal=True))
         return 1
@@ -335,7 +339,7 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
     return solve_and_emit(
         K=K, observations=observations, per_view_cab_corners=per_view_cab_corners,
         n_cameras=len(view_images), cab_to_idx=cab_to_idx, root_idx=root_idx,
-        n_cabinets=n_cabinets, nominal_m=nominal_m,
+        n_cabinets=n_cabinets, nominal_m=nominal_m, nominal_normals_m=nominal_normals_m,
         per_cabinet_views=per_cabinet_views, per_cabinet_points=per_cabinet_points,
         corners_local_provider=lambda cid: _active_surface_corners_mm(screen_mapping, cid),
         pose_report_path=cmd.pose_report_path,
@@ -352,6 +356,7 @@ def solve_and_emit(
     root_idx: int,
     n_cabinets: int,
     nominal_m: dict[tuple[int, int], tuple[float, float, float]],
+    nominal_normals_m: dict[tuple[int, int], tuple[float, float, float]],
     per_cabinet_views: dict[int, set[int]],
     per_cabinet_points: dict[int, int],
     corners_local_provider: Callable[[str], np.ndarray],
@@ -371,10 +376,29 @@ def solve_and_emit(
         ))
         return 1
     root_nominal_mm = np.array(nominal_m[ROOT_CABINET], dtype=float) * 1000.0
+    idx_to_cab = {idx: cr for cr, idx in cab_to_idx.items()}
+    # idx-keyed nominal normals/centers for branch disambiguation.
+    nominal_normals_idx = {cab_to_idx[cr]: n for cr, n in nominal_normals_m.items()
+                           if cr in cab_to_idx}
+    nominal_centers_idx = {cab_to_idx[cr]: c for cr, c in nominal_m.items()
+                           if cr in cab_to_idx}
     # Bridge-camera init: estimate each non-root cabinet's world pose from views
-    # that see it together with the root. Falls back to nominal (flat/curved)
+    # that see it together with the root, resolving the IPPE convex/concave mirror
+    # against nominal model-frame normals. Falls back to nominal (flat/curved)
     # translation + identity rotation when no bridge view exists for a cabinet.
-    bridge = estimate_nonroot_cabinet_init(per_view_cab_corners, root_idx, K)
+    bridge, undecidable_cabs = estimate_nonroot_cabinet_init(
+        per_view_cab_corners, root_idx, K,
+        nominal_normals=nominal_normals_idx, nominal_centers=nominal_centers_idx,
+    )
+    if undecidable_cabs:
+        ids = sorted(_cabinet_id(*idx_to_cab[j]) for j in undecidable_cabs)
+        write_event(ErrorEvent(
+            event="error", code="observability_failed",
+            message=(f"convex/concave undecidable for cabinet(s) {ids}: planar-PnP "
+                     f"mirror branches equally match nominal and no redundant view "
+                     f"breaks the tie; add a camera that sees these cabinets"),
+            fatal=True))
+        return 1
     init_cabinets: dict[int, tuple[np.ndarray, np.ndarray]] = {}
     for cr, idx in cab_to_idx.items():
         if idx == root_idx:
@@ -418,7 +442,6 @@ def solve_and_emit(
     per_cabinet_rms = _per_cabinet_reproj_rms(
         K, result.camera_poses, result.cabinet_poses, observations
     )
-    idx_to_cab = {idx: cr for cr, idx in cab_to_idx.items()}
     cabinet_poses: list[CabinetPose] = []
     measured_points: list[MeasuredPoint] = []
     for idx in range(n_cabinets):
@@ -588,21 +611,60 @@ def _avg_rotation(rotations):
     return R
 
 
+# Branch disambiguation thresholds (sidecar internal): a branch is "well
+# separated" only when its model-frame normal is meaningfully closer to nominal
+# than the other; reproj ratio is the secondary tiebreak.
+DISAMBIG_NORMAL_MARGIN_RAD = np.deg2rad(8.0)
+
+
+def _disambiguate_world_branch(world_branches, nominal_normal):
+    """world_branches: list of (R_world_from_cab, t) candidate poses.
+    nominal_normal: (3,) expected model-frame surface normal.
+    Returns the chosen (R, t), or the string "undecidable" when the two
+    branches are equally consistent with nominal (no redundancy to break it)."""
+    nn = np.asarray(nominal_normal, dtype=float)
+    nn = nn / (np.linalg.norm(nn) + 1e-12)
+    angs = []
+    for R, _t in world_branches:
+        n = R @ np.array([0.0, 0.0, 1.0])
+        angs.append(float(np.arccos(np.clip(n @ nn, -1.0, 1.0))))
+    order = np.argsort(angs)
+    if len(world_branches) == 1:
+        return world_branches[0]
+    best, second = order[0], order[1]
+    if angs[second] - angs[best] < DISAMBIG_NORMAL_MARGIN_RAD:
+        return "undecidable"
+    return world_branches[best]
+
+
 def estimate_nonroot_cabinet_init(
     per_view_cab_corners: dict[tuple[int, int], list[tuple[np.ndarray, np.ndarray]]],
     root_idx: int,
     K: np.ndarray,
+    *,
+    nominal_normals: dict[int, tuple[float, float, float]],
+    nominal_centers: dict[int, tuple[float, float, float]],
     min_corners: int = MIN_PNP_CORNERS,
-) -> dict[int, tuple[np.ndarray, np.ndarray]]:
-    """Non-root cabinet_idx -> (R_world_from_cab, t_mm) via bridge cameras.
+) -> tuple[dict[int, tuple[np.ndarray, np.ndarray]], set[int]]:
+    """Non-root cabinet_idx -> (R_world_from_cab, t_mm) via bridge cameras, with
+    IPPE two-branch disambiguation against nominal model-frame normals.
 
     A bridge view sees the root cabinet AND a non-root cabinet (each with
-    >= min_corners corners). Two PnPs give camera_from_root / camera_from_nonroot;
-    compose to world_from_nonroot:
+    >= min_corners corners). PnP on the root gives camera_from_root; the
+    two-branch IPPE solve on the non-root gives up to two camera_from_nonroot
+    poses (the planar convex/concave mirror ambiguity). Each branch composes to
+    world_from_nonroot via the root:
         R = Rc0.T @ Rc1 ,  t = Rc0.T @ (tc1 - tc0)
-    Multiple bridge views: rotations SVD-averaged, translation component-wise median.
-    Cabinets with no bridge view are absent from the result (caller falls back to
-    nominal).
+    The branch whose model-frame normal (R @ [0,0,1]) best matches the cabinet's
+    nominal arc normal is kept. Multiple bridge views: rotations SVD-averaged,
+    translation component-wise median.
+
+    Returns (out, undecidable): `out` maps each bridged cabinet to its chosen
+    world pose; `undecidable` is the set of cabinet_idx whose convex/concave
+    branch could not be resolved from nominal (no redundant view broke the tie)
+    so the caller must hard-stop. A cabinet resolved by at least one view is
+    removed from `undecidable`. Cabinets with no bridge view are absent from
+    both (caller falls back to nominal).
 
     Limitation: only direct root<->non-root bridging; no transitive bridging for
     distant cabinets that share no view with the root (large chained-topology
@@ -614,29 +676,38 @@ def estimate_nonroot_cabinet_init(
 
     est_R: dict[int, list] = {}
     est_t: dict[int, list] = {}
+    undecidable: set[int] = set()
     for cabs in by_view.values():
         root_corners = cabs.get(root_idx, [])
         if len(root_corners) < min_corners:
             continue
-        pose_root = _solve_pnp(root_corners, K)
+        pose_root = _solve_pnp(root_corners, K)  # root: nominal +z, unambiguous enough
         if pose_root is None:
             continue
         Rc0, tc0 = pose_root
         for cab_idx, corners in cabs.items():
             if cab_idx == root_idx or len(corners) < min_corners:
                 continue
-            pose_cab = _solve_pnp(corners, K)
-            if pose_cab is None:
+            res = _solve_pnp_branches(corners, K)
+            if res is None:
                 continue
-            Rc1, tc1 = pose_cab
-            est_R.setdefault(cab_idx, []).append(Rc0.T @ Rc1)
-            est_t.setdefault(cab_idx, []).append(Rc0.T @ (tc1 - tc0))
+            branches, _mask = res
+            # Compose each camera_from_cab branch to world_from_cab via the root:
+            #   R_wc = Rc0.T @ Rc1 ; t_wc = Rc0.T @ (tc1 - tc0)
+            world_branches = [(Rc0.T @ Rc1, Rc0.T @ (tc1 - tc0)) for Rc1, tc1 in branches]
+            chosen = _disambiguate_world_branch(world_branches, nominal_normals[cab_idx])
+            if chosen == "undecidable":
+                undecidable.add(cab_idx)
+                continue
+            est_R.setdefault(cab_idx, []).append(chosen[0])
+            est_t.setdefault(cab_idx, []).append(chosen[1])
 
     out: dict[int, tuple] = {}
     for cab_idx, rotations in est_R.items():
+        undecidable.discard(cab_idx)  # at least one view resolved it
         t = np.median(np.array(est_t[cab_idx]), axis=0)
         out[cab_idx] = (_avg_rotation(rotations), t)
-    return out
+    return out, undecidable
 
 
 def _pnp_camera(

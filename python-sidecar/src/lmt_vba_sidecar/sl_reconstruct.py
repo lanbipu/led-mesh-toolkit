@@ -55,7 +55,10 @@ from lmt_vba_sidecar.ipc import (
     ErrorEvent, ProgressEvent, ReconstructStructuredLightInput, StructuredLightMeta,
 )
 from lmt_vba_sidecar.model_constrained_ba import Observation
-from lmt_vba_sidecar.nominal import nominal_cabinet_centers_model_frame
+from lmt_vba_sidecar.nominal import (
+    nominal_cabinet_centers_model_frame,
+    nominal_cabinet_normals_model_frame,
+)
 from lmt_vba_sidecar.observability import ObservabilityError, check_observability
 from lmt_vba_sidecar.reconstruct import ROOT_CABINET, _undistort_obs, solve_and_emit
 from lmt_vba_sidecar.sl_geometry import sl_cabinet_corners_mm, sl_local_mm
@@ -124,6 +127,7 @@ def run_reconstruct_structured_light(cmd: ReconstructStructuredLightInput) -> in
     #         reconstructing the wrong cabinet universe. ---
     try:
         nominal_m = nominal_cabinet_centers_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
+        nominal_normals_m = nominal_cabinet_normals_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
     except ValueError as e:
         write_event(ErrorEvent(event="error", code="invalid_input", message=str(e), fatal=True))
         return 1
@@ -185,6 +189,6 @@ def run_reconstruct_structured_light(cmd: ReconstructStructuredLightInput) -> in
     return solve_and_emit(
         K=K, observations=observations, per_view_cab_corners=per_view_cab_corners,
         n_cameras=len(corr_files), cab_to_idx=cab_to_idx, root_idx=root_idx,
-        n_cabinets=n_cabinets, nominal_m=nominal_m,
+        n_cabinets=n_cabinets, nominal_m=nominal_m, nominal_normals_m=nominal_normals_m,
         per_cabinet_views=per_cabinet_views, per_cabinet_points=per_cabinet_points,
         corners_local_provider=corners_provider, pose_report_path=cmd.pose_report_path)

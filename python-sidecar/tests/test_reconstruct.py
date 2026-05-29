@@ -316,7 +316,13 @@ def test_estimate_nonroot_cabinet_init_recovers_known_pose():
         per_view[(ci, 0)] = root_obs   # cabinet idx 0 = root
         per_view[(ci, 1)] = non_obs    # cabinet idx 1 = non-root
 
-    out = estimate_nonroot_cabinet_init(per_view, root_idx=0, K=K)
+    n_true = R_true @ np.array([0.0, 0.0, 1.0])
+    out, undecidable = estimate_nonroot_cabinet_init(
+        per_view, root_idx=0, K=K,
+        nominal_normals={0: (0.0, 0.0, 1.0), 1: tuple(n_true)},
+        nominal_centers={0: (0.0, 0.0, 0.0), 1: tuple(t_true / 1000.0)},
+    )
+    assert undecidable == set()
     assert 1 in out, "non-root cabinet should get a bridge estimate"
     R_est, t_est = out[1]
     # rotation close (trace test) and translation close
@@ -346,8 +352,13 @@ def test_estimate_nonroot_cabinet_init_no_bridge_returns_empty():
                  for p in local],
     }
 
-    out = estimate_nonroot_cabinet_init(per_view, root_idx=0, K=K)
+    out, undecidable = estimate_nonroot_cabinet_init(
+        per_view, root_idx=0, K=K,
+        nominal_normals={0: (0.0, 0.0, 1.0), 1: (0.0, 0.0, 1.0)},
+        nominal_centers={0: (0.0, 0.0, 0.0), 1: (0.0, 0.0, 0.0)},
+    )
     assert out == {}
+    assert undecidable == set()
 
 
 def test_bridge_init_makes_ba_converge_to_known_angle():
@@ -376,7 +387,13 @@ def test_bridge_init_makes_ba_converge_to_known_angle():
             observations.append(Observation(camera_idx=ci, cabinet_idx=1, p_local=p, pixel=pix))
             per_view.setdefault((ci, 1), []).append((p, pix))
 
-    bridge = estimate_nonroot_cabinet_init(per_view, root_idx=0, K=K)
+    n_true = R_true @ np.array([0.0, 0.0, 1.0])
+    bridge, undecidable = estimate_nonroot_cabinet_init(
+        per_view, root_idx=0, K=K,
+        nominal_normals={0: (0.0, 0.0, 1.0), 1: tuple(n_true)},
+        nominal_centers={0: (0.0, 0.0, 0.0), 1: tuple(t_true / 1000.0)},
+    )
+    assert undecidable == set()
     init_cabinets = {0: (np.eye(3), np.zeros(3)), 1: bridge[1]}
     res = model_constrained_ba(
         K=K, observations=observations, n_cameras=len(cams), n_cabinets=2,
@@ -476,3 +493,76 @@ def test_solve_pnp_branches_none_for_few_or_degenerate():
     pix = (K @ xc.T).T
     pix = pix[:, :2] / pix[:, 2:3]
     assert _solve_pnp_branches(list(zip(collinear, pix)), K) is None
+
+
+def _ippe_oblique_corners(K, R_world_from_cab, t_world, R_cam, t_cam):
+    """Coplanar grid at world pose -> camera pixels (used to build IPPE cases)."""
+    obj = np.array([[x, y, 0.0] for x in (-300.0, -100.0, 100.0, 300.0)
+                    for y in (-170.0, 0.0, 170.0)], dtype=float)
+    corners = []
+    for p in obj:
+        xw = R_world_from_cab @ p + t_world
+        xc = R_cam @ xw + t_cam
+        pr = K @ xc
+        corners.append((p, pr[:2] / pr[2]))
+    return corners
+
+
+def test_nominal_orientation_picks_correct_branch_oblique():
+    """A single oblique non-root cabinet (curved nominal tilt) is disambiguated
+    to the branch whose model-frame normal matches the nominal arc normal, NOT
+    its mirror."""
+    from lmt_vba_sidecar.reconstruct import estimate_nonroot_cabinet_init
+    K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
+    # Ground-truth non-root cabinet tilted +35deg about y (right side of an arc).
+    a = np.deg2rad(35.0)
+    R_true = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
+    t_true = np.array([500.0, 0.0, 150.0])
+    root_local = np.array([[-300, -170, 0], [300, -170, 0], [300, 170, 0], [-300, 170, 0]], float)
+    cams = [(np.eye(3), np.array([dx, 0.0, 2400.0])) for dx in (-200.0, 0.0, 200.0)]
+    per_view = {}
+    for ci, (R_cam, t_cam) in enumerate(cams):
+        per_view[(ci, 0)] = [(p, (lambda xw: (K @ (R_cam @ xw + t_cam))[:2]
+                                  / (K @ (R_cam @ xw + t_cam))[2])(p))
+                             for p in root_local]
+        per_view[(ci, 1)] = _ippe_oblique_corners(K, R_true, t_true, R_cam, t_cam)
+    # Nominal normal for cabinet 1 points like +35deg branch: [-sin? ] -> match true.
+    nominal_normals = {0: (0.0, 0.0, 1.0),
+                       1: (float(np.sin(a)), 0.0, float(np.cos(a)))}  # +x tilt
+    nominal_centers = {0: (0.0, 0.0, 0.0), 1: (0.5, 0.0, 0.15)}
+    out, undecidable = estimate_nonroot_cabinet_init(
+        per_view, root_idx=0, K=K,
+        nominal_normals=nominal_normals, nominal_centers=nominal_centers,
+    )
+    assert undecidable == set()
+    R_est, _t = out[1]
+    n_est = R_est @ np.array([0.0, 0.0, 1.0])
+    n_true = R_true @ np.array([0.0, 0.0, 1.0])
+    ang = np.degrees(np.arccos(np.clip(n_est @ n_true, -1, 1)))
+    assert ang < 5.0, f"picked wrong (mirror) branch: {ang:.1f}deg from truth"
+
+
+def test_seeded_flip_is_corrected_by_nominal():
+    """Even when the iterative/homography path would seed the mirror branch,
+    nominal disambiguation returns the non-mirrored pose."""
+    from lmt_vba_sidecar.reconstruct import estimate_nonroot_cabinet_init
+    K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
+    a = np.deg2rad(45.0)
+    R_true = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
+    t_true = np.array([600.0, 0.0, 200.0])
+    root_local = np.array([[-300, -170, 0], [300, -170, 0], [300, 170, 0], [-300, 170, 0]], float)
+    cams = [(np.eye(3), np.array([dx, 0.0, 2400.0])) for dx in (-200.0, 0.0, 200.0)]
+    per_view = {}
+    for ci, (R_cam, t_cam) in enumerate(cams):
+        per_view[(ci, 0)] = [(p, (lambda xw: (K @ (R_cam @ xw + t_cam))[:2]
+                                  / (K @ (R_cam @ xw + t_cam))[2])(p)) for p in root_local]
+        per_view[(ci, 1)] = _ippe_oblique_corners(K, R_true, t_true, R_cam, t_cam)
+    nominal_normals = {0: (0.0, 0.0, 1.0), 1: (float(np.sin(a)), 0.0, float(np.cos(a)))}
+    nominal_centers = {0: (0.0, 0.0, 0.0), 1: (0.6, 0.0, 0.2)}
+    out, undecidable = estimate_nonroot_cabinet_init(
+        per_view, root_idx=0, K=K,
+        nominal_normals=nominal_normals, nominal_centers=nominal_centers)
+    assert 1 in out and undecidable == set()
+    n_est = out[1][0] @ np.array([0.0, 0.0, 1.0])
+    n_true = R_true @ np.array([0.0, 0.0, 1.0])
+    assert np.degrees(np.arccos(np.clip(n_est @ n_true, -1, 1))) < 5.0
