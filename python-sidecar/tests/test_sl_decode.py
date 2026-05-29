@@ -16,6 +16,14 @@ def test_segment_excludes_sentinels():
     assert segment_code_region(frames, sentinel_threshold=0.85) == (1, 4)
 
 
+def test_segment_skips_full_held_sentinel_runs():
+    # recorded/held video: each logical frame spans many camera frames, so the
+    # white sentinels are CONTIGUOUS RUNS. Must skip both full runs, not just the
+    # first/last bright frame (else index_plateaus sees extra white plateaus).
+    frames = [_white(), _white(), _g(10), _g(200), _g(10), _white(), _white()]
+    assert segment_code_region(frames, sentinel_threshold=0.85) == (2, 5)
+
+
 def test_index_plateaus_counts_anchor_plus_code():
     # anchor + 1 code frame, captured 3x each
     region = [_g(180), _g(180), _g(180), _g(40), _g(40), _g(40)]
@@ -62,6 +70,24 @@ def test_roundtrip_recovers_every_dot_including_id0(tmp_path):
     for d in meta["dots"]:
         p = by_id[d["id"]]
         assert abs(p["x"] - d["u"]) < 1.0 and abs(p["y"] - d["v"]) < 1.0
+
+
+def test_roundtrip_from_held_video_sequence_mp4(tmp_path):
+    # The advertised video path: decode the generated sequence.mp4 (each logical
+    # frame held hold_repeat times -> sentinels span contiguous runs). Exercises
+    # the held-sentinel segmentation + plateau indexing through a real (lossy
+    # mp4v) codec end to end.
+    sl = _gen(tmp_path)
+    meta = json.loads((sl / "sl_meta.json").read_text())
+    dec = DecodeStructuredLightInput.model_validate({
+        "command": "decode_structured_light", "version": 1,
+        "input_path": str(sl / "sequence.mp4"), "sl_meta_path": str(sl / "sl_meta.json"),
+        "output_path": str(tmp_path / "corr.json")})
+    assert run_decode_structured_light(dec) == 0
+    corr = json.loads((tmp_path / "corr.json").read_text())
+    by_id = {p["id"]: p for p in corr["points"]}
+    assert len(corr["points"]) == len(meta["dots"])
+    assert 0 in by_id                                  # id=0 recovered from the anchor
 
 
 def test_correspondence_has_provenance(tmp_path):

@@ -43,11 +43,27 @@ def load_frames(input_path: str) -> list[np.ndarray]:
 
 
 def segment_code_region(frames: list[np.ndarray], *, sentinel_threshold: float) -> tuple[int, int]:
+    """Code region = frames strictly between the opening and closing white
+    sentinel RUNS. A recorded capture (and the held-frame sequence.mp4) repeats
+    each logical frame over many camera frames, so each sentinel spans a
+    CONTIGUOUS RUN — skip the whole opening run and stop before the whole closing
+    run, not just the first/last bright frame (else index_plateaus sees the
+    leftover sentinel frames as extra white plateaus and the decode fails)."""
     mb = np.array([float(f.mean()) for f in frames])
-    idx = np.where(mb > sentinel_threshold * 255.0)[0]
+    bright = mb > sentinel_threshold * 255.0
+    idx = np.where(bright)[0]
     if idx.size < 2:
         raise ValueError("could not find two white sentinel frames")
-    return int(idx[0]) + 1, int(idx[-1])
+    s = int(idx[0])
+    while s < len(frames) and bright[s]:
+        s += 1                       # first frame after the opening sentinel run
+    e = int(idx[-1])
+    while e >= 0 and bright[e]:
+        e -= 1
+    e += 1                           # first frame of the closing run (exclusive end)
+    if s >= e:
+        raise ValueError("no code region between white sentinels")
+    return s, e
 
 
 def index_plateaus(region: list[np.ndarray], *, expected: int) -> list[int]:
