@@ -289,6 +289,9 @@ class BaStats(BaseModel):
     rms_reprojection_px: float
     iterations: int
     converged: bool
+    n_observations_total: int = 0
+    n_observations_used: int = 0
+    n_rejected: int = 0
 
 
 class ResultData(BaseModel):
@@ -406,6 +409,7 @@ class CabinetPose(BaseModel):
     reprojection_rms_px: float = Field(ge=0.0)
     observed_views: int
     observed_points: int
+    rejected_points: int = 0
     quality: Literal["ok", "low_observation", "high_residual"]
 
 

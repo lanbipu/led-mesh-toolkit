@@ -197,7 +197,6 @@ def stage_b_robust_solve(*, K, observations, n_cameras, n_cabinets,
         # floor guard: per cabinet, never go below min_points
         from collections import Counter
         kept_counts = Counter(o.cabinet_idx for o, d in zip(obs, drop) if not d)
-        cab_counts = Counter(o.cabinet_idx for o in obs)
         new_obs = []
         n_dropped_this_iter = 0
         for o, d in zip(obs, drop):
@@ -526,6 +525,14 @@ def solve_and_emit(
         ))
         return 1
 
+    # Rejection accounting: Stage A removed n_rejected_pre observations before
+    # this function got `observations`; Stage B trimmed n_rej_stage_b more.
+    # n_used = surviving obs the final solve ran on; n_total folds both stages.
+    rejected_per_cab_pre = rejected_per_cab_pre or {}
+    n_used = len(surviving_observations)
+    n_rej = n_rejected_pre + n_rej_stage_b
+    n_total = n_used + n_rej
+
     # --- 9. per-cabinet geometry ---
     write_event(ProgressEvent(event="progress", stage="output", percent=0.9, message="building pose report"))
     # recompute per-cabinet indices from the trimmed (surviving) observations
@@ -565,6 +572,7 @@ def solve_and_emit(
         # want surfaced as a loud KeyError, not masked as a fake 0.0 RMS.
         cab_rms = per_cabinet_rms[idx]
         quality = _classify_cabinet_quality(n_views, cab_rms)
+        rejected_points = rejected_per_cab_pre.get(idx, 0) + rejected_per_cab_stage_b.get(idx, 0)
 
         cabinet_poses.append(CabinetPose(
             cabinet_id=cid,
@@ -575,12 +583,19 @@ def solve_and_emit(
             reprojection_rms_px=cab_rms,
             observed_views=n_views,
             observed_points=n_points,
+            rejected_points=rejected_points,
             quality=quality,
         ))
         if quality != "ok":
             write_event(WarningEvent(
                 event="warning", code="cabinet_quality",
                 message=f"cabinet {cid}: {quality} (views={n_views}, rms={cab_rms:.2f}px)",
+                cabinet=cid,
+            ))
+        if rejected_points and rejected_points / (rejected_points + n_points) > 0.30:
+            write_event(WarningEvent(
+                event="warning", code="high_rejection",
+                message=f"cabinet {cid}: rejected {rejected_points}/{rejected_points+n_points} observations",
                 cabinet=cid,
             ))
 
@@ -621,6 +636,9 @@ def solve_and_emit(
                 rms_reprojection_px=float(result.rms_reprojection_px),
                 iterations=int(result.iterations),
                 converged=True,
+                n_observations_total=n_total,
+                n_observations_used=n_used,
+                n_rejected=n_rej,
             ),
             frame_strategy_used="nominal_anchoring",  # vestigial; no Procrustes runs
             procrustes_align_rms_m=0.0,

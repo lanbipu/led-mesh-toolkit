@@ -655,3 +655,71 @@ def test_overtrim_stops_at_floor():
     assert survivors[1] >= 8
     assert rej_per_cab.get(0, 0) <= 32 - 8
     assert rej_per_cab.get(1, 0) <= 32 - 8
+
+
+def test_rejection_stats_reported_in_ba_stats(capsys):
+    # Drive the SL pipeline with an injected far-outlier id and assert the
+    # ResultEvent's ba_stats carries n_rejected>0 while staying converged.
+    import hashlib, json
+    from lmt_vba_sidecar.ipc import (
+        GenerateStructuredLightInput, ReconstructStructuredLightInput)
+    from lmt_vba_sidecar.structured_light import run_generate_structured_light
+    from lmt_vba_sidecar.sl_geometry import sl_local_mm
+    from lmt_vba_sidecar.sl_feasibility import look_at_pose, project_point
+    from lmt_vba_sidecar.sl_reconstruct import run_reconstruct_structured_light
+    import tempfile, pathlib
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    gen = GenerateStructuredLightInput.model_validate({
+        "command": "generate_structured_light", "version": 1,
+        "project": {"screen_id": "MAIN", "cabinet_array": {
+            "cols": 2, "rows": 1, "absent_cells": [], "cabinet_size_mm": [500, 500]}},
+        "output_dir": str(tmp / "sl"), "screen_resolution": [960, 480],
+        "dot_spacing_px": 80, "margin_px": 60})
+    assert run_generate_structured_light(gen) == 0
+    meta_path = tmp / "sl" / "sl_meta.json"
+    meta = json.loads(meta_path.read_text())
+    K = np.array([[3000., 0, 2000], [0, 3000., 1500], [0, 0, 1]])
+    (tmp / "intr.json").write_text(json.dumps(
+        {"K": K.tolist(), "dist_coeffs": [0, 0, 0, 0, 0], "image_size": [4000, 3000]}))
+    rect = {(c["col"], c["row"]): c["input_rect_px"] for c in meta["cabinets"]}
+    pitch = {(c["col"], c["row"]): c["pixel_pitch_mm"] for c in meta["cabinets"]}
+    cab_by_id = {d["id"]: tuple(d["cabinet"]) for d in meta["dots"]}
+    cab_world_t = {(0, 0): np.zeros(3), (1, 0): np.array([500., 0., 0.])}
+    truth = {}
+    for d in meta["dots"]:
+        cr = cab_by_id[d["id"]]
+        truth[d["id"]] = sl_local_mm(tuple(rect[cr]), d["u"], d["v"],
+                                     pitch[cr][0], pitch[cr][1]) + cab_world_t[cr]
+    sha = hashlib.sha256(meta_path.read_bytes()).hexdigest()
+    poses = [look_at_pose(np.array([px, 0., -3500.]), np.array([250., 0., 0.]))
+             for px in (-1200., -400., 400., 1200.)]
+    rng = np.random.default_rng(0)
+    corr_paths = []
+    for vi, (R, t) in enumerate(poses):
+        pts = []
+        for d in meta["dots"]:
+            p = project_point(K, R, t, truth[d["id"]]) + rng.normal(0, 0.1, 2)
+            pts.append({"id": d["id"], "u": d["u"], "v": d["v"],
+                        "x": float(p[0]), "y": float(p[1])})
+        # Inject one far outlier into view 0 only.
+        if vi == 0:
+            pts[0]["x"] += 600.0
+        cp = tmp / f"corr_{vi}.json"
+        cp.write_text(json.dumps({
+            "schema_version": 1, "screen_id": "MAIN", "sl_meta_sha256": sha,
+            "screen_resolution": meta["screen_resolution"], "camera_image_size": [4000, 3000],
+            "source_input": f"/cap/p{vi}.mp4", "points": pts}))
+        corr_paths.append(str(cp))
+    cmd = ReconstructStructuredLightInput.model_validate({
+        "command": "reconstruct_structured_light", "version": 1,
+        "project": {"screen_id": "MAIN", "cabinet_array": {
+            "cols": 2, "rows": 1, "absent_cells": [], "cabinet_size_mm": [500, 500]}},
+        "correspondence_paths": corr_paths, "sl_meta_path": str(meta_path),
+        "intrinsics_path": str(tmp / "intr.json"),
+        "pose_report_path": str(tmp / "report.json")})
+    assert run_reconstruct_structured_light(cmd) == 0
+    result = json.loads([ln for ln in capsys.readouterr().out.splitlines() if ln.strip()][-1])
+    stats = result["data"]["ba_stats"]
+    assert stats["converged"] is True
+    assert stats["n_rejected"] >= 1
+    assert stats["n_observations_used"] == stats["n_observations_total"] - stats["n_rejected"]
