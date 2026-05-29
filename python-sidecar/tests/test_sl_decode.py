@@ -304,31 +304,43 @@ def test_decode_moving_object_outside_roi(tmp_path):
     assert len(corr["points"]) == len(meta["dots"])        # mover ignored
 
 
-@pytest.mark.xfail(reason="Pass-3 _seed_dots Otsu-thresholds the all-on anchor and "
-                          "keeps the BRIGHT side, so dots dimmer than the background "
-                          "are never seeded (0 seeds). Relative bit reading is "
-                          "change-based, but anchor SEEDING is still brightness-based; "
-                          "decoding dim-on-bright dots needs a change-based seeding "
-                          "redesign (out of this task's scope).", strict=True)
-def test_decode_dim_dots_below_bg(tmp_path):
-    # S4: dots dimmer than the background still decode (criterion is change).
+def test_decode_dim_dots_below_external_bg(tmp_path):
+    # S4: dim/oblique-lit dots whose ABSOLUTE brightness sits BELOW a bright
+    # external wall still decode — proving detection is change/ROI-based, not
+    # global-brightness-based. Physical LED model: inter-dot screen background
+    # is black (LED off); lit dots read a low DIM value; a bright wall surrounds
+    # the screen in a padded border (genuinely OFF-screen, outside the ROI).
+    # The dots' absolute level (DIM=60) is far below the wall (WALL=200), yet
+    # all decode because the ROI excludes the wall and bit reading is relative.
+    DIM, WALL, pad = 60, 200, 60
     sl = _gen(tmp_path)
     meta = json.loads((sl / "sl_meta.json").read_text())
     h, w = meta["screen_resolution"][1], meta["screen_resolution"][0]
-    bg = np.full((h, w), 120, np.uint8)                    # background brighter
     src = sorted((sl / "frames").glob("frame_*.png"))
     dst = tmp_path / "dim"; dst.mkdir()
     for i, f in enumerate(src):
         fr = cv2.imread(str(f), cv2.IMREAD_GRAYSCALE)
-        dim = np.where(fr > 5, 70, bg).astype(np.uint8)    # dots=70 < bg=120
-        cv2.imwrite(str(dst / f"frame_{i:04d}.png"), dim)
+        # within-screen: black where the LED is off, DIM where the generator lit it
+        screen = np.where(fr > 5, DIM, 0).astype(np.uint8)
+        canvas = np.full((h + 2 * pad, w + 2 * pad), WALL, np.uint8)   # bright wall
+        canvas[pad:pad + h, pad:pad + w] = screen
+        cv2.imwrite(str(dst / f"frame_{i:04d}.png"), canvas)
+    # The all-white sentinel frame reads as a uniform DIM screen (~60), so the
+    # default 0.85 sentinel threshold (~217) would miss it — lower it below
+    # DIM/255 (~0.235). Sparse code frames stay near 0, so 0.18 isolates the
+    # sentinel cleanly. Mirrors the GUI guidance for dim / non-black captures.
     dec = DecodeStructuredLightInput.model_validate({
         "command": "decode_structured_light", "version": 1,
         "input_path": str(dst), "sl_meta_path": str(sl / "sl_meta.json"),
-        "output_path": str(tmp_path / "corr.json")})
+        "output_path": str(tmp_path / "corr.json"),
+        "sentinel_threshold": 0.18})
     assert run_decode_structured_light(dec) == 0
     corr = json.loads((tmp_path / "corr.json").read_text())
-    assert len(corr["points"]) >= int(0.99 * len(meta["dots"]))
+    assert len(corr["points"]) == len(meta["dots"])        # all dim dots decoded
+    # ROI is the padded screen region — the bright wall border is excluded.
+    rx, ry, rw, rh = corr["screen_roi"]
+    assert rx >= pad - 2 and ry >= pad - 2
+    assert rx + rw <= pad + w + 2 and ry + rh <= pad + h + 2
 
 
 def test_decode_finds_id0(tmp_path):
