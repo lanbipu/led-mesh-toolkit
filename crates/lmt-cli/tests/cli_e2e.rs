@@ -1860,3 +1860,51 @@ fn decode_structured_light_dry_run_writes_nothing() {
     assert!(!out_path.exists());
 }
 
+#[test]
+fn reconstruct_structured_light_refuses_without_yes() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 2, 1);
+    let meta = tmp.path().join("sl_meta.json");
+    std::fs::write(&meta, "{}").unwrap();
+    let intr = tmp.path().join("intr.json");
+    std::fs::write(&intr, "{}").unwrap();
+    let c0 = tmp.path().join("c0.json");
+    std::fs::write(&c0, "{}").unwrap();
+    let c1 = tmp.path().join("c1.json");
+    std::fs::write(&c1, "{}").unwrap();
+    let assert = lmt().args(["--json", "visual", "reconstruct-structured-light",
+        proj.to_str().unwrap(), "MAIN", "--sl-meta", meta.to_str().unwrap(),
+        "--intrinsics", intr.to_str().unwrap(),
+        "--corr", c0.to_str().unwrap(), "--corr", c1.to_str().unwrap()])
+        .assert().failure();
+    let out = assert.get_output();
+    assert_eq!(out.status.code(), Some(2));
+    let env: Value = serde_json::from_str(std::str::from_utf8(&out.stderr).unwrap().trim_end()).unwrap();
+    assert_eq!(env["error"]["code"], "invalid_input");
+}
+
+#[test]
+fn reconstruct_structured_light_dry_run_writes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 2, 1);
+    let meta = tmp.path().join("sl_meta.json");
+    std::fs::write(&meta, "{}").unwrap();
+    let intr = tmp.path().join("intr.json");
+    std::fs::write(&intr, "{}").unwrap();
+    let c0 = tmp.path().join("c0.json");
+    std::fs::write(&c0, "{}").unwrap();
+    let c1 = tmp.path().join("c1.json");
+    std::fs::write(&c1, "{}").unwrap();
+    let assert = lmt().args(["--json", "--dry-run", "visual", "reconstruct-structured-light",
+        proj.to_str().unwrap(), "MAIN", "--sl-meta", meta.to_str().unwrap(),
+        "--intrinsics", intr.to_str().unwrap(),
+        "--corr", c0.to_str().unwrap(), "--corr", c1.to_str().unwrap()])
+        .assert().success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["dry_run"], true);
+    assert!(!proj.join("measurements/measured.yaml").exists());
+}
+

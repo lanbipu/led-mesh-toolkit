@@ -129,6 +129,8 @@ pub fn build() -> ContractManifest {
            "lmt visual decode-structured-light <input> <sl_meta> --out <corr.json>", Destructive, true, false, false, Some("DecodeStructuredLightResult"), &[0, 2, 3, 4, 13, 18]),
         op("visual.reconstruct", "Multi-view photos -> measured.yaml + cabinet_pose_report.json (model-constrained BA, zero total station)",
            "lmt visual reconstruct <project> <screen_id> --capture-manifest <json> [--method charuco]", Destructive, true, false, false, Some("VisualReconstructResult"), &[0, 2, 3, 4, 6, 7, 13, 14, 15, 16, 17]),
+        op("visual.reconstruct_structured_light", "Multi-view structured-light correspondences (decode output) -> measured.yaml + cabinet_pose_report.json (same model-constrained BA as reconstruct; provenance-gated; zero total station)",
+           "lmt visual reconstruct-structured-light <project> <screen_id> --sl-meta <json> --intrinsics <json> --corr <c0.json> --corr <c1.json> ...", Destructive, true, false, false, Some("VisualReconstructResult"), &[0, 2, 3, 4, 13, 14, 16, 17]),
         op("visual.simulate", "Generate a synthetic geometry dataset (scene.npz) for BA validation",
            "lmt visual simulate <config> --out <dir>", Destructive, true, false, false, Some("SimulateResult"), &[0, 2, 4, 6]),
         op("visual.eval", "Evaluate a method vs ground truth on a synthetic dataset (gauge-invariant metrics)",
@@ -178,13 +180,14 @@ mod tests {
             "visual.generate_structured_light",
             "visual.decode_structured_light",
             "visual.reconstruct",
+            "visual.reconstruct_structured_light",
             "visual.simulate",
             "visual.eval",
             "visual.compare_known",
         ] {
             assert!(ids.contains(&expected), "manifest missing operation_id {expected}; got {ids:?}");
         }
-        assert_eq!(m.operations.len(), 25, "operation count changed — update both build() and this test");
+        assert_eq!(m.operations.len(), 26, "operation count changed — update both build() and this test");
     }
 
     #[test]
@@ -229,6 +232,7 @@ mod tests {
             "visual.generate_structured_light",
             "visual.decode_structured_light",
             "visual.reconstruct",
+            "visual.reconstruct_structured_light",
             "visual.simulate",
         ] {
             assert!(!find(id).idempotent, "{id} mutates observable state -> not idempotent");

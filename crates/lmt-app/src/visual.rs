@@ -11,9 +11,10 @@ use std::path::Path;
 
 use lmt_adapter_visual_ba::api::{
     calibrate, compare_known, decode_structured_light, eval, generate_pattern,
-    generate_structured_light, reconstruct, simulate, CalibrateArgs, CompareKnownArgs,
-    DecodeStructuredLightArgs, EvalArgs, GeneratePatternArgs, GenerateStructuredLightArgs,
-    ReconstructArgs, SimulateArgs,
+    generate_structured_light, reconstruct, reconstruct_structured_light, simulate, CalibrateArgs,
+    CompareKnownArgs, DecodeStructuredLightArgs, EvalArgs, GeneratePatternArgs,
+    GenerateStructuredLightArgs, ReconstructArgs, ReconstructOut, ReconstructStructuredLightArgs,
+    SimulateArgs,
 };
 use lmt_adapter_visual_ba::ipc;
 
@@ -150,22 +151,31 @@ pub fn run_reconstruct(
     };
 
     let out = rt()?.block_on(reconstruct(args)).map_err(map_vba_err)?;
+    persist_reconstruct_result(project_path, screen_id, out)
+}
 
-    // Persist MeasuredPoints to measured.yaml with the backup + atomic-write +
-    // cross-screen-guard + ROLLBACK pattern from run_import (not run_import_scatter,
-    // which omits rollback). The reconstruction output is the expensive product of
-    // a multi-minute BA run, so a half-written measured.yaml must never leave the
-    // user with neither the old file nor the new result.
+/// Persist a reconstruction's MeasuredPoints to `measurements/measured.yaml`
+/// (backup + atomic write + cross-screen guard + ROLLBACK) and build the
+/// VisualReconstructResult. Shared by run_reconstruct (charuco) and
+/// run_reconstruct_structured_light. The reconstruction output is the expensive
+/// product of a multi-minute BA run, so a half-written measured.yaml must never
+/// leave the user with neither the old file nor the new result.
+fn persist_reconstruct_result(
+    project_path: &Path,
+    screen_id: &str,
+    out: ReconstructOut,
+) -> LmtResult<VisualReconstructResult> {
+    let measurements_dir = project_path.join("measurements");
+    std::fs::create_dir_all(&measurements_dir)?;
     let measured_yaml_path = measurements_dir.join("measured.yaml");
     let backup_path = measurements_dir.join("measured.yaml.bak");
 
     crate::total_station::check_import_no_screen_conflict(project_path, screen_id)?;
 
     // If a previous measured.yaml exists, rename it to .bak (overwriting any prior
-    // .bak), so we can restore it if the new write fails.
+    // .bak), so we can restore it if the new write fails. Remove any prior .bak
+    // first: std::fs::rename fails on Windows when the destination exists.
     let did_backup = if measured_yaml_path.exists() {
-        // Remove any prior .bak first: std::fs::rename fails on Windows when the
-        // destination exists (POSIX silently overwrites). Matches the comment's intent.
         let _ = std::fs::remove_file(&backup_path);
         std::fs::rename(&measured_yaml_path, &backup_path)?;
         true
@@ -173,8 +183,6 @@ pub fn run_reconstruct(
         false
     };
 
-    // Write the new file. On any failure: remove the half-written measured.yaml,
-    // then restore the previous version from .bak.
     let write_result = (|| -> LmtResult<()> {
         let yaml = serde_yaml::to_string(&out.measured_points)?;
         let tmp = measurements_dir.join("measured.yaml.tmp");
@@ -214,6 +222,44 @@ pub fn run_reconstruct(
             })
             .collect(),
     })
+}
+
+/// Multi-view structured-light reconstruction: N correspondence files (decode
+/// output) + sl_meta + intrinsics → measured.yaml + cabinet_pose_report.json,
+/// via the same model-constrained BA as `run_reconstruct`.
+pub fn run_reconstruct_structured_light(
+    project_path: &Path,
+    screen_id: &str,
+    sl_meta: &Path,
+    intrinsics: &Path,
+    correspondences: &[String],
+) -> LmtResult<VisualReconstructResult> {
+    let cfg = load_project_yaml_from_path(project_path)?;
+    let screen_cfg = load_screen(&cfg, screen_id)?;
+    let project = ipc::ReconstructProject {
+        screen_id: screen_id.to_string(),
+        cabinet_array: ipc_cabinet_array(screen_cfg),
+        shape_prior: ipc_shape_prior(screen_cfg),
+    };
+
+    let measurements_dir = project_path.join("measurements");
+    std::fs::create_dir_all(&measurements_dir)?;
+    let pose_report_path = measurements_dir.join(format!("{screen_id}_cabinet_pose_report.json"));
+
+    let args = ReconstructStructuredLightArgs {
+        project,
+        correspondence_paths: correspondences.to_vec(),
+        sl_meta_path: sl_meta.display().to_string(),
+        intrinsics_path: intrinsics.display().to_string(),
+        pose_report_path: pose_report_path.display().to_string(),
+        progress_tx: None,
+        cancel: None,
+    };
+
+    let out = rt()?
+        .block_on(reconstruct_structured_light(args))
+        .map_err(map_vba_err)?;
+    persist_reconstruct_result(project_path, screen_id, out)
 }
 
 // ---------------------------------------------------------------------------

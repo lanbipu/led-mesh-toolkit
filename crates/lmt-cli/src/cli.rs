@@ -339,6 +339,24 @@ pub enum VisualCmd {
         #[arg(long)]
         out: String,
     },
+    /// 多机位结构光对应文件 → measured.yaml + cabinet_pose_report.json
+    /// (model-constrained BA,复用 charuco 重建内核)。side_effect: destructive
+    #[command(name = "reconstruct-structured-light")]
+    ReconstructStructuredLight {
+        /// 项目根目录。
+        project_path: String,
+        /// screen id。
+        screen_id: String,
+        /// sl_meta.json 路径(generate-structured-light 产出)。
+        #[arg(long)]
+        sl_meta: String,
+        /// intrinsics.json 路径(visual calibrate 产出)。
+        #[arg(long)]
+        intrinsics: String,
+        /// 每个机位一个 corr.json(decode-structured-light 产出);重复传入 >=2 个。
+        #[arg(long = "corr", required = true, num_args = 1.., action = clap::ArgAction::Append)]
+        correspondences: Vec<String>,
+    },
     /// 多视角照片 → measured.yaml + cabinet_pose_report.json。side_effect: destructive
     Reconstruct {
         /// 项目根目录。

@@ -73,6 +73,15 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             sl_meta,
             out,
         } => decode_structured_light(mode, &input_path, &sl_meta, &out, yes, dry_run),
+        VisualCmd::ReconstructStructuredLight {
+            project_path,
+            screen_id,
+            sl_meta,
+            intrinsics,
+            correspondences,
+        } => reconstruct_structured_light(
+            mode, &project_path, &screen_id, &sl_meta, &intrinsics, &correspondences, yes, dry_run,
+        ),
     }
 }
 
@@ -392,6 +401,69 @@ fn decode_structured_light(
                         "decoded {} dots → {}",
                         p.n_dots_decoded,
                         p.output_path
+                    );
+                }),
+                Err(e) => output::err(mode, ApiError::from(e)),
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// reconstruct_structured_light
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+fn reconstruct_structured_light(
+    mode: Mode,
+    project_path: &str,
+    screen_id: &str,
+    sl_meta: &str,
+    intrinsics: &str,
+    correspondences: &[String],
+    yes: bool,
+    dry_run: bool,
+) -> i32 {
+    let decision =
+        match util::gate_destructive(yes, dry_run, "visual reconstruct-structured-light") {
+            Ok(d) => d,
+            Err(e) => return output::err(mode, e),
+        };
+
+    match decision {
+        DestructiveDecision::DryRun => {
+            let would_write = vec![
+                format!("{project_path}/measurements/measured.yaml"),
+                format!("{project_path}/measurements/{screen_id}_cabinet_pose_report.json"),
+            ];
+            let payload = serde_json::json!({
+                "dry_run": true,
+                "would_write": would_write,
+                "correspondences": correspondences,
+                "sl_meta": sl_meta,
+                "intrinsics": intrinsics,
+            });
+            output::ok(mode, payload, |_| {
+                let _ = writeln!(
+                    std::io::stdout(),
+                    "[dry-run] would reconstruct screen {screen_id} from {} poses",
+                    correspondences.len()
+                );
+            })
+        }
+        DestructiveDecision::Execute => {
+            match lmt_app::visual::run_reconstruct_structured_light(
+                Path::new(project_path),
+                screen_id,
+                Path::new(sl_meta),
+                Path::new(intrinsics),
+                correspondences,
+            ) {
+                Ok(r) => output::ok(mode, r, |p| {
+                    let _ = writeln!(
+                        std::io::stdout(),
+                        "reconstructed {} cabinets (ba_rms={:.3}px)\n  measured: {}\n  poses: {}",
+                        p.cabinet_count, p.ba_rms_px, p.measured_yaml_path, p.pose_report_path
                     );
                 }),
                 Err(e) => output::err(mode, ApiError::from(e)),

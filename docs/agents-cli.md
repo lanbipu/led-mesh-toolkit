@@ -43,6 +43,7 @@ lmt --db /path/to/lmt.sqlite project list-recent
 | `lmt visual generate-structured-light <project> <screen_id> [--dot-spacing N] [--dot-radius N] [--screen-mapping <json>]` | destructive | Generate a structured-light dot-array capture sequence under `patterns/<screen_id>/sl/`: `frames/*.png` (white sentinel + all-on anchor + binary-blink-coded dot frames), `sequence.mp4` (drop-in full-screen playback), `sl_meta.json` (per-cabinet rects + dot screen coords + code/sequence spec, with `screen_id`). Mapping-aware: with `--screen-mapping` dots are tiled inside each cabinet's `input_rect_px`, honoring absent/non-uniform cabinets; without it, the uniform grid is used (even-divisibility required). Identity is carried in each dot's blink sequence (binary + even parity), not appearance — no dictionary-capacity limit. Result reports `n_dots` and `n_frames`. |
 | `lmt visual decode-structured-light <input> <sl_meta> --out <corr.json>` | destructive | Decode a recorded structured-light capture (video or frame directory) into a provenance-stamped screen↔camera correspondence file (`screen_id`, `sl_meta_sha256`, `camera_image_size`, `source_input`, points). Segments by white sentinels, indexes plateaus, seeds dots from the all-on anchor (so `id=0` is recovered), decodes each dot's binary+parity blink code. `decode_failed` (18) if sentinels/plateaus don't parse; `detection_failed` (13) if too few dots decode. |
 | `lmt visual reconstruct <project> <screen_id> --capture-manifest <json> [--method charuco]` | destructive | Multi-view photos → `measurements/measured.yaml` + `measurements/<screen_id>_cabinet_pose_report.json` (model-constrained BA, zero total station) |
+| `lmt visual reconstruct-structured-light <project> <screen_id> --sl-meta <json> --intrinsics <json> --corr <c.json> ...` | destructive | Reconstruct a metric per-cabinet 3D model from N per-pose structured-light correspondence files (decode-structured-light output). Provenance-gated: all `--corr` must share one `screen_id` + `sl_meta_sha256` matching `--sl-meta`, and match the project screen; `sl_meta` is schema-validated and its cabinet set must equal the project's present cells (stale meta / edited layout → `invalid_input`). `p_local` derives from canonical `sl_meta` dot `(u,v)` (the per-pose corr `(u,v)` is ignored). Runs the SAME model-constrained BA as `reconstruct` (root cabinet = world gauge, scale from pixel pitch), writing `measurements/measured.yaml` + `<screen>_cabinet_pose_report.json` (reuses `VisualReconstructResult`). Errors: `invalid_input`(3), `intrinsics_invalid`(16), `detection_failed`(13), `observability_failed`(17), `ba_diverged`(14). NOTE: this is a separate subcommand; `reconstruct --method structured-light` stays `unsupported`(7). |
 | `lmt visual simulate <config> --out <dir>` | destructive | Generate a synthetic geometry dataset (`scene.npz` + `meta.json`) for BA validation |
 | `lmt visual eval <dataset> [--method charuco] [--seed-matrix <list>]` | write_safe | Evaluate a method vs ground truth on a synthetic dataset (gauge-invariant metrics) |
 | `lmt visual compare-known <report.json> <known.json>` | write_safe | Compare a `cabinet_pose_report.json` against known monitor geometry — per-cabinet size error (from corners), per-pair distance error (from positions), per-pair angle error (from normals), + pass/fail vs thresholds (size≤2.0mm / distance≤3.0mm / angle≤0.3°). Reads two JSON files, writes nothing. |
@@ -104,15 +105,16 @@ directly and not expect `{"ok": true, ...}` wrapping.
 
 The entire `visual` command group — `calibrate`, `generate-pattern`,
 `generate-structured-light`, `decode-structured-light`, `reconstruct`,
-`simulate`, `eval`, `compare-known` — is CLI-only by design: it has no
-`#[tauri::command]` shim and is not registered in the GUI's `generate_handler!`.
-The camera/structured-light pipeline is an agent/headless workflow (long-running
-sidecar runs, no native-webview dependency), so the deliverables are files on
-disk that any front-end can consume. `generate-structured-light` and
-`decode-structured-light` follow this convention. The service-layer helpers
-(`lmt_app::visual::run_generate_structured_light` /
-`run_decode_structured_light`) are plain functions, so a future GUI shim is a
-thin transport wrapper if one is ever needed.
+`reconstruct-structured-light`, `simulate`, `eval`, `compare-known` — is
+CLI-only by design: it has no `#[tauri::command]` shim and is not registered in
+the GUI's `generate_handler!`. The camera/structured-light pipeline is an
+agent/headless workflow (long-running sidecar runs, no native-webview
+dependency), so the deliverables are files on disk that any front-end can
+consume. `generate-structured-light`, `decode-structured-light`, and
+`reconstruct-structured-light` follow this convention. The service-layer helpers
+(`lmt_app::visual::run_generate_structured_light` / `run_decode_structured_light`
+/ `run_reconstruct_structured_light`) are plain functions, so a future GUI shim
+is a thin transport wrapper if one is ever needed.
 
 ## Global flags
 
@@ -241,7 +243,7 @@ GUI 启动 / `add-recent` / `reconstruct surface` 之类的写命令都会触发
 | --- | :---: | --- |
 | `read_only` | yes | `schema`, `project list-recent` / `load`, `measurements load`, `total-station instruction-card`, `reconstruct list-runs` / `get-run-report` |
 | `write_safe` | yes (no `--yes`) | `project add-recent` (still honors `--dry-run`), `visual eval`, `visual compare-known` |
-| `destructive` | no (requires `--yes` or `--dry-run`) | `project remove-recent` / `save`, `total-station import`, `reconstruct surface`, `export obj`, `export pose-obj`, `visual calibrate`, `visual generate-pattern`, `visual generate-structured-light`, `visual decode-structured-light`, `visual reconstruct`, `visual simulate` |
+| `destructive` | no (requires `--yes` or `--dry-run`) | `project remove-recent` / `save`, `total-station import`, `reconstruct surface`, `export obj`, `export pose-obj`, `visual calibrate`, `visual generate-pattern`, `visual generate-structured-light`, `visual decode-structured-light`, `visual reconstruct`, `visual reconstruct-structured-light`, `visual simulate` |
 
 An MCP tool wrapper should propagate these as the tool's `side_effect`
 annotation and route `destructive` tools through a confirmation step.

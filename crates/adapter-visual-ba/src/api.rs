@@ -177,6 +177,76 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
 }
 
 // ---------------------------------------------------------------------------
+// reconstruct_structured_light
+// ---------------------------------------------------------------------------
+
+pub struct ReconstructStructuredLightArgs {
+    pub project: ReconstructProject,
+    /// One CorrespondenceFile path per camera pose (decode_structured_light out).
+    pub correspondence_paths: Vec<String>,
+    pub sl_meta_path: String,
+    pub intrinsics_path: String,
+    /// Where the sidecar writes `cabinet_pose_report.json`; read back for summaries.
+    pub pose_report_path: String,
+    pub progress_tx: Option<mpsc::Sender<Event>>,
+    pub cancel: Option<oneshot::Receiver<()>>,
+}
+
+/// Multi-view structured-light reconstruction. Same `ReconstructOut` shape as
+/// [`reconstruct`] (the sidecar runs the same model-constrained BA); only the
+/// observation source differs (decoded screen↔camera correspondences).
+pub async fn reconstruct_structured_light(
+    args: ReconstructStructuredLightArgs,
+) -> VbaResult<ReconstructOut> {
+    validate_project_eagerly(&args.project)?;
+
+    let payload = json!({
+        "command": "reconstruct_structured_light",
+        "version": 1,
+        "project": &args.project,
+        "correspondence_paths": &args.correspondence_paths,
+        "sl_meta_path": &args.sl_meta_path,
+        "intrinsics_path": &args.intrinsics_path,
+        "pose_report_path": &args.pose_report_path,
+    });
+
+    let value = run_sidecar(SidecarRequest {
+        subcommand: "reconstruct_structured_light".into(),
+        payload,
+        progress_tx: args.progress_tx,
+        cancel: args.cancel,
+    })
+    .await?;
+
+    let result: ResultData = serde_json::from_value(value).map_err(VbaError::BadEventJson)?;
+
+    let ba_rms_px = result.ba_stats.rms_reprojection_px;
+    let points: Vec<lmt_core::point::MeasuredPoint> = result
+        .measured_points
+        .into_iter()
+        .map(|dto| dto.into_ir())
+        .collect();
+
+    let measured_points = MeasuredPoints {
+        screen_id: args.project.screen_id.clone(),
+        coordinate_frame: identity_frame()?,
+        cabinet_array: ipc_to_ir_cabinet(&args.project.cabinet_array)?,
+        shape_prior: ipc_to_ir_shape(&args.project.shape_prior)?,
+        points,
+        sampling_mode: lmt_core::sampling::SamplingMode::Grid,
+    };
+
+    let cabinet_summaries = read_cabinet_summaries(&args.pose_report_path);
+
+    Ok(ReconstructOut {
+        measured_points,
+        pose_report_path: args.pose_report_path,
+        ba_rms_px,
+        cabinet_summaries,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // calibrate
 // ---------------------------------------------------------------------------
 
