@@ -194,18 +194,26 @@ def stage_b_robust_solve(*, K, observations, n_cameras, n_cabinets,
                 for o, nrm in zip(obs, norms)]
         if not any(drop):
             break
-        # floor guard: per cabinet, never go below min_points
+        # Drop flagged outliers down to a BA-SAFETY floor (MIN_PNP_CORNERS — enough
+        # to keep model_constrained_ba well-defined), deliberately PAST
+        # per_cabinet_min_points. We must NOT retain known-bad observations just to
+        # keep a cabinet at the minimum: that left an over-corrupted cabinet with
+        # high-residual points and shipped a wrong report (Codex P2). When a
+        # cabinet's good points can't sustain >= per_cabinet_min_points, it falls
+        # below the floor here and solve_and_emit's post-trim observability check
+        # (>= per_cabinet_min_points points, >= 2 views) hard-stops it.
         from collections import Counter
+        safety_floor = min(MIN_PNP_CORNERS, per_cabinet_min_points)
         kept_counts = Counter(o.cabinet_idx for o, d in zip(obs, drop) if not d)
         new_obs = []
         n_dropped_this_iter = 0
         for o, d in zip(obs, drop):
-            if d and kept_counts.get(o.cabinet_idx, 0) >= per_cabinet_min_points:
+            if d and kept_counts.get(o.cabinet_idx, 0) >= safety_floor:
                 rejected_per_cab[o.cabinet_idx] = rejected_per_cab.get(o.cabinet_idx, 0) + 1
                 n_dropped_this_iter += 1
             else:
                 new_obs.append(o)
-                if d:  # wanted to drop but floor blocked it -> protect by keeping
+                if d:  # below the BA-safety floor: keep to keep the solve defined
                     kept_counts[o.cabinet_idx] = kept_counts.get(o.cabinet_idx, 0) + 1
         if n_dropped_this_iter == 0:
             break
@@ -860,6 +868,21 @@ def estimate_nonroot_cabinet_init(
     est_R: dict[int, list] = {}
     est_t: dict[int, list] = {}
     undecidable: set[int] = set()
+    # The reconstruction world frame is the ROOT cabinet's frame (root fixed at
+    # identity), but `nominal_normals` are in the global nominal MODEL frame. For a
+    # curved arc whose root is NOT at the arc centre, the two frames differ by the
+    # root's nominal rotation, so disambiguating a non-root branch against an
+    # untransformed model-frame nominal can select the IPPE mirror (the convex/
+    # concave flip). Build the root's nominal rotation R_y(a_root) from its
+    # model-frame normal ([sin a, 0, cos a]; flat -> identity) and express every
+    # cabinet's nominal normal in the root frame before comparing.
+    n_root = nominal_normals.get(root_idx) if nominal_normals else None
+    if n_root is not None:
+        a_root = float(np.arctan2(float(n_root[0]), float(n_root[2])))
+        ca, sa = np.cos(a_root), np.sin(a_root)
+        R_root_nominal = np.array([[ca, 0.0, sa], [0.0, 1.0, 0.0], [-sa, 0.0, ca]])
+    else:
+        R_root_nominal = np.eye(3)
     for cabs in by_view.values():
         root_corners = cabs.get(root_idx, [])
         if len(root_corners) < min_corners:
@@ -878,7 +901,8 @@ def estimate_nonroot_cabinet_init(
             # Compose each camera_from_cab branch to world_from_cab via the root:
             #   R_wc = Rc0.T @ Rc1 ; t_wc = Rc0.T @ (tc1 - tc0)
             world_branches = [(Rc0.T @ Rc1, Rc0.T @ (tc1 - tc0)) for Rc1, tc1 in branches]
-            chosen = _disambiguate_world_branch(world_branches, nominal_normals[cab_idx])
+            n_nominal_root = R_root_nominal.T @ np.asarray(nominal_normals[cab_idx], dtype=float)
+            chosen = _disambiguate_world_branch(world_branches, n_nominal_root)
             if chosen == "undecidable":
                 undecidable.add(cab_idx)
                 continue

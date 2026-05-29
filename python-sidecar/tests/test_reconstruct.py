@@ -1138,3 +1138,71 @@ def test_normal_convention_matches_geometry():
     corners = np.array([[-300,-170,0],[300,-170,0],[300,170,0],[-300,170,0]], float)
     _c, normal, _s, _w = reconstruct_cabinet_geometry(R, t, corners)
     np.testing.assert_allclose(normal, R @ np.array([0., 0., 1.]), atol=1e-9)
+
+
+def _Ry(a):
+    return np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
+
+
+def test_estimate_nonroot_init_curved_root_not_at_arc_center():
+    """Codex P2 (rec#1): for a curved arc whose ROOT is at a non-zero nominal
+    angle, world_branches are in the ROOT frame but nominal_normals are in the
+    global MODEL frame. Model root angle=+40 deg, non-root=+20 deg -> the TRUE
+    world(root)-frame relative orientation is R_y(20-40)=R_y(-20) (lateral sign
+    NEGATIVE), while the model-frame nominal[1] lateral is sin(+20) (POSITIVE) —
+    opposite sign, so an UN-transformed comparison would select the +20 IPPE
+    mirror. The root-frame transform must recover R_y(-20)."""
+    K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
+    local = np.array([[-300, -170, 0], [300, -170, 0], [300, 170, 0], [-300, 170, 0],
+                      [-150, -85, 0], [150, -85, 0], [150, 85, 0], [-150, 85, 0]], float)
+    a_root, a_one = np.deg2rad(40.0), np.deg2rad(20.0)
+    R_rel_true = _Ry(a_one - a_root)                 # world(root)-frame nonroot pose = R_y(-20)
+    t_true = np.array([400.0, 0.0, -150.0])
+    cams = [(np.eye(3), np.array([dx, 0.0, 2300.0])) for dx in (-300.0, 0.0, 300.0)]
+    per_view: dict[tuple[int, int], list] = {}
+    for ci, (R_cam, t_cam) in enumerate(cams):
+        per_view[(ci, 0)] = [(p, _project(R_cam, t_cam, np.eye(3), np.zeros(3), p, K)) for p in local]
+        per_view[(ci, 1)] = [(p, _project(R_cam, t_cam, R_rel_true, t_true, p, K)) for p in local]
+    nrm = lambda a: (float(np.sin(a)), 0.0, float(np.cos(a)))   # MODEL-frame normal [sin a,0,cos a]
+    out, undecidable = estimate_nonroot_cabinet_init(
+        per_view, root_idx=0, K=K,
+        nominal_normals={0: nrm(a_root), 1: nrm(a_one)},
+        nominal_centers={0: (0.0, 0.0, 0.0), 1: tuple(t_true / 1000.0)},
+    )
+    assert undecidable == set() and 1 in out
+    R_est, _t = out[1]
+    ang_err = np.degrees(np.arccos(np.clip((np.trace(R_est.T @ R_rel_true) - 1) / 2, -1, 1)))
+    assert ang_err < 2.0, f"recovered differs from true R_y(-20) by {ang_err:.2f} deg (picked mirror?)"
+    ang_to_mirror = np.degrees(np.arccos(np.clip((np.trace(R_est.T @ _Ry(a_root - a_one)) - 1) / 2, -1, 1)))
+    assert ang_to_mirror > 30.0, "recovered the +20 mirror branch (root-frame transform missing)"
+
+
+def test_stage_b_drops_past_floor_when_cabinet_mostly_corrupt():
+    """Codex P2 (rec#2): when a cabinet has MORE bad observations than
+    (count - per_cabinet_min_points), the floor must NOT retain the bad ones to
+    keep the cabinet at the minimum (that shipped a high-residual wrong report).
+    It now drops PAST the floor (to a BA-safety minimum), leaving the cabinet
+    below per_cabinet_min_points so solve_and_emit's post-trim observability
+    hard-stops it instead of emitting a wrong measured.yaml."""
+    from lmt_vba_sidecar.reconstruct import stage_b_robust_solve
+    K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
+    a = np.deg2rad(20.0)
+    R_true = _Ry(a)
+    t_true = np.array([700.0, 0.0, 0.0])
+    obs, init_cams, cams, _ = _two_panel_clean(K, R_true, t_true)
+    # Corrupt 28 of cabinet 1's 32 observations with far outliers: more than the
+    # 32-8=24 the old floor would allow dropping, so the old code retained 8 (incl
+    # 4 bad) and shipped a wrong report.
+    n_corrupt = 0
+    for k, o in enumerate(obs):
+        if o.cabinet_idx == 1 and n_corrupt < 28:
+            obs[k] = Observation(o.camera_idx, 1, o.p_local, o.pixel + np.array([320.0, -260.0]))
+            n_corrupt += 1
+    _res, _rej, _total, surviving = stage_b_robust_solve(
+        K=K, observations=obs, n_cameras=len(cams), n_cabinets=2, root_cabinet_idx=0,
+        init_cameras=init_cams, init_cabinets=_two_panel_init_cabinets(t_true),
+        per_cabinet_min_points=8)
+    cab1_surviving = sum(1 for o in surviving if o.cabinet_idx == 1)
+    assert cab1_surviving < 8, (
+        f"cabinet 1 retained {cab1_surviving} observations — the floor is still "
+        f"clamping known-bad points at the minimum (rec#2 not fixed)")
