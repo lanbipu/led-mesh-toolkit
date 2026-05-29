@@ -47,14 +47,19 @@ def derive_screen_roi(frames: list[np.ndarray]) -> tuple[int, int, int, int]:
 
     The screen rectangle is swept by the white sentinel + blinking dots, so it is
     a SOLID high-activity region. Off-screen movers (person/car) are thin, sparse,
-    non-solid blobs. We Otsu-threshold the activity map, keep the connected
-    component whose bbox is most rectangle-filled (component area / bbox area),
-    and return its bounding box. Brightness never enters the decision."""
+    non-solid blobs. We threshold the activity map at a fixed fraction of its peak,
+    keep the largest solid (well-filled) component, and return its bounding box.
+    Brightness never enters the decision."""
     stack = np.stack(frames).astype(np.int16)
     activity = (stack.max(axis=0) - stack.min(axis=0)).astype(np.uint8)
-    if int(activity.max()) == 0:
+    a_max = int(activity.max())
+    if a_max == 0:
         raise ValueError("no temporal activity; nothing blinks (static clip?)")
-    _t, mask = cv2.threshold(activity, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Threshold at a fixed fraction of peak activity, NOT Otsu: when the screen
+    # fills the camera frame (the canonical case), the whole activity map is
+    # uniformly high (unimodal), and Otsu carves that uniform region into specks.
+    # "Changed by > half the peak range" cleanly marks the swept screen region.
+    mask = (activity > max(1, a_max // 2)).astype(np.uint8) * 255
     n, _lbl, stats, _cent = cv2.connectedComponentsWithStats(mask, connectivity=8)
     # A screen ROI is BOTH solid (bbox well-filled) AND large; off-screen movers
     # are tiny specks that are individually "100% filled" but cover a negligible
@@ -150,20 +155,6 @@ def index_plateaus(region: list[np.ndarray], *, expected: int,
     return [(a + b) // 2 for (a, b) in segs]
 
 
-def _centroids(frame: np.ndarray) -> list[tuple[float, float]]:
-    _, bw = cv2.threshold(frame, 128, 255, cv2.THRESH_BINARY)
-    n, _l, _s, cent = cv2.connectedComponentsWithStats(bw, connectivity=8)
-    return [(float(cent[i][0]), float(cent[i][1])) for i in range(1, n)]
-
-
-def _read_bit_at(frame: np.ndarray, x: float, y: float) -> int:
-    """1 if the dot at (x,y) is lit in this frame (sample a small patch)."""
-    ix, iy = int(round(x)), int(round(y))
-    y0, y1 = max(0, iy - 1), min(frame.shape[0], iy + 2)
-    x0, x1 = max(0, ix - 1), min(frame.shape[1], ix + 2)
-    return 1 if float(frame[y0:y1, x0:x1].mean()) > 128.0 else 0
-
-
 def _seed_dots(anchor: np.ndarray, *, roi: tuple[int, int, int, int],
                dot_radius_px: int) -> list[tuple[float, float]]:
     """Pass 3.1-3.2: Otsu-threshold the all-on anchor WITHIN the ROI (so id=0 is
@@ -211,6 +202,7 @@ def run_decode_structured_light(cmd: DecodeStructuredLightInput) -> int:
     sl_meta_sha256 = hashlib.sha256(meta_path.read_bytes()).hexdigest()
     data_bits = int(meta["code"]["data_bits"])
     total_bits = int(meta["code"]["total_bits"])
+    dot_radius_px = int(meta["dot_radius_px"])
     uv_by_id = {int(d["id"]): (float(d["u"]), float(d["v"])) for d in meta["dots"]}
 
     frames = load_frames(cmd.input_path)
@@ -223,20 +215,40 @@ def run_decode_structured_light(cmd: DecodeStructuredLightInput) -> int:
             message=f"only {len(frames)} frames; need >= {total_bits + 3}", fatal=True))
         return 1
     cam_h, cam_w = frames[0].shape[:2]
+
+    # Pass 1: ROI (manual override wins; else auto from temporal activity).
     try:
-        s, e = segment_code_region(frames, sentinel_threshold=cmd.sentinel_threshold)
-        reps = index_plateaus(frames[s:e], expected=total_bits + 1)
+        if cmd.screen_roi is not None:
+            roi = tuple(int(v) for v in cmd.screen_roi)
+        else:
+            roi = derive_screen_roi(frames)
+    except ValueError as exc:
+        write_event(ErrorEvent(event="error", code="detection_failed",
+            message=str(exc), fatal=True))
+        return 1
+
+    # Pass 2: sentinel segmentation + plateau indexing, restricted to the ROI.
+    try:
+        s, e = segment_code_region(frames, sentinel_threshold=cmd.sentinel_threshold, roi=roi)
+        reps = index_plateaus(frames[s:e], expected=total_bits + 1, roi=roi)
     except ValueError as exc:
         write_event(ErrorEvent(event="error", code="decode_failed", message=str(exc), fatal=True))
         return 1
 
     anchor = frames[s + reps[0]]
     code_frames = [frames[s + r] for r in reps[1:]]      # total_bits frames
-    seeds = _centroids(anchor)                            # every dot, incl id=0
+
+    # Pass 3: seed in ROI (Otsu), filter by shape, read per-dot relative, decode.
+    seeds = _seed_dots(anchor, roi=roi, dot_radius_px=dot_radius_px)
+    if cmd.emit_debug_image:
+        dbg = np.zeros((cam_h, cam_w), dtype=np.uint8)
+        for (sx, sy) in seeds:
+            cv2.circle(dbg, (int(round(sx)), int(round(sy))), dot_radius_px, 255, -1)
+        cv2.imwrite(f"{cmd.output_path}.debug.png", dbg)
 
     points = []
     for (x, y) in seeds:
-        bits = [_read_bit_at(f, x, y) for f in code_frames]
+        bits = _read_bits_relative(code_frames, x, y)
         dot_id = decode_bits(bits, data_bits)
         if dot_id is None or dot_id not in uv_by_id:
             continue
@@ -255,6 +267,7 @@ def run_decode_structured_light(cmd: DecodeStructuredLightInput) -> int:
         "screen_resolution": meta["screen_resolution"],
         "camera_image_size": [int(cam_w), int(cam_h)],
         "source_input": cmd.input_path,
+        "screen_roi": [int(v) for v in roi],
         "points": points,
     }
     pathlib.Path(cmd.output_path).write_text(json.dumps(corr, indent=2))
