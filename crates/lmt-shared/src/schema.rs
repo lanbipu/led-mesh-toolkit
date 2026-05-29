@@ -143,6 +143,17 @@ mod tests {
     }
 
     #[test]
+    fn visual_reconstruct_result_schema_has_rejection_fields() {
+        let v = dump_all();
+        let props = v["types"]["VisualReconstructResult"]["properties"]
+            .as_object()
+            .unwrap();
+        assert!(props.contains_key("ba_observations_total"));
+        assert!(props.contains_key("ba_observations_used"));
+        assert!(props.contains_key("ba_rejected"));
+    }
+
+    #[test]
     fn lmt_error_schema_carries_kind_tag() {
         // 校验 schemars 正确尊重了 LmtError 上的 `#[serde(tag = "kind", content = "message")]`,
         // 这样客户端按 schema 解析时 discriminator 与运行时输出一致。
