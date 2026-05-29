@@ -68,6 +68,8 @@ decode 会产生**误配对（离群点）**：闪码被读错（噪声 / 大斜
   （≈ 只用 2 干净机位的水平），不因第 3 机位发散。
 - **S8 剔除可见（no silent caps）**：report / DTO 报告每机位 / 每箱体 / 全局的剔除数；
   剔除比例高的机位发 WarningEvent。
+- **S9 凹凸不翻转**：合成 concave 弧 + 全正面斜视角机位 → 重建凹/凸方向 == 真值（不被深度镜像）；
+  故意喂翻转初值也能被 init 消歧纠回；旧单解 ITERATIVE 作对照会翻。
 
 ---
 
@@ -201,12 +203,14 @@ inlier mask → 按 mask 重建 observations、同步更新 `per_cabinet_views/p
 不被海量垃圾淹没；B 是全局权威，靠跨视图一致性收掉 A 看不见的相干错。两者都复用现成机件（PnP、BA、
 Huber），不引入新求解器。
 
-## B.3 `_solve_pnp` 升级 solvePnPRansac（一石二鸟）
+## B.3 `_solve_pnp` 升级（一石三鸟：离群 + 鲁棒初值 + 凹凸消歧）
 
 把 `_solve_pnp` 内部换成 `solvePnPRansac`：①**初始化也变鲁棒**——`estimate_nonroot_cabinet_init`
 桥接 PnP、`_pnp_camera` 相机初值当前用裸 solvePnP，本身就被离群点带偏；换 RANSAC 后初值更稳
 （初值偏了 BA 也救不回，见 Path B 桥接历史）。②顺带产出 inlier mask 供 Stage A 复用。
 注意（gotcha）：`tvec` 仍需 `.reshape(3)`；返回 None 要照常判（共线退化）；inlier <4 时按原逻辑跳过。
+③**同一处再叠 IPPE 两解 + 凹凸消歧（见 Part C）**——RANSAC 出 inlier、IPPE 出两分支、front-facing
+消歧，合成一个例程，三件事一次改完，不要拆成两遍。
 
 ## B.4 顺序与 observability 交互（关键，否则会出 KeyError / 假发散）
 
@@ -264,6 +268,78 @@ CLI E2E（`cli_e2e.rs`）：reconstruct 既有 refuse/dry-run/single-corr 用例
 
 ---
 
+# Part C · 重建层初始化：凹凸翻转歧义（planar PnP 两解）
+
+## C.1 问题本质 & 为什么多机位救不掉
+
+每个箱体是平面点阵。斜视角下平面 PnP 有**两个低重投影解**（IPPE 的 mirror ambiguity，
+Schweighofer–Pinz）：平面"朝前 / 朝后"两种 tilt 都能近乎完美重投影。init 挑错分支 → BA 锁死在
+"曲率方向整体取反"的局部最优——**形状本身对（实测 3.5mm），但整条弧凹 / 凸被深度镜像翻转**。
+
+**为什么加再多机位也救不掉**：① 这是**离散**歧义，BA 是连续局部优化，跨不过两分支间的能垒——
+一旦种在错分支就出不来；② 所有相机都在屏幕**正面同侧**，错分支产生的是一个**全局一致的镜像**，
+从任何正面视角看重投影都几乎一样低 → 加正面机位等于给两个分支同时加等量证据，**打不破平局**。
+只有对两分支**不对称**的约束能破：相机在正面这个物理事实、shape_prior 弯曲方向、或从背面看
+（LED 墙背面看不到）。所以必须在 **init 阶段**用先验把每个箱体的曲率符号钉死，再进 BA。
+
+## C.2 核实结论（修正"用 nominal 朝向"的措辞）
+
+- `_solve_pnp`（reconstruct.py:510）现用 `cv2.solvePnP(SOLVEPNP_ITERATIVE)`，**返回单解、不处理歧义**——
+  挑哪个分支取决于 homography init，不可控。
+- `nominal_cabinet_centers_model_frame(cabinet_array, shape_prior)`（nominal.py）**只给每箱中心(平移)、
+  不给朝向**；nonroot init 朝向来自 `estimate_nonroot_cabinet_init` 的桥接 PnP（也走 `_solve_pnp`，
+  同样歧义），无桥接时 fallback **单位旋转**。所以"用已知 nominal 朝向"原话不准确——朝向得**现算**。
+- 但 `cmd.project.shape_prior` 可用（curved 带 `radius_mm`）→ **能从同一段弧几何算出每箱 nominal 朝向**
+  （nominal.py 现有 `_cabinet_center_model_m` 的兄弟函数），作消歧验证。folded 当前 nominal.py 直接
+  raise（M2 不支持）→ 不会进到这里，Part C 只需覆盖 flat / curved。
+- 法向约定须对齐 `reconstruct_cabinet_geometry`（reconstruct.py:423，从 corners_local winding 出 normal）——
+  否则消歧可能**反向**（确定性翻转，更糟）；用一致性单测守住。
+
+## C.3 修法（init PnP 取两解 + 分层消歧）
+
+把 init 用的 PnP 升级成"取两解 + 消歧"：
+1. 在（Stage A RANSAC 的）inlier 上跑 `cv2.solvePnPGeneric(obj,img,K,None,flags=SOLVEPNP_IPPE)`
+   → 最多 2 个分支 + 各自重投影误差（需 OpenCV ≥4）。
+2. 消歧，按可靠性分层：
+   - **主：相机在正面（front-facing，无先验）**——正确分支的箱体发光法向 `R·n_local` 必指回相机
+     （相机系 z 分量 < 0；`n_local` 取与 `reconstruct_cabinet_geometry` 一致的发光面约定）。斜视角下
+     两分支法向发散、错分支朝后 → 直接排除。**这条用同一物理约束钉死全局符号 → 不会出现整弧镜像。**
+   - **近正面（两分支都朝前、front-facing 不决）**：取 IPPE 两解**重投影误差比**小的那个（此时歧义本就弱、可靠）。
+   - **验证 / tie-break：shape_prior nominal 朝向**——composed world_from_cabinet 的法向应与该箱 nominal
+     弧法向同号；明显相反（仍翻转）则纠正。（用户建议的信号，定位为验证而非主判据：它需现算朝向、
+     且 folded 不可用；front-facing 才是永远在场的兜底。）
+   - **邻居一致性**：相邻箱体朝向应平滑、不 zig-zag（弧的平滑先验）。
+3. 返回消歧后的 (R,t)。低裕度（两分支都说得通）→ 发 `WarningEvent`（凹凸是 close call，让操作者知道）。
+
+## C.4 与 Part B 的合流（同一个 `_solve_pnp` 升级）
+
+Part B Stage A 要 RANSAC inlier、Part C 要 IPPE 两解消歧——合成**一个**升级后的 PnP 例程：
+`solvePnPRansac 取 inlier → 在 inlier 上 solvePnPGeneric(IPPE) 取两分支 → front-facing(+nominal) 消歧
+→ 返回 (R,t,inlier_mask)`。该例程同时服务 Stage A 离群剔除、凹凸消歧、桥接 / 相机鲁棒初值；
+`_solve_pnp` 及其两个调用方（`estimate_nonroot_cabinet_init`、`_pnp_camera`）统一走它。**实现上交付项
+⑨⑩ 与 Part C 是同一处改动，不要拆成两遍写。**
+
+## C.5 接口契约
+
+- **无新 CLI flag / 无新输入**：shape_prior 已随 project 传入；消歧全在 sidecar init。
+- **新 nominal 朝向 helper**（nominal.py 纯函数，sidecar 内部，无对外契约面）。
+- **report / DTO 不变、无新错误码**：低裕度消歧用 `WarningEvent`（复用现有机制，no silent caps）。
+- 法向约定对齐 `reconstruct_cabinet_geometry`。
+
+## C.6 测试（合成凹凸 known-good）
+
+sidecar pytest（`test_reconstruct.py`）：
+- `test_oblique_arc_not_flipped`(S9)：合成 concave 弧 + 全正面斜视角机位 → 重建凹凸方向 == 真值；
+  `..._iterative_baseline_can_flip`（对照：旧单解 ITERATIVE 会翻）。
+- `test_seeded_flip_is_corrected`：故意喂翻转初值，断言 front-facing 消歧纠回。
+- `test_front_facing_picks_branch`：单箱斜视角，断言 IPPE 两解里选中法向朝相机的那个。
+- `test_nominal_orientation_tiebreak`：near-frontal 两分支都朝前，断言 shape_prior nominal 朝向 tie-break 选对。
+- `test_low_margin_emits_warning`：构造高度歧义，断言发 WarningEvent。
+- `test_normal_convention_matches_geometry`：消歧用的 `n_local` 与 `reconstruct_cabinet_geometry` 法向同约定。
+- 改完 `build_exe.sh` 重建 binary。
+
+---
+
 ## 3. 范围外（统一，明确不做）
 
 - **检测层**：帧间配准 / 防抖（机位锁死不需要，手持是另一里程碑）；matched-filter（拿已知编码
@@ -272,8 +348,8 @@ CLI E2E（`cli_e2e.rs`）：reconstruct 既有 refuse/dry-run/single-corr 用例
   YAGNI）；新错误码 `outlier_rejection_failed`（复用 14/17）；BA 求解器替换（沿用 scipy least_squares）。
 - **"2 视图 + 1 相干错"的本质二义不自动消解**：见 B.2 根本限度——靠多机位冗余 + 暴露（高残差 /
   observability_failed），不在本里程碑做"少数服从多数失效时仍判对"的求解。
-- **现场实拍验证**：暂无现场真值素材，以合成 known-good（S1–S8）验收；有 lmt-test 9×5 弧真实录像
-  可做 S7 的非回归手验，但不进 CI（依赖仓库外数据）。
+- **现场实拍验证**：暂无现场真值素材，以合成 known-good（S1–S9）验收；有 lmt-test 9×5 弧真实录像
+  可做 S7（脏视图）/ S9（凹凸）的非回归手验，但不进 CI（依赖仓库外数据）。
 - 两层之外的 reconstruct 既有行为（provenance gate、根箱体强制、measured.yaml 命名）保持不动。
 
 ## 4. 交付清单（任一缺失视为未完成）
@@ -290,6 +366,11 @@ CLI E2E（`cli_e2e.rs`）：reconstruct 既有 refuse/dry-run/single-corr 用例
 三字段(+schema dump) + adapter 解包(per-cabinet 剔除数留 pose_report.json，Rust summary 不动)；
 ⑭ sidecar pytest(S6–S8+边界) + 重建 binary；
 ⑮ `cli_e2e.rs` 剔除统计用例；⑯ `manifest.rs` 说明 + `agents-cli.md`。
+
+**Part C 凹凸消歧**（与 ⑨⑩ 同一处 PnP 改动）：⑰ init PnP 取 IPPE 两解 + front-facing 主消歧
+（+ shape_prior nominal 朝向验证 / 邻居一致性 / 低裕度 WarningEvent）；⑱ nominal.py 新 nominal-朝向
+纯函数（从 curved 弧几何算）；⑲ sidecar pytest(S9 + 翻转纠正 + 法向约定一致性) + 重建 binary。
+（无 CLI / DTO / 错误码改动。）
 
 **联调自检**（合并前）：`cargo test --workspace`、`./target/debug/lmt --json schema | jq`(新字段进 dump)、
 `./target/debug/lmt visual decode-structured-light --help` / `reconstruct-structured-light --help`(新 flag / 文档)。
