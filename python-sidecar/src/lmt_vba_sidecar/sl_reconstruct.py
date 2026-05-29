@@ -55,9 +55,12 @@ from lmt_vba_sidecar.ipc import (
     ErrorEvent, ProgressEvent, ReconstructStructuredLightInput, StructuredLightMeta,
 )
 from lmt_vba_sidecar.model_constrained_ba import Observation
-from lmt_vba_sidecar.nominal import nominal_cabinet_centers_model_frame
+from lmt_vba_sidecar.nominal import (
+    nominal_cabinet_centers_model_frame,
+    nominal_cabinet_normals_model_frame,
+)
 from lmt_vba_sidecar.observability import ObservabilityError, check_observability
-from lmt_vba_sidecar.reconstruct import ROOT_CABINET, _undistort_obs, solve_and_emit
+from lmt_vba_sidecar.reconstruct import ROOT_CABINET, _undistort_obs, solve_and_emit, stage_a_prune
 from lmt_vba_sidecar.sl_geometry import sl_cabinet_corners_mm, sl_local_mm
 
 
@@ -124,6 +127,7 @@ def run_reconstruct_structured_light(cmd: ReconstructStructuredLightInput) -> in
     #         reconstructing the wrong cabinet universe. ---
     try:
         nominal_m = nominal_cabinet_centers_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
+        nominal_normals_m = nominal_cabinet_normals_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
     except ValueError as e:
         write_event(ErrorEvent(event="error", code="invalid_input", message=str(e), fatal=True))
         return 1
@@ -170,6 +174,10 @@ def run_reconstruct_structured_light(cmd: ReconstructStructuredLightInput) -> in
             message="no usable correspondences across any pose", fatal=True))
         return 1
 
+    # --- 5b. Stage A pre-clean: per-(cam,cab) PnP-RANSAC inlier filter ---
+    (observations, per_view_cab_corners, per_cabinet_views, per_cabinet_points,
+     n_rej_stage_a, rej_per_cab_stage_a) = stage_a_prune(observations, per_view_cab_corners, K)
+
     # --- 6. observability ---
     try:
         check_observability(observations, n_cabinets, min_views=2, min_points=8)
@@ -185,6 +193,7 @@ def run_reconstruct_structured_light(cmd: ReconstructStructuredLightInput) -> in
     return solve_and_emit(
         K=K, observations=observations, per_view_cab_corners=per_view_cab_corners,
         n_cameras=len(corr_files), cab_to_idx=cab_to_idx, root_idx=root_idx,
-        n_cabinets=n_cabinets, nominal_m=nominal_m,
+        n_cabinets=n_cabinets, nominal_m=nominal_m, nominal_normals_m=nominal_normals_m,
         per_cabinet_views=per_cabinet_views, per_cabinet_points=per_cabinet_points,
-        corners_local_provider=corners_provider, pose_report_path=cmd.pose_report_path)
+        corners_local_provider=corners_provider, pose_report_path=cmd.pose_report_path,
+        n_rejected_pre=n_rej_stage_a, rejected_per_cab_pre=rej_per_cab_stage_a)

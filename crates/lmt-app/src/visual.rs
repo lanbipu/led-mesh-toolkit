@@ -209,6 +209,9 @@ fn persist_reconstruct_result(
         pose_report_path: out.pose_report_path,
         cabinet_count: out.measured_points.points.len(),
         ba_rms_px: out.ba_rms_px,
+        ba_observations_total: out.ba_observations_total,
+        ba_observations_used: out.ba_observations_used,
+        ba_rejected: out.ba_rejected,
         cabinets: out
             .cabinet_summaries
             .iter()

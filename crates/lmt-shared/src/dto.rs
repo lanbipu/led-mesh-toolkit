@@ -246,6 +246,9 @@ pub struct VisualReconstructResult {
     pub pose_report_path: String,
     pub cabinet_count: usize,
     pub ba_rms_px: f64,
+    pub ba_observations_total: usize,
+    pub ba_observations_used: usize,
+    pub ba_rejected: usize,
     pub cabinets: Vec<CabinetPoseSummary>,
 }
 
@@ -382,6 +385,9 @@ mod tests {
             pose_report_path: "measurements/pose_report.json".into(),
             cabinet_count: 1,
             ba_rms_px: 0.35,
+            ba_observations_total: 96,
+            ba_observations_used: 94,
+            ba_rejected: 2,
             cabinets: vec![cabinet],
         };
         let json = serde_json::to_string(&vr).unwrap();

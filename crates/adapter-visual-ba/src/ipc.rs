@@ -145,6 +145,15 @@ pub struct BaStats {
     pub rms_reprojection_px: f64,
     pub iterations: u32,
     pub converged: bool,
+    // Geometric-outlier rejection counts (Stage A pre-clean + Stage B robust
+    // trim). Older sidecars omit them → serde defaults to 0 so otherwise-valid
+    // ResultEvents still deserialize.
+    #[serde(default)]
+    pub n_observations_total: usize,
+    #[serde(default)]
+    pub n_observations_used: usize,
+    #[serde(default)]
+    pub n_rejected: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -364,5 +373,28 @@ mod corr_roi_tests {
         let new = r#"{"schema_version":1,"screen_id":"MAIN","sl_meta_sha256":"x","screen_roi":[1,2,3,4],"points":[]}"#;
         let f2: CorrespondenceFile = serde_json::from_str(new).unwrap();
         assert_eq!(f2.screen_roi, Some([1, 2, 3, 4]));
+    }
+}
+
+#[cfg(test)]
+mod rejection_fields_tests {
+    use super::*;
+
+    #[test]
+    fn ba_stats_deserializes_rejection_counts_with_defaults() {
+        // New sidecar payload with the fields.
+        let v: BaStats = serde_json::from_value(serde_json::json!({
+            "rms_reprojection_px": 0.4, "iterations": 12, "converged": true,
+            "n_observations_total": 100, "n_observations_used": 97, "n_rejected": 3
+        }))
+        .unwrap();
+        assert_eq!(v.n_rejected, 3);
+        assert_eq!(v.n_observations_used, 97);
+        // Old sidecar payload WITHOUT the fields -> serde defaults to 0.
+        let old: BaStats = serde_json::from_value(serde_json::json!({
+            "rms_reprojection_px": 0.4, "iterations": 12, "converged": true
+        }))
+        .unwrap();
+        assert_eq!(old.n_rejected, 0);
     }
 }

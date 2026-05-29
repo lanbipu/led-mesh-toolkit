@@ -59,14 +59,29 @@ from lmt_vba_sidecar.ipc import (
     Uncertainty,
     WarningEvent,
 )
-from lmt_vba_sidecar.model_constrained_ba import Observation, model_constrained_ba
-from lmt_vba_sidecar.nominal import nominal_cabinet_centers_model_frame
+from lmt_vba_sidecar.model_constrained_ba import (
+    Observation,
+    model_constrained_ba,
+    _residuals,
+    _nonroot_cabinets,
+    _pack,
+)
+from lmt_vba_sidecar.nominal import (
+    nominal_cabinet_centers_model_frame,
+    nominal_cabinet_normals_model_frame,
+)
 from lmt_vba_sidecar.observability import ObservabilityError, check_observability
 from lmt_vba_sidecar.screen_mapping import ScreenMapping, ScreenMappingError
 
 
 ROOT_CABINET = (0, 0)  # V000_R000 is the gauge cabinet (world == its frame)
 MIN_PNP_CORNERS = 4
+# Stage A PnP-RANSAC: gross-outlier reject threshold + RANSAC config (sidecar
+# internal constants; NOT a CLI knob). 2-3px is below the minimum resolvable
+# inter-dot spacing in the image, so near-neighbor mis-IDs still exceed it.
+PNP_RANSAC_REPROJ_PX = 3.0
+PNP_RANSAC_CONFIDENCE = 0.99
+PNP_RANSAC_ITERS = 100
 FALLBACK_ISOTROPIC_M = 0.005
 
 # --- per-cabinet SOFT quality thresholds (tunable) ---
@@ -76,6 +91,12 @@ FALLBACK_ISOTROPIC_M = 0.005
 # (reconstruct aborts at observability_failed first).
 QUALITY_MIN_VIEWS = 4  # below this (but >=2) -> "low_observation"
 QUALITY_MAX_CABINET_RMS_PX = 2.0  # per-cabinet reproj RMS above this -> "high_residual"
+
+# --- Stage B robust-residual trim (PRIMARY geometric authority) ---
+STAGE_B_MAX_ITERS = 3
+STAGE_B_MAD_K = 3.0
+STAGE_B_ABS_PX_FLOOR = 3.0
+STAGE_B_GROUP_MEDIAN_PX = 4.0  # whole-(cam,cab)-group coherence guard
 
 
 def _classify_cabinet_quality(observed_views: int, reproj_rms_px: float) -> str:
@@ -124,6 +145,85 @@ def _per_cabinet_reproj_rms(
         idx: float(np.sqrt(sq_sum[idx] / counts[idx]))
         for idx in sq_sum
     }
+
+
+def _obs_residual_norms(K, result, observations, root_idx):
+    """Per-observation reprojection residual norm (px), using the CURRENT
+    iteration's poses (recomputed, not stale sol.fun)."""
+    nonroot = _nonroot_cabinets(
+        max(observations, key=lambda o: o.cabinet_idx).cabinet_idx + 1, root_idx)
+    # Reuse model_constrained_ba._residuals by packing the solved state.
+    cabs = dict(result.cabinet_poses)
+    for j in nonroot:
+        cabs.setdefault(j, (np.eye(3), np.zeros(3)))
+    x = _pack(result.camera_poses, cabs, nonroot)
+    res = _residuals(x, len(result.camera_poses), nonroot, root_idx, K, observations)
+    r = res.reshape(-1, 2)
+    return np.sqrt((r * r).sum(axis=1))
+
+
+def stage_b_robust_solve(*, K, observations, n_cameras, n_cabinets,
+                         root_cabinet_idx, init_cameras, init_cabinets,
+                         per_cabinet_min_points):
+    """Iterative robust-residual trim wrapping model_constrained_ba (PRIMARY
+    geometric authority). Recomputes residuals each iter (sol.fun is stale),
+    drops norm > max(k*MAD, abs_px_floor) plus whole-(cam,cab)-group coherence
+    outliers, re-solves, <=3 iters. Never trims any cabinet below
+    per_cabinet_min_points. Returns (result, rejected_per_cab, total,
+    surviving_observations) where surviving_observations is the trimmed obs list
+    the final solve ran on (caller reuses it for _per_cabinet_reproj_rms,
+    per-cabinet view/point recompute, and the post-trim observability check)."""
+    obs = list(observations)
+    rejected_per_cab: dict[int, int] = {}
+    result = model_constrained_ba(
+        K=K, observations=obs, n_cameras=n_cameras, n_cabinets=n_cabinets,
+        root_cabinet_idx=root_cabinet_idx, init_cameras=init_cameras,
+        init_cabinets=init_cabinets, loss="huber")
+    for _ in range(STAGE_B_MAX_ITERS):
+        norms = _obs_residual_norms(K, result, obs, root_cabinet_idx)
+        mad = float(np.median(np.abs(norms - np.median(norms)))) or 0.0
+        thr = max(STAGE_B_MAD_K * mad, STAGE_B_ABS_PX_FLOOR)
+        # group coherence: median residual per (cam,cab)
+        group_norms: dict[tuple[int, int], list[float]] = {}
+        for o, nrm in zip(obs, norms):
+            group_norms.setdefault((o.camera_idx, o.cabinet_idx), []).append(nrm)
+        bad_groups = {g for g, v in group_norms.items()
+                      if float(np.median(v)) > STAGE_B_GROUP_MEDIAN_PX}
+        # candidate drops: pointwise OR in a bad group
+        drop = [(nrm > thr) or ((o.camera_idx, o.cabinet_idx) in bad_groups)
+                for o, nrm in zip(obs, norms)]
+        if not any(drop):
+            break
+        # Drop flagged outliers down to a BA-SAFETY floor (MIN_PNP_CORNERS — enough
+        # to keep model_constrained_ba well-defined), deliberately PAST
+        # per_cabinet_min_points. We must NOT retain known-bad observations just to
+        # keep a cabinet at the minimum: that left an over-corrupted cabinet with
+        # high-residual points and shipped a wrong report (Codex P2). When a
+        # cabinet's good points can't sustain >= per_cabinet_min_points, it falls
+        # below the floor here and solve_and_emit's post-trim observability check
+        # (>= per_cabinet_min_points points, >= 2 views) hard-stops it.
+        from collections import Counter
+        safety_floor = min(MIN_PNP_CORNERS, per_cabinet_min_points)
+        kept_counts = Counter(o.cabinet_idx for o, d in zip(obs, drop) if not d)
+        new_obs = []
+        n_dropped_this_iter = 0
+        for o, d in zip(obs, drop):
+            if d and kept_counts.get(o.cabinet_idx, 0) >= safety_floor:
+                rejected_per_cab[o.cabinet_idx] = rejected_per_cab.get(o.cabinet_idx, 0) + 1
+                n_dropped_this_iter += 1
+            else:
+                new_obs.append(o)
+                if d:  # below the BA-safety floor: keep to keep the solve defined
+                    kept_counts[o.cabinet_idx] = kept_counts.get(o.cabinet_idx, 0) + 1
+        if n_dropped_this_iter == 0:
+            break
+        obs = new_obs
+        result = model_constrained_ba(
+            K=K, observations=obs, n_cameras=n_cameras, n_cabinets=n_cabinets,
+            root_cabinet_idx=root_cabinet_idx, init_cameras=init_cameras,
+            init_cabinets=init_cabinets, loss="huber")
+    total = sum(rejected_per_cab.values())
+    return result, rejected_per_cab, total, obs
 
 
 def _undistort_obs(pix: np.ndarray, K: np.ndarray, dist: np.ndarray) -> np.ndarray:
@@ -312,6 +412,10 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
         ))
         return 1
 
+    # --- 5b. Stage A pre-clean: per-(cam,cab) PnP-RANSAC inlier filter ---
+    (observations, per_view_cab_corners, per_cabinet_views, per_cabinet_points,
+     n_rej_stage_a, rej_per_cab_stage_a) = stage_a_prune(observations, per_view_cab_corners, K)
+
     # --- 6. observability ---
     try:
         check_observability(observations, n_cabinets, min_views=2, min_points=8)
@@ -322,6 +426,7 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
     # --- 7. nominal model (kept here: needs cmd.project) ---
     try:
         nominal_m = nominal_cabinet_centers_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
+        nominal_normals_m = nominal_cabinet_normals_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
     except ValueError as e:
         write_event(ErrorEvent(event="error", code="invalid_input", message=str(e), fatal=True))
         return 1
@@ -329,10 +434,11 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
     return solve_and_emit(
         K=K, observations=observations, per_view_cab_corners=per_view_cab_corners,
         n_cameras=len(view_images), cab_to_idx=cab_to_idx, root_idx=root_idx,
-        n_cabinets=n_cabinets, nominal_m=nominal_m,
+        n_cabinets=n_cabinets, nominal_m=nominal_m, nominal_normals_m=nominal_normals_m,
         per_cabinet_views=per_cabinet_views, per_cabinet_points=per_cabinet_points,
         corners_local_provider=lambda cid: _active_surface_corners_mm(screen_mapping, cid),
         pose_report_path=cmd.pose_report_path,
+        n_rejected_pre=n_rej_stage_a, rejected_per_cab_pre=rej_per_cab_stage_a,
     )
 
 
@@ -346,10 +452,13 @@ def solve_and_emit(
     root_idx: int,
     n_cabinets: int,
     nominal_m: dict[tuple[int, int], tuple[float, float, float]],
+    nominal_normals_m: dict[tuple[int, int], tuple[float, float, float]],
     per_cabinet_views: dict[int, set[int]],
     per_cabinet_points: dict[int, int],
     corners_local_provider: Callable[[str], np.ndarray],
     pose_report_path: str | None,
+    n_rejected_pre: int = 0,
+    rejected_per_cab_pre: dict[int, int] | None = None,
 ) -> int:
     """Shared init -> model_constrained_ba -> per-cabinet geometry -> report ->
     ResultEvent. Used by both run_reconstruct (charuco) and
@@ -365,10 +474,29 @@ def solve_and_emit(
         ))
         return 1
     root_nominal_mm = np.array(nominal_m[ROOT_CABINET], dtype=float) * 1000.0
+    idx_to_cab = {idx: cr for cr, idx in cab_to_idx.items()}
+    # idx-keyed nominal normals/centers for branch disambiguation.
+    nominal_normals_idx = {cab_to_idx[cr]: n for cr, n in nominal_normals_m.items()
+                           if cr in cab_to_idx}
+    nominal_centers_idx = {cab_to_idx[cr]: c for cr, c in nominal_m.items()
+                           if cr in cab_to_idx}
     # Bridge-camera init: estimate each non-root cabinet's world pose from views
-    # that see it together with the root. Falls back to nominal (flat/curved)
+    # that see it together with the root, resolving the IPPE convex/concave mirror
+    # against nominal model-frame normals. Falls back to nominal (flat/curved)
     # translation + identity rotation when no bridge view exists for a cabinet.
-    bridge = estimate_nonroot_cabinet_init(per_view_cab_corners, root_idx, K)
+    bridge, undecidable_cabs = estimate_nonroot_cabinet_init(
+        per_view_cab_corners, root_idx, K,
+        nominal_normals=nominal_normals_idx, nominal_centers=nominal_centers_idx,
+    )
+    if undecidable_cabs:
+        ids = sorted(_cabinet_id(*idx_to_cab[j]) for j in undecidable_cabs)
+        write_event(ErrorEvent(
+            event="error", code="observability_failed",
+            message=(f"convex/concave undecidable for cabinet(s) {ids}: planar-PnP "
+                     f"mirror branches equally match nominal and no redundant view "
+                     f"breaks the tie; add a camera that sees these cabinets"),
+            fatal=True))
+        return 1
     init_cabinets: dict[int, tuple[np.ndarray, np.ndarray]] = {}
     for cr, idx in cab_to_idx.items():
         if idx == root_idx:
@@ -390,14 +518,13 @@ def solve_and_emit(
         pose = _pnp_camera(cam_idx, root_idx, init_cabinets, per_view_cab_corners, K)
         init_cameras.append(pose)
 
-    # --- 8. BA ---
-    result = model_constrained_ba(
-        K=K, observations=observations,
-        n_cameras=n_cameras, n_cabinets=n_cabinets,
-        root_cabinet_idx=root_idx,
-        init_cameras=init_cameras, init_cabinets=init_cabinets,
-        loss="huber",
-    )
+    # --- 8. BA (Stage B robust-residual trim — PRIMARY geometric authority) ---
+    result, rejected_per_cab_stage_b, n_rej_stage_b, surviving_observations = \
+        stage_b_robust_solve(
+            K=K, observations=observations, n_cameras=n_cameras,
+            n_cabinets=n_cabinets, root_cabinet_idx=root_idx,
+            init_cameras=init_cameras, init_cabinets=init_cabinets,
+            per_cabinet_min_points=8)
     if not result.converged:
         write_event(ErrorEvent(
             event="error", code="ba_diverged",
@@ -406,13 +533,44 @@ def solve_and_emit(
         ))
         return 1
 
+    # Rejection accounting: Stage A removed n_rejected_pre observations before
+    # this function got `observations`; Stage B trimmed n_rej_stage_b more.
+    # n_used = surviving obs the final solve ran on; n_total folds both stages.
+    rejected_per_cab_pre = rejected_per_cab_pre or {}
+    n_used = len(surviving_observations)
+    n_rej = n_rejected_pre + n_rej_stage_b
+    n_total = n_used + n_rej
+
     # --- 9. per-cabinet geometry ---
     write_event(ProgressEvent(event="progress", stage="output", percent=0.9, message="building pose report"))
+    # recompute per-cabinet indices from the trimmed (surviving) observations
+    per_cabinet_views = {}
+    per_cabinet_points = {}
+    for o in surviving_observations:
+        per_cabinet_views.setdefault(o.cabinet_idx, set()).add(o.camera_idx)
+        per_cabinet_points[o.cabinet_idx] = per_cabinet_points.get(o.cabinet_idx, 0) + 1
+    # post-trim observability: trimming an outlier-heavy cabinet below the floor
+    # is a hard stop (no silent wrong measured.yaml). Re-enforce BOTH dimensions
+    # of the pre-trim check_observability(min_views=2, min_points=8): a coherent
+    # mis-decode in one of only two views gets its (cam,cab) group trimmed,
+    # leaving the cabinet with a single view — geometrically under-determined, so
+    # this must hard-stop rather than emit a 1-view "result".
+    for idx in range(n_cabinets):
+        n_pts = per_cabinet_points.get(idx, 0)
+        n_views = len(per_cabinet_views.get(idx, set()))
+        if n_pts < 8 or n_views < 2:
+            cid = _cabinet_id(*idx_to_cab[idx])
+            write_event(ErrorEvent(
+                event="error", code="observability_failed",
+                message=(f"after rejecting {n_rej_stage_b} outliers, cabinet {cid} "
+                         f"has only {n_pts} observations across {n_views} view(s) "
+                         f"(needs >=8 points and >=2 views)"),
+                fatal=True))
+            return 1
     # Per-cabinet reprojection RMS from the solved poses (same projection as BA).
     per_cabinet_rms = _per_cabinet_reproj_rms(
-        K, result.camera_poses, result.cabinet_poses, observations
+        K, result.camera_poses, result.cabinet_poses, surviving_observations
     )
-    idx_to_cab = {idx: cr for cr, idx in cab_to_idx.items()}
     cabinet_poses: list[CabinetPose] = []
     measured_points: list[MeasuredPoint] = []
     for idx in range(n_cabinets):
@@ -428,6 +586,7 @@ def solve_and_emit(
         # want surfaced as a loud KeyError, not masked as a fake 0.0 RMS.
         cab_rms = per_cabinet_rms[idx]
         quality = _classify_cabinet_quality(n_views, cab_rms)
+        rejected_points = rejected_per_cab_pre.get(idx, 0) + rejected_per_cab_stage_b.get(idx, 0)
 
         cabinet_poses.append(CabinetPose(
             cabinet_id=cid,
@@ -438,12 +597,19 @@ def solve_and_emit(
             reprojection_rms_px=cab_rms,
             observed_views=n_views,
             observed_points=n_points,
+            rejected_points=rejected_points,
             quality=quality,
         ))
         if quality != "ok":
             write_event(WarningEvent(
                 event="warning", code="cabinet_quality",
                 message=f"cabinet {cid}: {quality} (views={n_views}, rms={cab_rms:.2f}px)",
+                cabinet=cid,
+            ))
+        if rejected_points and rejected_points / (rejected_points + n_points) > 0.30:
+            write_event(WarningEvent(
+                event="warning", code="high_rejection",
+                message=f"cabinet {cid}: rejected {rejected_points}/{rejected_points+n_points} observations",
                 cabinet=cid,
             ))
 
@@ -484,6 +650,9 @@ def solve_and_emit(
                 rms_reprojection_px=float(result.rms_reprojection_px),
                 iterations=int(result.iterations),
                 converged=True,
+                n_observations_total=n_total,
+                n_observations_used=n_used,
+                n_rejected=n_rej,
             ),
             frame_strategy_used="nominal_anchoring",  # vestigial; no Procrustes runs
             procrustes_align_rms_m=0.0,
@@ -492,28 +661,132 @@ def solve_and_emit(
     return 0
 
 
-def _solve_pnp(corners, K):
-    """corners: list[(p_local_mm, pixel_undistorted)] -> (R, t) camera_from_obj, or None.
+def _solve_pnp_branches(corners, K):
+    """corners: list[(p_local_mm, pixel_undistorted)] ->
+    (branches, inlier_mask) or None.
 
-    Returns None for < 4 correspondences (solvePnP minimum) and for geometrically
-    degenerate sets. ChArUco object points are coplanar, so cv2's ITERATIVE solver
-    uses a homography init that works with >= 4 points; but a (near-)collinear corner
-    subset is degenerate and makes ITERATIVE fall back to its DLT path, which raises
-    when given < 6 points. Catch that and skip the view (this pose is only a BA seed;
-    other views still bridge the cabinet).
+    branches: list of 1-2 (R, t) camera_from_obj poses. The planar PnP mirror
+    ambiguity (IPPE) yields up to two near-equal-reprojection branches; both
+    are returned so the model-frame assembly can disambiguate (Part C). Branch
+    order is OpenCV's (ascending reprojection error).
+    inlier_mask: bool ndarray (len(corners),) from solvePnPRansac — gross
+    outliers are False (Part C disambiguation + Stage A both consume this).
+
+    Returns None for < 4 correspondences and for geometrically degenerate sets
+    (near-collinear -> cv2.error). tvec is reshaped to (3,).
     """
-    if len(corners) < 4:
+    if len(corners) < MIN_PNP_CORNERS:
         return None
     obj = np.array([p for p, _ in corners], dtype=np.float64)
     img = np.array([px for _, px in corners], dtype=np.float64)
     try:
-        ok, rvec, tvec = cv2.solvePnP(obj, img, K, None, flags=cv2.SOLVEPNP_ITERATIVE)
+        ok, _rvec, _tvec, inliers = cv2.solvePnPRansac(
+            obj, img, K, None, iterationsCount=PNP_RANSAC_ITERS,
+            reprojectionError=PNP_RANSAC_REPROJ_PX, confidence=PNP_RANSAC_CONFIDENCE,
+            flags=cv2.SOLVEPNP_ITERATIVE,
+        )
     except cv2.error:
         return None
     if not ok:
         return None
-    R, _ = cv2.Rodrigues(rvec)
-    return R, tvec.reshape(3)
+    mask = np.zeros(len(corners), dtype=bool)
+    if inliers is not None:
+        mask[inliers.reshape(-1)] = True
+    else:
+        mask[:] = True
+    if int(mask.sum()) < MIN_PNP_CORNERS:
+        return None
+    in_obj = obj[mask]
+    in_img = img[mask]
+    # Two-branch planar solve on the inliers (IPPE needs coplanar z=0 points).
+    try:
+        retval, rvecs, tvecs = cv2.solvePnPGeneric(
+            in_obj, in_img, K, None, flags=cv2.SOLVEPNP_IPPE
+        )[:3]
+    except cv2.error:
+        return None
+    if retval < 1:
+        return None
+    branches = []
+    for i in range(retval):
+        rvec = np.asarray(rvecs[i], dtype=float)
+        tvec = np.asarray(tvecs[i], dtype=float).reshape(3)
+        # Near-collinear / degenerate inputs let solvePnPRansac "succeed" but make
+        # solvePnPGeneric(IPPE) emit NaN poses; reject those to preserve the
+        # degenerate -> None contract (legacy _solve_pnp returned None here).
+        if not (np.isfinite(rvec).all() and np.isfinite(tvec).all()):
+            continue
+        R, _ = cv2.Rodrigues(rvec)
+        branches.append((R, tvec))
+    if not branches:
+        return None
+    return branches, mask
+
+
+def _solve_pnp(corners, K):
+    """corners: list[(p_local_mm, pixel_undistorted)] -> (R, t) or None.
+
+    Backward-compatible single-pose form: the RANSAC+IPPE best branch (branch 0,
+    lowest reprojection). Used by callers that don't disambiguate (camera init).
+    Returns None on the same degenerate / too-few conditions as
+    _solve_pnp_branches.
+    """
+    res = _solve_pnp_branches(corners, K)
+    if res is None:
+        return None
+    branches, _mask = res
+    return branches[0]
+
+
+def stage_a_prune(observations, per_view_cab_corners, K):
+    """Stage A pre-clean: per-(cam,cab) PnP-RANSAC inlier filter. Drops gross /
+    random-far and independent near-neighbor mis-IDs whose reprojection exceeds
+    PNP_RANSAC_REPROJ_PX. NOT authoritative for coherent shifts (those pass to
+    Stage B). Groups with < MIN_PNP_CORNERS are kept whole. Rebuilds the
+    observation list + per_view_cab_corners + per-cabinet view/point indices
+    from the inliers. Returns (obs_out, pvcc_out, per_cabinet_views,
+    per_cabinet_points, n_rejected_total, rejected_per_cab) where
+    rejected_per_cab: dict[int,int] is the per-cabinet Stage-A reject count
+    (Task 6 stats + Task 7 tests consume it)."""
+    # Map each (cam,cab) corner index back to its source so we can keep aligned
+    # Observation objects (assembly appends to both lists in lockstep).
+    keep_mask: dict[tuple[int, int], list[bool]] = {}
+    n_rejected_total = 0
+    rejected_per_cab: dict[int, int] = {}
+    for key, corners in per_view_cab_corners.items():
+        _cam_idx, cab_idx = key
+        if len(corners) < MIN_PNP_CORNERS:
+            keep_mask[key] = [True] * len(corners)
+            continue
+        res = _solve_pnp_branches(corners, K)
+        if res is None:
+            keep_mask[key] = [True] * len(corners)  # degenerate -> defer to Stage B
+            continue
+        _branches, mask = res
+        keep_mask[key] = list(mask)
+        n_rej = int((~mask).sum())
+        n_rejected_total += n_rej
+        if n_rej:
+            rejected_per_cab[cab_idx] = rejected_per_cab.get(cab_idx, 0) + n_rej
+
+    # Rebuild aligned outputs. Walk observations in order, consuming each
+    # group's mask in the same append order assembly used.
+    cursor: dict[tuple[int, int], int] = {}
+    obs_out = []
+    pvcc_out: dict[tuple[int, int], list] = {}
+    views_out: dict[int, set] = {}
+    pts_out: dict[int, int] = {}
+    for o in observations:
+        key = (o.camera_idx, o.cabinet_idx)
+        i = cursor.get(key, 0)
+        cursor[key] = i + 1
+        if not keep_mask[key][i]:
+            continue
+        obs_out.append(o)
+        pvcc_out.setdefault(key, []).append((o.p_local, o.pixel))
+        views_out.setdefault(o.cabinet_idx, set()).add(o.camera_idx)
+        pts_out[o.cabinet_idx] = pts_out.get(o.cabinet_idx, 0) + 1
+    return obs_out, pvcc_out, views_out, pts_out, n_rejected_total, rejected_per_cab
 
 
 def _avg_rotation(rotations):
@@ -529,21 +802,60 @@ def _avg_rotation(rotations):
     return R
 
 
+# Branch disambiguation thresholds (sidecar internal): a branch is "well
+# separated" only when its model-frame normal is meaningfully closer to nominal
+# than the other; reproj ratio is the secondary tiebreak.
+DISAMBIG_NORMAL_MARGIN_RAD = np.deg2rad(8.0)
+
+
+def _disambiguate_world_branch(world_branches, nominal_normal):
+    """world_branches: list of (R_world_from_cab, t) candidate poses.
+    nominal_normal: (3,) expected model-frame surface normal.
+    Returns the chosen (R, t), or the string "undecidable" when the two
+    branches are equally consistent with nominal (no redundancy to break it)."""
+    nn = np.asarray(nominal_normal, dtype=float)
+    nn = nn / (np.linalg.norm(nn) + 1e-12)
+    angs = []
+    for R, _t in world_branches:
+        n = R @ np.array([0.0, 0.0, 1.0])
+        angs.append(float(np.arccos(np.clip(n @ nn, -1.0, 1.0))))
+    order = np.argsort(angs)
+    if len(world_branches) == 1:
+        return world_branches[0]
+    best, second = order[0], order[1]
+    if angs[second] - angs[best] < DISAMBIG_NORMAL_MARGIN_RAD:
+        return "undecidable"
+    return world_branches[best]
+
+
 def estimate_nonroot_cabinet_init(
     per_view_cab_corners: dict[tuple[int, int], list[tuple[np.ndarray, np.ndarray]]],
     root_idx: int,
     K: np.ndarray,
+    *,
+    nominal_normals: dict[int, tuple[float, float, float]],
+    nominal_centers: dict[int, tuple[float, float, float]],
     min_corners: int = MIN_PNP_CORNERS,
-) -> dict[int, tuple[np.ndarray, np.ndarray]]:
-    """Non-root cabinet_idx -> (R_world_from_cab, t_mm) via bridge cameras.
+) -> tuple[dict[int, tuple[np.ndarray, np.ndarray]], set[int]]:
+    """Non-root cabinet_idx -> (R_world_from_cab, t_mm) via bridge cameras, with
+    IPPE two-branch disambiguation against nominal model-frame normals.
 
     A bridge view sees the root cabinet AND a non-root cabinet (each with
-    >= min_corners corners). Two PnPs give camera_from_root / camera_from_nonroot;
-    compose to world_from_nonroot:
+    >= min_corners corners). PnP on the root gives camera_from_root; the
+    two-branch IPPE solve on the non-root gives up to two camera_from_nonroot
+    poses (the planar convex/concave mirror ambiguity). Each branch composes to
+    world_from_nonroot via the root:
         R = Rc0.T @ Rc1 ,  t = Rc0.T @ (tc1 - tc0)
-    Multiple bridge views: rotations SVD-averaged, translation component-wise median.
-    Cabinets with no bridge view are absent from the result (caller falls back to
-    nominal).
+    The branch whose model-frame normal (R @ [0,0,1]) best matches the cabinet's
+    nominal arc normal is kept. Multiple bridge views: rotations SVD-averaged,
+    translation component-wise median.
+
+    Returns (out, undecidable): `out` maps each bridged cabinet to its chosen
+    world pose; `undecidable` is the set of cabinet_idx whose convex/concave
+    branch could not be resolved from nominal (no redundant view broke the tie)
+    so the caller must hard-stop. A cabinet resolved by at least one view is
+    removed from `undecidable`. Cabinets with no bridge view are absent from
+    both (caller falls back to nominal).
 
     Limitation: only direct root<->non-root bridging; no transitive bridging for
     distant cabinets that share no view with the root (large chained-topology
@@ -555,29 +867,54 @@ def estimate_nonroot_cabinet_init(
 
     est_R: dict[int, list] = {}
     est_t: dict[int, list] = {}
+    undecidable: set[int] = set()
+    # The reconstruction world frame is the ROOT cabinet's frame (root fixed at
+    # identity), but `nominal_normals` are in the global nominal MODEL frame. For a
+    # curved arc whose root is NOT at the arc centre, the two frames differ by the
+    # root's nominal rotation, so disambiguating a non-root branch against an
+    # untransformed model-frame nominal can select the IPPE mirror (the convex/
+    # concave flip). Build the root's nominal rotation R_y(a_root) from its
+    # model-frame normal ([sin a, 0, cos a]; flat -> identity) and express every
+    # cabinet's nominal normal in the root frame before comparing.
+    n_root = nominal_normals.get(root_idx) if nominal_normals else None
+    if n_root is not None:
+        a_root = float(np.arctan2(float(n_root[0]), float(n_root[2])))
+        ca, sa = np.cos(a_root), np.sin(a_root)
+        R_root_nominal = np.array([[ca, 0.0, sa], [0.0, 1.0, 0.0], [-sa, 0.0, ca]])
+    else:
+        R_root_nominal = np.eye(3)
     for cabs in by_view.values():
         root_corners = cabs.get(root_idx, [])
         if len(root_corners) < min_corners:
             continue
-        pose_root = _solve_pnp(root_corners, K)
+        pose_root = _solve_pnp(root_corners, K)  # root: nominal +z, unambiguous enough
         if pose_root is None:
             continue
         Rc0, tc0 = pose_root
         for cab_idx, corners in cabs.items():
             if cab_idx == root_idx or len(corners) < min_corners:
                 continue
-            pose_cab = _solve_pnp(corners, K)
-            if pose_cab is None:
+            res = _solve_pnp_branches(corners, K)
+            if res is None:
                 continue
-            Rc1, tc1 = pose_cab
-            est_R.setdefault(cab_idx, []).append(Rc0.T @ Rc1)
-            est_t.setdefault(cab_idx, []).append(Rc0.T @ (tc1 - tc0))
+            branches, _mask = res
+            # Compose each camera_from_cab branch to world_from_cab via the root:
+            #   R_wc = Rc0.T @ Rc1 ; t_wc = Rc0.T @ (tc1 - tc0)
+            world_branches = [(Rc0.T @ Rc1, Rc0.T @ (tc1 - tc0)) for Rc1, tc1 in branches]
+            n_nominal_root = R_root_nominal.T @ np.asarray(nominal_normals[cab_idx], dtype=float)
+            chosen = _disambiguate_world_branch(world_branches, n_nominal_root)
+            if chosen == "undecidable":
+                undecidable.add(cab_idx)
+                continue
+            est_R.setdefault(cab_idx, []).append(chosen[0])
+            est_t.setdefault(cab_idx, []).append(chosen[1])
 
     out: dict[int, tuple] = {}
     for cab_idx, rotations in est_R.items():
+        undecidable.discard(cab_idx)  # at least one view resolved it
         t = np.median(np.array(est_t[cab_idx]), axis=0)
         out[cab_idx] = (_avg_rotation(rotations), t)
-    return out
+    return out, undecidable
 
 
 def _pnp_camera(
