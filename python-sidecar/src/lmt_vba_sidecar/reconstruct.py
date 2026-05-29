@@ -542,15 +542,21 @@ def solve_and_emit(
         per_cabinet_views.setdefault(o.cabinet_idx, set()).add(o.camera_idx)
         per_cabinet_points[o.cabinet_idx] = per_cabinet_points.get(o.cabinet_idx, 0) + 1
     # post-trim observability: trimming an outlier-heavy cabinet below the floor
-    # is a hard stop (no silent wrong measured.yaml).
+    # is a hard stop (no silent wrong measured.yaml). Re-enforce BOTH dimensions
+    # of the pre-trim check_observability(min_views=2, min_points=8): a coherent
+    # mis-decode in one of only two views gets its (cam,cab) group trimmed,
+    # leaving the cabinet with a single view — geometrically under-determined, so
+    # this must hard-stop rather than emit a 1-view "result".
     for idx in range(n_cabinets):
         n_pts = per_cabinet_points.get(idx, 0)
-        if n_pts < 8:
+        n_views = len(per_cabinet_views.get(idx, set()))
+        if n_pts < 8 or n_views < 2:
             cid = _cabinet_id(*idx_to_cab[idx])
             write_event(ErrorEvent(
                 event="error", code="observability_failed",
                 message=(f"after rejecting {n_rej_stage_b} outliers, cabinet {cid} "
-                         f"has only {n_pts} observations (<8)"),
+                         f"has only {n_pts} observations across {n_views} view(s) "
+                         f"(needs >=8 points and >=2 views)"),
                 fatal=True))
             return 1
     # Per-cabinet reprojection RMS from the solved poses (same projection as BA).
