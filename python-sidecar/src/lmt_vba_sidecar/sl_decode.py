@@ -79,7 +79,8 @@ def derive_screen_roi(frames: list[np.ndarray]) -> tuple[int, int, int, int]:
     return best
 
 
-def segment_code_region(frames: list[np.ndarray], *, sentinel_threshold: float) -> tuple[int, int]:
+def segment_code_region(frames: list[np.ndarray], *, sentinel_threshold: float,
+                        roi: tuple[int, int, int, int] | None = None) -> tuple[int, int]:
     """Code region = ONE cycle: the frames between the first white-sentinel RUN
     and the NEXT one. Robust to three real-world capture shapes:
       - single playthrough: [sentinel, code, sentinel] -> the region between them.
@@ -90,7 +91,12 @@ def segment_code_region(frames: list[np.ndarray], *, sentinel_threshold: float) 
         as it contains >= 2 sentinel runs, the first complete cycle is recovered.
     Each sentinel spans a CONTIGUOUS bright run (held frames, or two adjacent
     loop-boundary whites), so we work in runs, not single bright frames."""
-    mb = np.array([float(f.mean()) for f in frames])
+    def _crop(f: np.ndarray) -> np.ndarray:
+        if roi is None:
+            return f
+        x, y, w, h = roi
+        return f[y:y + h, x:x + w]
+    mb = np.array([float(_crop(f).mean()) for f in frames])
     bright = mb > sentinel_threshold * 255.0
     runs: list[tuple[int, int]] = []          # contiguous bright runs = sentinels
     i, n = 0, len(frames)
@@ -112,7 +118,8 @@ def segment_code_region(frames: list[np.ndarray], *, sentinel_threshold: float) 
     return s, e
 
 
-def index_plateaus(region: list[np.ndarray], *, expected: int) -> list[int]:
+def index_plateaus(region: list[np.ndarray], *, expected: int,
+                   roi: tuple[int, int, int, int] | None = None) -> list[int]:
     """Split into `expected` plateaus; return the middle index of each. Raises if
     the count != expected. `expected` == total_bits + 1 (anchor + code frames).
 
@@ -126,8 +133,14 @@ def index_plateaus(region: list[np.ndarray], *, expected: int) -> list[int]:
         raise ValueError("empty code region")
     if len(region) == expected:
         return list(range(len(region)))
+    def _crop(f: np.ndarray) -> np.ndarray:
+        if roi is None:
+            return f
+        x, y, w, h = roi
+        return f[y:y + h, x:x + w]
     changed = np.array([0] + [
-        int((np.abs(region[i].astype(np.int16) - region[i - 1].astype(np.int16)) > 64).sum())
+        int((np.abs(_crop(region[i]).astype(np.int16)
+                    - _crop(region[i - 1]).astype(np.int16)) > 64).sum())
         for i in range(1, len(region))])
     thr = max(1, int(changed.max()) // 4)
     bounds = [0] + [i for i in range(1, len(region)) if changed[i] > thr] + [len(region)]

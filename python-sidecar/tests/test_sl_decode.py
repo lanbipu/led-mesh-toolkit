@@ -70,6 +70,33 @@ def test_derive_screen_roi_rejects_only_thin_offscreen_motion():
         derive_screen_roi(frames)
 
 
+def test_segment_uses_roi_mean_not_whole_frame():
+    # Whole-frame mean is always bright (lit background), so a global mean would
+    # never see the sentinel. Inside the ROI the sentinel run is the only bright
+    # thing -> segmentation must use the ROI crop.
+    def frame(roi_val):
+        f = np.full((120, 160), 240, np.uint8)   # bright everywhere (background)
+        f[40:90, 50:130] = roi_val               # ROI content
+        return f
+    roi = (50, 40, 80, 50)
+    frames = [frame(255), frame(10), frame(200), frame(10), frame(255)]
+    assert segment_code_region(frames, sentinel_threshold=0.85, roi=roi) == (1, 4)
+
+
+def test_index_plateaus_changed_pixels_counted_in_roi_only():
+    # Off-ROI churn must not create phantom plateau boundaries: only ROI changes
+    # split the region. anchor + 1 code frame, held 3x each, with off-ROI noise.
+    rng = np.random.default_rng(1)
+    def frame(roi_val):
+        f = rng.integers(0, 256, size=(120, 160), dtype=np.uint8)  # off-ROI noise
+        f[40:90, 50:130] = roi_val
+        return f
+    roi = (50, 40, 80, 50)
+    region = [frame(180), frame(180), frame(180), frame(40), frame(40), frame(40)]
+    reps = index_plateaus(region, expected=2, roi=roi)
+    assert len(reps) == 2
+
+
 import json
 from lmt_vba_sidecar.ipc import GenerateStructuredLightInput, DecodeStructuredLightInput
 from lmt_vba_sidecar.structured_light import run_generate_structured_light
