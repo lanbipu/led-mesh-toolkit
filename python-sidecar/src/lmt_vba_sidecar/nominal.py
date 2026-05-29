@@ -89,6 +89,56 @@ def _cabinet_center_model_m(
     return (x_mm / 1000.0, y_mm / 1000.0, z_mm / 1000.0)
 
 
+def _cabinet_normal_model(
+    col: int, row: int, cab: CabinetArray, shape_prior: Any,
+) -> tuple[float, float, float]:
+    """Per-cabinet nominal surface normal (unit) in the model frame.
+
+    Same convention as eval_runner.reconstruct_cabinet_geometry: the normal is
+    the rotated local +z, i.e. R_world_from_cab @ [0,0,1]. Flat => +z
+    everywhere. Curved => the arc rotation that places this cabinet's center
+    via _cabinet_center_model_m (x = R·sin a + W/2, z = R·(1−cos a)) is R_y(a),
+    so the normal is R_y(a) @ [0,0,1] = [sin a, 0, cos a]. Left-of-center
+    cabinets (a < 0) tilt to −x; right-of-center (a > 0) tilt to +x.
+    """
+    if shape_prior == "flat":
+        return (0.0, 0.0, 1.0)
+    if _is_curved(shape_prior):
+        cw_mm, _ch_mm = cab.cabinet_size_mm
+        radius_mm = _curved_radius(shape_prior)
+        total_w_mm = cab.cols * cw_mm
+        _validate_curved_radius(radius_mm, total_w_mm / 2.0)
+        x_mm = (col + 0.5) * cw_mm
+        chord_x_mm = x_mm - total_w_mm / 2.0
+        angle = chord_x_mm / radius_mm
+        return (math.sin(angle), 0.0, math.cos(angle))
+    if _is_folded(shape_prior):
+        raise ValueError(
+            "shape_prior=folded is not supported in M2 (refinement deferred to M3); "
+            "either approximate as flat or use a curved profile"
+        )
+    raise ValueError(f"unsupported shape_prior: {shape_prior!r}")
+
+
+def nominal_cabinet_normals_model_frame(
+    cab: CabinetArray, shape_prior: Any,
+) -> dict[tuple[int, int], tuple[float, float, float]]:
+    """(col, row) -> nominal unit surface normal in the model frame.
+
+    Used by reconstruct's IPPE two-branch disambiguation (Part C): each
+    cabinet's planar-PnP mirror ambiguity is resolved by picking the branch
+    whose model-frame normal best matches this nominal arc orientation.
+    """
+    normals: dict[tuple[int, int], tuple[float, float, float]] = {}
+    absent = set(tuple(c) for c in cab.absent_cells)
+    for row in range(cab.rows):
+        for col in range(cab.cols):
+            if (col, row) in absent:
+                continue
+            normals[(col, row)] = _cabinet_normal_model(col, row, cab, shape_prior)
+    return normals
+
+
 def nominal_cabinet_centers_model_frame(
     cab: CabinetArray, shape_prior: Any,
 ) -> dict[tuple[int, int], tuple[float, float, float]]:
