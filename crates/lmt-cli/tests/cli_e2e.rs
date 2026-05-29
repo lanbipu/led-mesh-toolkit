@@ -1983,3 +1983,156 @@ fn reconstruct_structured_light_single_corr_is_invalid_even_in_dry_run() {
     assert_eq!(env["error"]["code"], "invalid_input");
 }
 
+/// Python helper that projects the sl_meta dots through a 4-pose camera ring into
+/// per-view correspondence files (reusing the sidecar's OWN `sl_local_mm` /
+/// `look_at_pose` / `project_point` so the synthetic geometry matches the
+/// reconstruction math exactly), then injects ONE far-outlier point into view 0.
+/// Run with the sidecar venv's `python` so the import path resolves.
+const SL_CORR_GEN_PY: &str = r#"
+import json, hashlib, sys
+import numpy as np
+from lmt_vba_sidecar.sl_geometry import sl_local_mm
+from lmt_vba_sidecar.sl_feasibility import look_at_pose, project_point
+
+meta_path, intr_path, out_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+meta = json.loads(open(meta_path).read())
+K = np.array(json.loads(open(intr_path).read())["K"], float)
+rect_by_cr = {(c["col"], c["row"]): c["input_rect_px"] for c in meta["cabinets"]}
+pitch_by_cr = {(c["col"], c["row"]): c["pixel_pitch_mm"] for c in meta["cabinets"]}
+cab_by_id = {d["id"]: tuple(d["cabinet"]) for d in meta["dots"]}
+# Known world: root (0,0) = world gauge; cabinet (1,0) nominally +500mm x with a
+# small known deviation. Identity cabinet rotation (flat wall).
+cab_world_t = {(0, 0): np.zeros(3),
+               (1, 0): np.array([500.0, 0.0, 0.0]) + np.array([3.0, 2.0, 1.0])}
+truth_world = {}
+for d in meta["dots"]:
+    cr = cab_by_id[d["id"]]
+    p_local = sl_local_mm(tuple(rect_by_cr[cr]), d["u"], d["v"],
+                          pitch_by_cr[cr][0], pitch_by_cr[cr][1])
+    truth_world[d["id"]] = p_local + cab_world_t[cr]
+sha = hashlib.sha256(open(meta_path, "rb").read()).hexdigest()
+poses = [look_at_pose(np.array([px, 0.0, -3500.0]), np.array([250.0, 0.0, 0.0]))
+         for px in (-1200.0, -400.0, 400.0, 1200.0)]
+rng = np.random.default_rng(0)
+paths = []
+for vi, (R, t) in enumerate(poses):
+    pts = []
+    for d in meta["dots"]:
+        p = project_point(K, R, t, truth_world[d["id"]]) + rng.normal(0, 0.1, 2)
+        pts.append({"id": d["id"], "u": d["u"], "v": d["v"],
+                    "x": float(p[0]), "y": float(p[1])})
+    # Inject ONE gross far-outlier (wrong-id pixel ~640px off) into view 0 only.
+    if vi == 0:
+        pts[10]["x"] += 500.0
+        pts[10]["y"] -= 400.0
+    cp = f"{out_dir}/corr_{vi}.json"
+    open(cp, "w").write(json.dumps({
+        "schema_version": 1, "screen_id": "MAIN", "sl_meta_sha256": sha,
+        "screen_resolution": meta["screen_resolution"],
+        "camera_image_size": [4000, 3000],
+        "source_input": f"/cap/pose{vi}.mp4", "points": pts}))
+    paths.append(cp)
+print(json.dumps(paths))
+"#;
+
+/// Derive the venv `python` next to the sidecar binary/wrapper (the wrapper lives
+/// in `.venv/bin/`, so `python` is its sibling) and run SL_CORR_GEN_PY to emit the
+/// 4 correspondence files. Returns their paths in pose order.
+fn write_sl_corr_with_outlier(dir: &Path, sidecar: &str, meta_path: &Path, intr: &Path) -> Vec<String> {
+    let python = Path::new(sidecar)
+        .parent()
+        .expect("sidecar path has a parent dir")
+        .join("python");
+    let script = dir.join("gen_corr.py");
+    std::fs::write(&script, SL_CORR_GEN_PY).unwrap();
+    let out = Command::new(&python)
+        .arg(&script)
+        .arg(meta_path)
+        .arg(intr)
+        .arg(dir)
+        .output()
+        .expect("run corr generator with venv python");
+    assert!(
+        out.status.success(),
+        "corr generator failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let paths: Vec<String> =
+        serde_json::from_slice(out.stdout.trim_ascii_end()).expect("generator must print a JSON path array");
+    assert_eq!(paths.len(), 4, "expected 4 corr files");
+    paths
+}
+
+/// Real-sidecar happy path: a synthetic 2-cabinet SL scene with ONE injected
+/// far-outlier correspondence must reconstruct successfully AND report the
+/// outlier as rejected (Stage A PnP-RANSAC pre-clean + Stage B robust trim).
+/// `#[ignore]` + gated on `LMT_VBA_SIDECAR_PATH` like the other real-sidecar tests.
+#[test]
+#[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary/wrapper"]
+fn reconstruct_structured_light_reports_rejection_stats() {
+    let sidecar = match gp_sidecar() {
+        Some(s) => s,
+        None => {
+            eprintln!("skip: LMT_VBA_SIDECAR_PATH unset");
+            return;
+        }
+    };
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 2, 1);
+
+    // Generate the SL pattern (sl_meta.json) via the real sidecar.
+    lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &sidecar)
+        .args(["--json", "visual", "generate-structured-light",
+               proj.to_str().unwrap(), "MAIN", "--yes"])
+        .assert()
+        .success();
+    let meta_path = proj.join("patterns/MAIN/sl/sl_meta.json");
+    assert!(meta_path.exists(), "sidecar must write sl_meta.json");
+
+    // Intrinsics matching the synthetic 4000x3000 camera.
+    let intr = tmp.path().join("intr.json");
+    std::fs::write(
+        &intr,
+        serde_json::json!({
+            "K": [[3000.0, 0, 2000.0], [0, 3000.0, 1500.0], [0, 0, 1.0]],
+            "dist_coeffs": [0, 0, 0, 0, 0], "image_size": [4000, 3000]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    // Build 4 correspondence files with ONE injected far-outlier point in view 0.
+    let corr = write_sl_corr_with_outlier(tmp.path(), &sidecar, &meta_path, &intr);
+
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &sidecar)
+        .args(["--json", "visual", "reconstruct-structured-light",
+               proj.to_str().unwrap(), "MAIN",
+               "--sl-meta", meta_path.to_str().unwrap(),
+               "--intrinsics", intr.to_str().unwrap(),
+               "--corr", &corr[0], "--corr", &corr[1],
+               "--corr", &corr[2], "--corr", &corr[3], "--yes"])
+        .assert()
+        .success();
+    let env = gp_stdout_env(assert.get_output());
+    assert_eq!(env["ok"], true, "envelope ok: {env}");
+    // The injected outlier must be rejected by Stage A/B.
+    assert!(
+        env["data"]["ba_rejected"].as_u64().unwrap() >= 1,
+        "expected ba_rejected>0, got {}",
+        env["data"]
+    );
+    // used == total - rejected (counts are internally consistent).
+    assert_eq!(
+        env["data"]["ba_observations_used"].as_u64().unwrap(),
+        env["data"]["ba_observations_total"].as_u64().unwrap()
+            - env["data"]["ba_rejected"].as_u64().unwrap()
+    );
+    // Converged-equivalent: a finite low reprojection RMS + a written result.
+    let rms = env["data"]["ba_rms_px"].as_f64().unwrap();
+    assert!(rms.is_finite() && rms < 5.0, "expected converged low RMS, got {rms}");
+    assert!(proj.join("measurements/measured.yaml").exists());
+}
+
