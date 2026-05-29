@@ -1962,6 +1962,54 @@ fn decode_structured_light_with_roi_and_debug_dry_run() {
     assert!(!tmp.path().join("c.json.debug.png").exists());
 }
 
+/// decode-structured-light happy path through the REAL sidecar: generate a
+/// gray-background sequence, decode it, assert the envelope + corr.json carries
+/// screen_roi provenance and the debug png lands at <out>.debug.png. This is the
+/// CLI-seam check that the three-pass frontend still decodes the gray-bg material
+/// (S1) end to end (per-pixel decode coverage is unit-tested in the sidecar).
+#[cfg(unix)]
+#[test]
+fn decode_structured_light_happy_with_roi_provenance_and_debug() {
+    let tmp = TempDir::new().unwrap();
+    let wrapper = match make_sidecar_wrapper(tmp.path()) {
+        Some(w) => w,
+        None => {
+            eprintln!("skipping decode_structured_light_happy: python-sidecar venv not found");
+            return;
+        }
+    };
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 1, 1);
+    // Generate the SL sequence (frames + sl_meta.json) via the real sidecar.
+    lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &wrapper)
+        .args(["--json", "--yes", "visual", "generate-structured-light",
+            proj.to_str().unwrap(), "MAIN"])
+        .assert()
+        .success();
+    let sl_dir = proj.join("patterns/MAIN/sl");
+    let frames = sl_dir.join("frames");
+    let meta = sl_dir.join("sl_meta.json");
+    let out = tmp.path().join("corr.json");
+
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &wrapper)
+        .args(["--json", "--yes", "visual", "decode-structured-light",
+            frames.to_str().unwrap(), meta.to_str().unwrap(),
+            "--out", out.to_str().unwrap(), "--emit-debug-image"])
+        .assert()
+        .success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true, "envelope ok: {env}");
+    assert!(env["data"]["n_dots_decoded"].as_u64().unwrap() > 0);
+
+    let corr: Value = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+    assert!(corr["screen_roi"].is_array(), "corr.json must stamp screen_roi: {corr}");
+    assert!(out.with_extension("json.debug.png").is_file()
+        || std::path::Path::new(&format!("{}.debug.png", out.display())).is_file(),
+        "<out>.debug.png must exist");
+}
+
 #[test]
 fn reconstruct_structured_light_refuses_without_yes() {
     let tmp = TempDir::new().unwrap();
