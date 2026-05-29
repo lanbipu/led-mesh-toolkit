@@ -1,0 +1,259 @@
+# Path B 现场鲁棒性设计 · 两道防线（检测层时序前端 + 重建层几何剔除）
+
+> 日期：2026-05-29
+> 范围：让点阵结构光（Path B）从"只能在 disguise 灰底素材跑通"走到"现场实拍能成"。
+> 两个互补的阻塞——**检测层误码** 与 **重建层离群点拖垮 BA**——合成一个里程碑、一份计划。
+
+## 1. 背景：两个互补的现场阻塞
+
+Path B：屏上每个白点按二进制 + 偶校验闪一个全局 id → 多机位拍摄 → 每机位 decode 出一批
+对应点 `{id, 屏幕坐标(u,v), 相机像素(x,y)}` → reconstruct 用所有机位的对应点做
+model-constrained BA，反求每相机位姿 + 每箱体 SE3（根箱体固定为世界原点，尺度来自像素 pitch）。
+
+### 1.1 检测层问题（decode 前端）
+
+`sl_decode.py` 前端是 naive 的、**假设黑底**：
+
+| 环节 | 现状（核实过） | 现场为什么崩 |
+| --- | --- | --- |
+| 找哨兵 `segment_code_region` L45–75 | `frame.mean() > sentinel_threshold*255` 整帧均值 | 现场背景本就亮，整帧均值常年高，全屏白哨兵顶不出来 |
+| 找点 `_centroids` L103–106 | `cv2.threshold(frame,128,…)` + 连通域 全局 128 | 背景像素远超 128 → 当成一坨假点；斜看暗点反丢 |
+| 读位 `_read_bit_at` L109–114 | 3×3 patch 均值 `>128` 全局 128 | 同上，亮度判据现场失效 |
+
+灰底素材（disguise，背景 ≈64 < 128）能解纯属巧合（背景恰好低于阈值），不是鲁棒性。
+
+### 1.2 重建层问题（离群点拖垮 BA）
+
+decode 会产生**误配对（离群点）**：闪码被读错（噪声 / 大斜角变暗 / 相邻点粘连 / ≥2-bit 错码
+恰好过偶校验且落在合法 id）→ 贴错 id → 相机像素 (x,y) 被配到屏幕上**错误的 3D 位置**。这是
+几何上不可能成立的配对。BA 要让所有配对同时成立，少数离群点把整个解拽偏 → 发散 / 解错。
+
+**实证（lmt-test 9×5 弧，真实录像）**：两个 100% 干净机位 → BA 收敛 reproj **0.108px**；
+第三个只解出 1677/2880（含错配对）加进去 → 发散 **228px**，去掉就好。当前 BA 只有 Huber
+损失（`loss='huber', f_scale=2.0`，**降权不剔除**），离群点一多就压不住。
+
+### 1.3 为什么两层都要做（互补，不重复）
+
+检测层时序 / ROI / 逐点阈值 / 校验闸能**减少**误码，但挡不住两类漏网的：
+
+1. **"自信地错"**：≥2-bit 错码过偶校验又落在合法 id 上 —— 检测层无从分辨。
+2. **斜角粘连**：大斜角两点粘成一个 blob → 必然误码（空间分辨率问题），不是阈值能救的。
+
+这些只能在**重建层用几何一致性**剔除（一个配对的 3D 位置与该机位真实成像不符 → 剔）。
+所以：**检测层把误码降到少数，重建层把漏网的少数几何剔除**，两道防线缺一不可。
+
+### 1.4 现场条件（已与用户确认）
+
+1. **机位三脚架锁死全程不动** → 静止背景天然零变化，检测层**不需要帧间配准**。
+2. **屏外有运动物体（人 / 车），但绝不遮挡屏幕** → 运动物体只在屏幕 ROI **之外**捣乱。
+
+## 2. 统一目标与成功判据
+
+**目标**：检测层换成"靠闪不靠亮 + 屏幕 ROI"；重建层在 BA 前 / 中自动识别并剔除几何不一致
+对应点。使管线在任意亮度 / 纹理静止背景 + 屏外运动物体 + 少量误码下成立。
+
+成功判据（全部以**合成 known-good** 验证——现场无真值，合成可控，符合"synthetic 是最好情况"）：
+
+**检测层**
+- **S1 回归**：现有灰底素材走新前端仍 100% 解，现有 SL E2E + sidecar pytest 全绿。
+- **S2 亮背景**：合成亮 + 纹理背景 + 叠点 → 解出 ≥99%；同素材走 naive 前端会失败（对照断言）。
+- **S3 屏外运动物体**：S2 + ROI 外叠移动亮块 → 解出率不降、不多假点、哨兵 / 切段不偏。
+- **S4 暗点 / 斜看**：点亮度 < 背景 → 仍正确解（证明判据是"变化"不是"亮度"）。
+- **S5 可视化**：`--emit-debug-image` 出"纯黑底 + 白点"检测掩膜，肉眼核对点 / 框。
+
+**重建层**
+- **S6 注入离群剔除**：合成多机位干净观测 + 注入 X% 错 id 配对 → 开剔除：BA 收敛低 rms，
+  且被剔的就是注入的那批（对注入集算 precision/recall）；关剔除：发散 / 高 rms（对照断言）。
+- **S7 脏机位不拖垮**：复现实证场景——2 干净机位 + 1 含大量误码机位，开剔除后总解仍收敛
+  （≈ 只用 2 干净机位的水平），不因第 3 机位发散。
+- **S8 剔除可见（no silent caps）**：report / DTO 报告每机位 / 每箱体 / 全局的剔除数；
+  剔除比例高的机位发 WarningEvent。
+
+---
+
+# Part A · 检测层：靠闪不靠亮 + 屏幕 ROI
+
+## A.1 核心原理与一处诚实边界
+
+把判据从**亮度**换成**变没变**：逐像素时序极差 `range = max−min`。静止背景（哪怕 250 白墙）
+`range≈0` 判黑；闪烁点（哪怕斜看 40↔90）`range` 大判点。与 128 阈值的毛病完全相反
+（128 留白墙丢暗点；时序极差留暗点丢白墙），绝对亮度不再进入判断。
+
+**诚实边界**：点中心精确定位（seeding）仍用 anchor 帧（all-on）——因为 id=0 点在所有 code 帧
+从不亮，纯时序找不到它。但 anchor 的亮度判据**只在 ROI 内做**：ROI 内"背景"是屏幕自身的黑
+（点间），不是屏外亮墙；屏外已被 ROI 排除。而 ROI 本身从时序活动图推出（靠闪）。链条自洽：
+**靠闪定 ROI → ROI 内 anchor 自适应阈值定点 → 靠闪读每点的位**，没把"找亮矩形"偷塞回主路径。
+
+## A.2 三遍管线（全部在 Python sidecar `sl_decode.py`）
+
+**Pass 1 — 粗 ROI（全片活动图）**：整段逐像素求 `range`。屏幕矩形因哨兵刷过 + 点闪 → 高活动
+**实心矩形**；屏外运动物体是分离、细长、不实心、与屏幕不重叠（不遮挡）的块。取最大实心矩形
+活动连通域 bbox = 粗 ROI。`--screen-roi x,y,w,h` 手动覆盖兜底；自动失败 → `detection_failed`(13)
+（消息提示手动指定）。（哨兵会把整屏刷亮、正好利于框屏；抠点在 Pass 3 用"仅 code 区"避开它。）
+
+**Pass 2 — 同步（只在 ROI 内）**：`segment_code_region` 哨兵均值改 `frame[roi].mean()`、
+`index_plateaus` 帧间变化像素数只在 ROI 内统计 → 屏外运动物体影响不到同步（最危险的不是多假点，
+是凭空多切一段 / 哨兵错位 → 整段崩）。`sentinel_threshold`（现有 flag，默认 0.85）**语义不变、
+计算域改 ROI**，不删 flag（避免动刚合进来的契约链）。
+
+**Pass 3 — 抠点 + 读位 + 解码闸（只在 ROI 内）**：
+1. **seeding**：anchor 帧、ROI 内**自适应阈值**（Otsu，非全局 128）+ 连通域 → 候选中心（亚像素）。
+   anchor=all-on，所有点含 id=0 都被找到。
+2. **形状 / 尺寸过滤**：按 `dot_radius_px`（sl_meta 有）滤圆形、合理大小，去掉大 / 不规则块。
+3. **逐点读位**：每点 on/off 跟**它自己**在 code 区的 min/max 比（不用全局 128）→ 斜看暗点也对。
+4. **解码闸（已有）**：`decode_bits` 偶校验 + id 落在 `uv_by_id` → 漏网假点闪不出合法码被丢。
+
+**A.2.1 "纯黑底 + 白点"图**：`--emit-debug-image` 把 Pass 3 第 1 步的二值掩膜写成图存 corr.json
+旁（`<out>.debug.png`）。既是中间产物、也是肉眼核对素材。v1 只出这张（YAGNI）。
+
+## A.3 检测层接口契约改动
+
+- **sidecar `ipc.py`**：`DecodeStructuredLightInput` 加 `screen_roi: tuple[int,int,int,int]|None`
+  (默认 None=自动)、`emit_debug_image: bool=False`；`sentinel_threshold` 保留(语义改对 ROI-mean)；
+  **不加** variance 阈值字段(Pass1/3 阈值走 Otsu 自动)。`run_decode_structured_light` 始终走新前端
+  (无 legacy 开关，S1 回归守住灰底素材)。
+- **CLI**：`cli.rs VisualCmd::DecodeStructuredLight` 加 `--screen-roi <X,Y,W,H>` (`Option<String>`)、
+  `--emit-debug-image` (bool)；`commands/visual.rs::decode_structured_light` L383 解析 ROI 字符串
+  (格式错 → `INVALID_INPUT`(2)，在 destructive gate **之前**校验，同 reconstruct 的 ≥2 corr 前置)；
+  dry-run `would_write` 在 `--emit-debug-image` 时含 debug 图路径。
+- **lmt-app / adapter**：`run_decode_structured_light` L537 + `DecodeStructuredLightArgs` L480
+  各加 `screen_roi`、`emit_debug_image`；IPC JSON 按 `sentinel_threshold` 同款条件注入。
+- **DTO `dto.rs`**：`DecodeStructuredLightResult` 加 `debug_image_path: Option<String>`、
+  `screen_roi: Option<[u32;4]>`(实际用的 ROI，供核对)；已有 `JsonSchema`，自动进 `schema::dump_all()`。
+- **错误码**：ROI 失败 / 点太少 → 复用 `detection_failed`(13)（仅消息具体化）；哨兵 / 切段失败
+  → 复用 `decode_failed`(18)。**不新增错误码**。
+- **manifest / agents-cli.md**：decode op CLI 串加 `[--screen-roi X,Y,W,H] [--emit-debug-image]`，
+  exit_codes 仍 `[0,2,3,4,13,18]`；命令表第 44 行更新签名 + 说明；side_effect 仍 destructive；
+  **不加 Tauri shim**（visual 全组 CLI-only）。
+
+## A.4 检测层测试（TDD）
+
+sidecar pytest（合成 fixture 测试内构造，不依赖现场照片）：`test_decode_gray_bg_regression`(S1)、
+`test_decode_bright_textured_bg`(S2) + `..._fails_with_naive`(对照)、`test_decode_moving_object_outside_roi`(S3)、
+`test_decode_dim_dots_below_bg`(S4)、`test_decode_finds_id0`、`test_roi_auto_vs_manual`；改完
+`build_exe.sh` 重建 binary。CLI E2E：`decode_..._with_roi_and_debug_dry_run`、`decode_..._invalid_roi_format`(exit2)、
+happy(复用 `LMT_VBA_SIDECAR_PATH` 跑灰底，S1)、refuse(沿用)。
+
+---
+
+# Part B · 重建层：几何离群剔除
+
+## B.1 离群点本质 & 现有代码
+
+一个 `Observation`（`model_constrained_ba.py`，dataclass: `camera_idx, cabinet_idx,
+p_local: ndarray[3] mm, pixel: ndarray[2] 去畸变`）= 一个对应点。离群 = 该点 id 解错 →
+`p_local`（按 id 从 sl_meta 取的屏幕 3D 点）与相机里真实位置不符 → 几何不可能。
+
+现状（核实）：
+- 装配在 `sl_reconstruct.py` L152–166，按 id 查 sl_meta 取 canonical `p_local`、去畸变 pixel；
+  **`per_view_cab_corners: dict[(cam_idx,cab_idx)] → list[(p_local,pixel)]`（L149）装配时已按
+  (机位,箱体)分组**——PnP 的天然落点。
+- `check_observability`（`observability.py`，`min_views=2, min_points=8` + 二部图连通 BFS）在
+  L175、装配后 solve 前调。
+- `_solve_pnp`（`reconstruct.py` L495–516）用 `cv2.solvePnP(flags=SOLVEPNP_ITERATIVE)`，**无 RANSAC**；
+  被 `estimate_nonroot_cabinet_init`（桥接初值）与 `_pnp_camera`（相机初值）复用。
+- `model_constrained_ba`（`model_constrained_ba.py` L98–135）：`scipy.optimize.least_squares`,
+  `loss='huber', f_scale=2.0`；`_residuals` 返回 flat `(2*n_obs,)`，**逐点残差可取**（reshape (n_obs,2)）。
+- `BaStats`（`ipc.py`）只有 `rms_reprojection_px, iterations, converged` 三字段。
+
+## B.2 两阶段几何剔除（互补，缺一不可）
+
+**Stage A — per-(机位,箱体) PnP-RANSAC 预过滤**（装配后、`check_observability` 前）。
+对 `per_view_cab_corners` 每个 `(cam,cab)` 组（同一箱体的点共面，z=0）跑 `cv2.solvePnPRansac`
+→ inlier mask → 按 mask 重建 observations、同步更新 `per_cabinet_views/points`。这是**最便宜、
+catch 量最大**的一道：错 id 的点拟合不进该机位对该箱体的单一位姿 → 被 RANSAC 判 outlier。
+直接解决实证里"脏机位 1677/2880 拖垮总解"——脏点在 Stage A 就被该机位剔掉，只留干净子集进 BA。
+
+- 共面 PnP-RANSAC：用 `cv2.solvePnPRansac`，平面退化时切 `SOLVEPNP_IPPE`（impl 调，S6/S7 验）。
+- 组内 < `MIN_PNP_CORNERS`(4) 的：跳过 Stage A，交给 Stage B / Huber。
+- 阈值（reprojErr≈2–3px、confidence 0.99、iters 100）走 sidecar 内部常量，**不开 CLI flag**。
+
+**Stage B — post-BA 鲁棒残差迭代裁剪**（包住 `model_constrained_ba`）。
+跑 BA → 取逐点残差 → 丢 `norm > max(k·MAD, 绝对px下限)`（k≈3，下限≈3px）→ 重解 → 重复至
+无可丢或封顶（≤3 iter）。catch Stage A 漏的（单箱体内自洽、但跨机位 / 全局不一致）。
+
+**Stage A + B = 重建层 defense-in-depth**：A 在初始化前用单视图几何砍掉大批"自信地错"，
+B 用全局模型收尾。两者都复用现成机件（PnP、BA、Huber），不引入新求解器。
+
+## B.3 `_solve_pnp` 升级 solvePnPRansac（一石二鸟）
+
+把 `_solve_pnp` 内部换成 `solvePnPRansac`：①**初始化也变鲁棒**——`estimate_nonroot_cabinet_init`
+桥接 PnP、`_pnp_camera` 相机初值当前用裸 solvePnP，本身就被离群点带偏；换 RANSAC 后初值更稳
+（初值偏了 BA 也救不回，见 Path B 桥接历史）。②顺带产出 inlier mask 供 Stage A 复用。
+注意（gotcha）：`tvec` 仍需 `.reshape(3)`；返回 None 要照常判（共线退化）；inlier <4 时按原逻辑跳过。
+
+## B.4 顺序与 observability 交互（关键，否则会出 KeyError / 假发散）
+
+- Stage A 在 `check_observability`(L175) **之前** → observability 在 inlier 上评估（脏机位不该
+  计入覆盖）。但若 A 砍到二部图断连 / 某箱体 < min_points → `observability_failed`(17)，这是
+  **正确行为**（问题真的欠约束），消息须说明"剔除 N 个离群后..."。
+- Stage B 在 BA 之后，可能把某箱体砍到 < 8 → **每轮 trim 后设地板**：任何箱体将跌破 floor 就
+  停止 trim（不过度裁剪进退化）；`_per_cabinet_reproj_rms` 用**当轮** `cabinet_poses` 算（别用上轮，
+  否则 RMS 静默错）；绝不把箱体砍到 0（否则 L412 直接 KeyError）。
+- 残差每轮**重算**（`sol.fun` 是上一次 least_squares 的，stale）。
+
+## B.5 重建层接口契约改动
+
+- **默认 ON、无新 CLI flag**：剔除是"应该默认就对"的鲁棒估计，不让用户调（同 Part A 的 Otsu 决策、
+  YAGNI）。`reconstruct-structured-light` 的 CLI 签名 / flag **不变**，manifest CLI 串 / exit_codes
+  `[0,2,3,4,13,14,16,17]` **不变**。要调再加 flag。
+- **不新增错误码**：`ba_diverged`(14)、`observability_failed`(17) 已覆盖硬停。剔除后仍发散 → 14；
+  剔除后欠约束 → 17（消息说明因剔除）。
+- **报告剔除数（no silent caps，必须做）**——唯一要动的 DTO：
+  - Python `BaStats`（`ipc.py`）加 `n_observations_total: int`、`n_observations_used: int`、
+    `n_rejected: int`。Python `CabinetPose`（`ipc.py`）加 `rejected_points: int`（与 observed_points 并列）。
+  - Rust `VisualReconstructResult`（`dto.rs`）只加全局 `ba_observations_total/used/rejected: usize`
+    （已注册 `JsonSchema` 结构上的新字段，自动进 schema dump，**无新类型**）；adapter ba_stats 解包
+    同步加字段。**per-cabinet 剔除数只留在 Python `CabinetPose`/pose_report.json**——Rust
+    `CabinetPoseSummary` 当前连 observed_points 都没有，给它加 rejected_points 没分母、意义弱，
+    不动它；要细看每箱体剔除走 pose_report.json。
+  - 高剔除比机位 / 箱体（如 >30% 被剔）发 `WarningEvent`，让操作者看到"第 3 机位剔了 1203/2880，
+    查这条录像"。
+- **agents-cli.md**：reconstruct 行说明补"含逐观测离群剔除统计"；错误码表不变；新 BaStats /
+  DTO 字段写进文档。
+
+## B.6 重建层测试（TDD：注入离群 known-good）
+
+sidecar pytest（`test_reconstruct.py`）：
+- `test_outlier_injection_rejected`(S6)：合成多机位干净观测 + 注入 X% 错 id（随机合法 id→错 p_local），
+  开剔除断言收敛低 rms + 被剔集 ≈ 注入集（precision/recall）；`..._diverges_without_rejection`(对照)。
+- `test_dirty_view_does_not_break_solve`(S7)：2 干净机位 + 1 大量误码机位，开剔除断言总解收敛
+  ≈ 仅 2 干净机位水平。
+- `test_stageA_pnp_ransac_inliers`：单 (机位,箱体) 组注入离群，断言 `solvePnPRansac` inlier mask 正确。
+- `test_rejection_stats_reported`(S8)：断言 BaStats / CabinetPose 的剔除数字段正确填充。
+- observability 边界：`test_overtrim_stops_at_floor`（trim 不把箱体砍破 min_points）、
+  `test_aggressive_rejection_raises_observability`（脏到断连 → `observability_failed`，消息含剔除说明）。
+- 改完 `build_exe.sh` 重建 binary。
+
+CLI E2E（`cli_e2e.rs`）：reconstruct 既有 refuse/dry-run/single-corr 用例不变；新增
+`reconstruct_..._reports_rejection_stats`（happy：跑含离群的合成 corr，断言 envelope 里
+`ba_rejected > 0` 且 `converged`，复用 `LMT_VBA_SIDECAR_PATH`）。
+
+---
+
+## 3. 范围外（统一，明确不做）
+
+- **检测层**：帧间配准 / 防抖（机位锁死不需要，手持是另一里程碑）；matched-filter（拿已知编码
+  与每像素时间曲线相关，后续加固）；逐帧背景建模；屏面玻璃上反射的运动物体（靠形状 + 解码闸兜底）。
+- **重建层**：传递式多箱体桥接（沿用现有，见 Path B 历史）；离群剔除的 CLI 调参 flag（默认 ON，
+  YAGNI）；新错误码 `outlier_rejection_failed`（复用 14/17）；BA 求解器替换（沿用 scipy least_squares）。
+- **现场实拍验证**：暂无现场真值素材，以合成 known-good（S1–S8）验收；有 lmt-test 9×5 弧真实录像
+  可做 S7 的非回归手验，但不进 CI（依赖仓库外数据）。
+- 两层之外的 reconstruct 既有行为（provenance gate、根箱体强制、measured.yaml 命名）保持不动。
+
+## 4. 交付清单（任一缺失视为未完成）
+
+**Part A 检测层**：① `sl_decode.py` 三遍管线 + `ipc.py` 两字段；② sidecar pytest(S1–S5+id0+roi) + 重建 binary；
+③ `cli.rs`/`commands/visual.rs` 两 flag + ROI 解析校验；④ `lmt-app`/`adapter` 透传；
+⑤ `dto.rs` `DecodeStructuredLightResult` 两 Optional 字段(+schema dump)；⑥ `manifest.rs` CLI 串；
+⑦ `cli_e2e.rs` 新用例；⑧ `agents-cli.md`。
+
+**Part B 重建层**：⑨ `_solve_pnp`→solvePnPRansac；⑩ Stage A per-(cam,cab) PnP-RANSAC 预过滤
+(装配↔observability 之间)；⑪ Stage B post-BA 鲁棒残差迭代裁剪(含 observability 地板 / 残差重算);
+⑫ `BaStats`+`CabinetPose` 剔除数字段 + WarningEvent；⑬ Rust `VisualReconstructResult` 全局剔除数
+三字段(+schema dump) + adapter 解包(per-cabinet 剔除数留 pose_report.json，Rust summary 不动)；
+⑭ sidecar pytest(S6–S8+边界) + 重建 binary；
+⑮ `cli_e2e.rs` 剔除统计用例；⑯ `manifest.rs` 说明 + `agents-cli.md`。
+
+**联调自检**（合并前）：`cargo test --workspace`、`./target/debug/lmt --json schema | jq`(新字段进 dump)、
+`./target/debug/lmt visual decode-structured-light --help` / `reconstruct-structured-light --help`(新 flag / 文档)。
