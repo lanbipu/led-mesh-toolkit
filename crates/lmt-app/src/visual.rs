@@ -538,11 +538,14 @@ pub fn run_decode_structured_light(
     input_path: &Path,
     sl_meta_path: &Path,
     output_path: &Path,
+    // None = sidecar default (0.85). Lower for non-black / partially-filled frames.
+    sentinel_threshold: Option<f64>,
 ) -> LmtResult<DecodeStructuredLightResult> {
     let args = DecodeStructuredLightArgs {
         input_path: input_path.display().to_string(),
         sl_meta_path: sl_meta_path.display().to_string(),
         output_path: output_path.display().to_string(),
+        sentinel_threshold,
         progress_tx: None,
         cancel: None,
     };

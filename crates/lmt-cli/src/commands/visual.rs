@@ -74,7 +74,10 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             input_path,
             sl_meta,
             out,
-        } => decode_structured_light(mode, &input_path, &sl_meta, &out, yes, dry_run),
+            sentinel_threshold,
+        } => decode_structured_light(
+            mode, &input_path, &sl_meta, &out, sentinel_threshold, yes, dry_run,
+        ),
         VisualCmd::ReconstructStructuredLight {
             project_path,
             screen_id,
@@ -382,6 +385,7 @@ fn decode_structured_light(
     input_path: &str,
     sl_meta: &str,
     out: &str,
+    sentinel_threshold: Option<f64>,
     yes: bool,
     dry_run: bool,
 ) -> i32 {
@@ -405,6 +409,7 @@ fn decode_structured_light(
                 Path::new(input_path),
                 Path::new(sl_meta),
                 Path::new(out),
+                sentinel_threshold,
             ) {
                 Ok(r) => output::ok(mode, r, |p| {
                     let _ = writeln!(

@@ -481,6 +481,10 @@ pub struct DecodeStructuredLightArgs {
     pub input_path: String,
     pub sl_meta_path: String,
     pub output_path: String,
+    /// None = sidecar default (0.85). Lower it when the screen does not fill the
+    /// frame / the background is not black (e.g. disguise visualiser gray stage),
+    /// so the full-white sentinel frames are still detected.
+    pub sentinel_threshold: Option<f64>,
     pub progress_tx: Option<mpsc::Sender<Event>>,
     pub cancel: Option<oneshot::Receiver<()>>,
 }
@@ -494,13 +498,17 @@ pub struct DecodeStructuredLightOut {
 pub async fn decode_structured_light(
     args: DecodeStructuredLightArgs,
 ) -> VbaResult<DecodeStructuredLightOut> {
-    let payload = json!({
+    let mut payload = json!({
         "command": "decode_structured_light",
         "version": 1,
         "input_path": &args.input_path,
         "sl_meta_path": &args.sl_meta_path,
         "output_path": &args.output_path,
     });
+    // Omit when None so the sidecar uses its default sentinel_threshold (0.85).
+    if let Some(t) = args.sentinel_threshold {
+        payload["sentinel_threshold"] = json!(t);
+    }
 
     // decode's result event is an empty ResultData; the product is the
     // correspondence file on disk. Run for side effects + error surfacing, then
