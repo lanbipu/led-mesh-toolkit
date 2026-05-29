@@ -396,8 +396,13 @@ pub struct GenerateStructuredLightArgs {
     /// When set, per-cabinet placement (input_rect_px) + pitch come from this
     /// screen_mapping.json instead of the uniform grid.
     pub screen_mapping_path: Option<String>,
-    pub dot_spacing_px: u32,
+    /// None = auto-derive per-cabinet from the cabinet pixel resolution (sidecar).
+    pub dot_spacing_px: Option<u32>,
     pub dot_radius_px: u32,
+    /// None = auto-derive per-cabinet from the cabinet pixel resolution (sidecar).
+    pub margin_px: Option<u32>,
+    /// Also emit a disguise-ready `<screen_id>.seq/` of uncompressed 24-bit TIFFs.
+    pub emit_tiff_seq: bool,
     pub progress_tx: Option<mpsc::Sender<Event>>,
     pub cancel: Option<oneshot::Receiver<()>>,
 }
@@ -421,9 +426,16 @@ pub async fn generate_structured_light(
         },
         "output_dir": &args.output_dir,
         "screen_resolution": args.screen_resolution,
-        "dot_spacing_px": args.dot_spacing_px,
         "dot_radius_px": args.dot_radius_px,
+        "emit_tiff_seq": args.emit_tiff_seq,
     });
+    // Omit spacing/margin when None so the sidecar auto-derives them per cabinet.
+    if let Some(s) = args.dot_spacing_px {
+        payload["dot_spacing_px"] = json!(s);
+    }
+    if let Some(m) = args.margin_px {
+        payload["margin_px"] = json!(m);
+    }
     // Omit screen_mapping_path when None so the sidecar uses uniform generation.
     if let Some(p) = &args.screen_mapping_path {
         payload["screen_mapping_path"] = json!(p);

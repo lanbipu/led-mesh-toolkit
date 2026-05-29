@@ -73,19 +73,35 @@ def run_generate_structured_light(cmd: GenerateStructuredLightInput) -> int:
         return 1
 
     # Tile dots inside each present cabinet's placement rect; global row-major ids.
+    # spacing/margin auto-derive PER CABINET from its own pixel rect when not given
+    # explicitly, so heterogeneous / any-resolution cabinets each fill correctly
+    # (~8x8 grid) with zero tuning. dot_radius floors keep dots from clipping/merging.
     dots: list[tuple[int, int, int]] = []
     dot_cabinet: dict[int, tuple[int, int]] = {}
     for s in specs:
         rect = tuple(int(v) for v in s["input_rect_px"])
-        cab_dots = build_dots_in_rect(rect=rect, spacing_px=cmd.dot_spacing_px,
-                                      margin_px=cmd.margin_px, id_start=len(dots))
+        rmin = min(rect[2], rect[3])
+        eff_margin = (cmd.margin_px if cmd.margin_px is not None
+                      else max(cmd.dot_radius_px + 1, round(rmin / 16)))
+        # Spacing floor = 2x dot diameter (4*r+2), i.e. a dark gap of at least one
+        # dot diameter between neighbours. Pure non-overlap (2*r+2) is NOT enough:
+        # adjacent dots that merely touch on the pristine frame fuse into one blob
+        # under any real camera defocus/PSF, and the decoder seeds centroids from
+        # the all-on anchor with a fixed binarize + connectedComponents (no blob
+        # splitting), so merged dots silently drop from the correspondence set.
+        eff_spacing = (cmd.dot_spacing_px if cmd.dot_spacing_px is not None
+                       else max(4 * cmd.dot_radius_px + 2, round(rmin / 8)))
+        cab_dots = build_dots_in_rect(rect=rect, spacing_px=eff_spacing,
+                                      margin_px=eff_margin, id_start=len(dots))
         for (did, u, v) in cab_dots:
             dot_cabinet[did] = (s["col"], s["row"])
         dots.extend(cab_dots)
 
     if len(dots) < 4:
         write_event(ErrorEvent(event="error", code="invalid_input",
-            message=f"only {len(dots)} dots fit; reduce dot_spacing/margin", fatal=True))
+            message=(f"only {len(dots)} dots fit; increase cabinet pixel resolution "
+                     "or lower --dot-radius (auto layout), or set smaller "
+                     "--dot-spacing/--margin explicitly"), fatal=True))
         return 1
 
     db = data_bits_for(len(dots))
@@ -120,6 +136,18 @@ def run_generate_structured_light(cmd: GenerateStructuredLightInput) -> int:
             for _ in range(hold_repeat):
                 vw.write(img)
         vw.release()
+
+        # disguise-ready image sequence: <screen_id>.seq/ of uncompressed 24-bit
+        # TIFFs (IBM-PC/little-endian byte order is native here), one per logical
+        # frame, named from 0 with no gaps -- the disguise .seq ingest convention.
+        if cmd.emit_tiff_seq:
+            sid = cmd.project.screen_id
+            seq_dir = staging / f"{sid}.seq"
+            seq_dir.mkdir(parents=True)
+            for i, img in enumerate(logical):
+                bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+                cv2.imwrite(str(seq_dir / f"{sid}_{i:05d}.tif"),
+                            bgr, [cv2.IMWRITE_TIFF_COMPRESSION, 1])
 
         meta = {
             "schema_version": 1,

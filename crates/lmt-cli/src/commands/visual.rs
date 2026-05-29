@@ -1,7 +1,7 @@
 //! `lmt visual ...` subcommands. Thin transport: parse → call lmt_app::visual → envelope.
 //! No business logic here; all logic lives in lmt_app::visual.
 
-use crate::cli::VisualCmd;
+use crate::cli::{SeqFormat, VisualCmd};
 use crate::commands::util::{self, DestructiveDecision};
 use crate::output::{self, Mode};
 use lmt_shared::envelope::{error_codes, ApiError};
@@ -63,9 +63,11 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             screen_id,
             dot_spacing,
             dot_radius,
+            margin,
+            seq_format,
             screen_mapping,
         } => generate_structured_light(
-            mode, &project_path, &screen_id, dot_spacing, dot_radius,
+            mode, &project_path, &screen_id, dot_spacing, dot_radius, margin, seq_format,
             screen_mapping.as_deref(), yes, dry_run,
         ),
         VisualCmd::DecodeStructuredLight {
@@ -315,8 +317,10 @@ fn generate_structured_light(
     mode: Mode,
     project_path: &str,
     screen_id: &str,
-    dot_spacing: u32,
+    dot_spacing: Option<u32>,
     dot_radius: u32,
+    margin: Option<u32>,
+    seq_format: SeqFormat,
     screen_mapping: Option<&str>,
     yes: bool,
     dry_run: bool,
@@ -340,11 +344,18 @@ fn generate_structured_light(
             })
         }
         DestructiveDecision::Execute => {
+            let emit_tiff_seq = match seq_format {
+                SeqFormat::Auto => None,
+                SeqFormat::None => Some(false),
+                SeqFormat::Tiff => Some(true),
+            };
             match lmt_app::visual::run_generate_structured_light(
                 Path::new(project_path),
                 screen_id,
                 dot_spacing,
                 dot_radius,
+                margin,
+                emit_tiff_seq,
                 screen_mapping.map(Path::new),
             ) {
                 Ok(r) => output::ok(mode, r, |p| {

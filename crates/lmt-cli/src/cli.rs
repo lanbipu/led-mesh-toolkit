@@ -13,6 +13,18 @@ pub enum OutputFormat {
     Ndjson,
 }
 
+/// disguise 图像序列(.seq)输出策略,用于 generate-structured-light。
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "lowercase")]
+pub enum SeqFormat {
+    /// 当 project output.target == "disguise" 时产出 TIFF .seq,否则不产(默认)。
+    Auto,
+    /// 不产出 image sequence(仅 PNG 帧 + mp4)。
+    None,
+    /// 强制产出 disguise 规范的 TIFF .seq。
+    Tiff,
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "lmt",
@@ -317,12 +329,18 @@ pub enum VisualCmd {
         project_path: String,
         /// screen id。
         screen_id: String,
-        /// 点间距(像素)。
-        #[arg(long, default_value_t = 64)]
-        dot_spacing: u32,
+        /// 点间距(像素)。不传则按箱体分辨率自动推导(约 1/8 箱体短边)。
+        #[arg(long)]
+        dot_spacing: Option<u32>,
         /// 点半径(像素)。
         #[arg(long, default_value_t = 6)]
         dot_radius: u32,
+        /// 点到箱体边缘留白(像素)。不传则自动推导(约 1/16 箱体短边,铺满整箱)。
+        #[arg(long)]
+        margin: Option<u32>,
+        /// disguise 序列输出:auto(默认,target=disguise 时出 TIFF .seq)/ none / tiff。
+        #[arg(long, value_enum, default_value_t = SeqFormat::Auto)]
+        seq_format: SeqFormat,
         /// 可选 screen_mapping.json:按每箱体 input_rect_px 放点(支持非均匀/缺失箱体)。
         /// 相对路径按项目根解析。
         #[arg(long)]

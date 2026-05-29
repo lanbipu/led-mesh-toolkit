@@ -1831,6 +1831,57 @@ fn generate_structured_light_dry_run_writes_nothing() {
     assert!(!proj.join("patterns/MAIN/sl").exists());
 }
 
+/// generate-structured-light --seq-format tiff — real sidecar additionally emits
+/// a disguise `<screen_id>.seq/` folder of TIFFs named from 0 (disguise ingest
+/// convention). Validates the --seq-format plumbing end to end.
+#[cfg(unix)]
+#[test]
+fn generate_structured_light_emits_tiff_seq() {
+    let tmp = TempDir::new().unwrap();
+    let wrapper = match make_sidecar_wrapper(tmp.path()) {
+        Some(w) => w,
+        None => {
+            eprintln!("skipping generate_structured_light_emits_tiff_seq: venv not found");
+            return;
+        }
+    };
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 1, 1);
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &wrapper)
+        .args([
+            "--json", "--yes", "visual", "generate-structured-light",
+            proj.to_str().unwrap(), "MAIN", "--seq-format", "tiff",
+        ])
+        .assert()
+        .success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true, "envelope ok: {env}");
+    let n_frames = env["data"]["n_frames"]
+        .as_u64()
+        .expect("result must report n_frames") as usize;
+    assert!(n_frames >= 4, "sentinel+anchor+code+sentinel >= 4 frames, got {n_frames}");
+    let seq = proj.join("patterns/MAIN/sl/MAIN.seq");
+    assert!(seq.is_dir(), "MAIN.seq dir must exist");
+    // Disguise .seq ingest requires one TIFF per logical frame, numbered
+    // contiguously from 0 with NO gaps — verify the whole set, not just frame 0.
+    for i in 0..n_frames {
+        let f = seq.join(format!("MAIN_{i:05}.tif"));
+        assert!(f.is_file(), "missing contiguous TIFF frame {f:?}");
+        assert!(
+            std::fs::metadata(&f).unwrap().len() > 0,
+            "TIFF frame must be non-empty: {f:?}"
+        );
+    }
+    // No stray/duplicate numbering: exactly one TIFF per logical frame.
+    let tif_count = std::fs::read_dir(&seq)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "tif"))
+        .count();
+    assert_eq!(tif_count, n_frames, "exactly one TIFF per logical frame");
+}
+
 #[test]
 fn decode_structured_light_refuses_without_yes() {
     let tmp = TempDir::new().unwrap();

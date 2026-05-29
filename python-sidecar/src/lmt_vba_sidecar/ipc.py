@@ -165,11 +165,18 @@ class GenerateStructuredLightInput(BaseModel):
     # When set, per-cabinet placement (input_rect_px) + pitch come from this
     # screen_mapping.json -- same single-source-of-truth contract as generate_pattern.
     screen_mapping_path: str | None = None
-    dot_spacing_px: int = Field(gt=0, default=64)
+    # None = auto: derived per-cabinet from its pixel resolution so ANY screen
+    # size/cabinet fills correctly with no tuning (spacing ~= 1/8 of the cabinet's
+    # shorter edge, margin ~= 1/16 -> a roughly 8x8 filled grid). Explicit values
+    # override. dot_radius stays fixed (appearance-only, gamma-immune at decode).
+    dot_spacing_px: int | None = Field(default=None, gt=0)
     dot_radius_px: int = Field(gt=0, default=6)
-    margin_px: int = Field(ge=0, default=64)
+    margin_px: int | None = Field(default=None, ge=0)
     hold_ms: int = Field(gt=0, default=500)
     fps: int = Field(gt=0, default=30)
+    # Also emit a disguise-ready image sequence: <screen_id>.seq/ of uncompressed
+    # 24-bit TIFFs named <screen_id>_NNNNN.tif from 0 (disguise .seq convention).
+    emit_tiff_seq: bool = Field(default=False)
 
 
 class StructuredLightDot(BaseModel):

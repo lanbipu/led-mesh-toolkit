@@ -166,7 +166,8 @@ def test_generate_structured_light_input_mirrors_generate_pattern():
                                       "absent_cells": [], "cabinet_size_mm": [500, 500]}},
         "output_dir": "/tmp/out", "screen_resolution": [1920, 1080],
     })
-    assert m.dot_spacing_px == 64 and m.screen_mapping_path is None
+    # spacing/margin default to None = auto (derived per-cabinet from resolution).
+    assert m.dot_spacing_px is None and m.margin_px is None and m.screen_mapping_path is None
 
 
 def test_meta_and_correspondence_carry_provenance():

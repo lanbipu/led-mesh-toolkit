@@ -482,11 +482,17 @@ pub fn run_generate_pattern(
 pub fn run_generate_structured_light(
     project_path: &Path,
     screen_id: &str,
-    dot_spacing_px: u32,
+    // None = auto-derive per cabinet from its pixel resolution (sidecar).
+    dot_spacing_px: Option<u32>,
     dot_radius_px: u32,
+    // None = auto-derive per cabinet from its pixel resolution (sidecar).
+    margin_px: Option<u32>,
+    // None = auto: emit the TIFF `.seq` iff the project's output.target == "disguise".
+    emit_tiff_seq: Option<bool>,
     screen_mapping_path: Option<&Path>,
 ) -> LmtResult<GenerateStructuredLightResult> {
     let cfg = load_project_yaml_from_path(project_path)?;
+    let emit_tiff_seq = emit_tiff_seq.unwrap_or_else(|| cfg.output.target == "disguise");
     let screen_cfg = load_screen(&cfg, screen_id)?;
     let cabinet_array = ipc_cabinet_array(screen_cfg);
 
@@ -507,6 +513,8 @@ pub fn run_generate_structured_light(
         screen_mapping_path: sm_abs.map(|p| p.display().to_string()),
         dot_spacing_px,
         dot_radius_px,
+        margin_px,
+        emit_tiff_seq,
         progress_tx: None,
         cancel: None,
     };

@@ -97,15 +97,33 @@ pub fn locate_sidecar() -> VbaResult<PathBuf> {
         tried.push(format!("env {ENV_OVERRIDE}={p}"));
     }
 
+    // Workspace-relative dev resolution (single compile-time ancestor-walk).
+    // Prefer the editable venv sidecar (always current with source) over the
+    // possibly-stale vendored bundle. Both are fixed workspace-relative paths
+    // (NOT a PATH search), so no PATH-injection risk; both are absent in packaged
+    // installs, where this whole block falls through to the exe-relative lookup.
     if let Some(target) = workspace_target_from_compile_time() {
-        let candidate = target
+        // venv console scripts live in `Scripts` on Windows, `bin` elsewhere.
+        if let Some(workspace) = target.parent() {
+            let venv_bin = if cfg!(windows) { "Scripts" } else { "bin" };
+            let venv = workspace
+                .join("python-sidecar")
+                .join(".venv")
+                .join(venv_bin)
+                .join(binary_filename());
+            if venv.is_file() {
+                return Ok(venv);
+            }
+            tried.push(venv.to_string_lossy().into_owned());
+        }
+        let vendored = target
             .join("sidecar-vendor")
             .join(platform_dir())
             .join(binary_filename());
-        if candidate.is_file() {
-            return Ok(candidate);
+        if vendored.is_file() {
+            return Ok(vendored);
         }
-        tried.push(candidate.to_string_lossy().into_owned());
+        tried.push(vendored.to_string_lossy().into_owned());
     }
 
     if let Some(p) = sidecar_next_to_exe() {
