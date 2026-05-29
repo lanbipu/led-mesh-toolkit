@@ -540,12 +540,18 @@ pub fn run_decode_structured_light(
     output_path: &Path,
     // None = sidecar default (0.85). Lower for non-black / partially-filled frames.
     sentinel_threshold: Option<f64>,
+    // None = sidecar auto-derives the screen ROI from the temporal-activity map.
+    screen_roi: Option<[u32; 4]>,
+    // When true the sidecar also writes <output_path>.debug.png.
+    emit_debug_image: bool,
 ) -> LmtResult<DecodeStructuredLightResult> {
     let args = DecodeStructuredLightArgs {
         input_path: input_path.display().to_string(),
         sl_meta_path: sl_meta_path.display().to_string(),
         output_path: output_path.display().to_string(),
         sentinel_threshold,
+        screen_roi,
+        emit_debug_image,
         progress_tx: None,
         cancel: None,
     };

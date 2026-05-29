@@ -448,17 +448,13 @@ fn decode_structured_light(
             })
         }
         DestructiveDecision::Execute => {
-            // NOTE: lmt_app::run_decode_structured_light does not yet accept
-            // `roi` / `emit_debug_image` — Task 9 extends its signature and the
-            // adapter IPC to thread these through. Until then the Execute path
-            // ignores them (the dry-run / pre-gate validation above already
-            // exercise them). Consume to keep the build warning-clean.
-            let _ = (roi, emit_debug_image);
             match lmt_app::visual::run_decode_structured_light(
                 Path::new(input_path),
                 Path::new(sl_meta),
                 Path::new(out),
                 sentinel_threshold,
+                roi,
+                emit_debug_image,
             ) {
                 Ok(r) => output::ok(mode, r, |p| {
                     let _ = writeln!(

@@ -485,6 +485,10 @@ pub struct DecodeStructuredLightArgs {
     /// frame / the background is not black (e.g. disguise visualiser gray stage),
     /// so the full-white sentinel frames are still detected.
     pub sentinel_threshold: Option<f64>,
+    /// None = sidecar auto-derives the ROI from the temporal-activity map.
+    pub screen_roi: Option<[u32; 4]>,
+    /// Write <output_path>.debug.png (Pass-3 seed mask) for eyeball QA.
+    pub emit_debug_image: bool,
     pub progress_tx: Option<mpsc::Sender<Event>>,
     pub cancel: Option<oneshot::Receiver<()>>,
 }
@@ -508,6 +512,14 @@ pub async fn decode_structured_light(
     // Omit when None so the sidecar uses its default sentinel_threshold (0.85).
     if let Some(t) = args.sentinel_threshold {
         payload["sentinel_threshold"] = json!(t);
+    }
+    // ROI is sent only when manually overridden; otherwise the sidecar auto-derives.
+    if let Some(roi) = args.screen_roi {
+        payload["screen_roi"] = json!(roi);
+    }
+    // emit_debug_image defaults false on the sidecar; only send when explicitly on.
+    if args.emit_debug_image {
+        payload["emit_debug_image"] = json!(true);
     }
 
     // decode's result event is an empty ResultData; the product is the
