@@ -49,7 +49,12 @@ def derive_screen_roi(frames: list[np.ndarray]) -> tuple[int, int, int, int]:
     a SOLID high-activity region. Off-screen movers (person/car) are thin, sparse,
     non-solid blobs. We threshold the activity map at a fixed fraction of its peak,
     keep the largest solid (well-filled) component, and return its bounding box.
-    Brightness never enters the decision."""
+    Brightness never enters the decision.
+
+    Known limitation: the threshold is a fraction of the GLOBAL peak temporal
+    range, so a DIM/oblique screen filmed alongside a BRIGHTER off-screen MOVING
+    object (whose motion dominates the peak) can fall below the cut and be missed.
+    For that case pass an explicit --screen-roi X,Y,W,H (manual override)."""
     stack = np.stack(frames).astype(np.int16)
     activity = (stack.max(axis=0) - stack.min(axis=0)).astype(np.uint8)
     a_max = int(activity.max())
@@ -179,19 +184,32 @@ def _seed_dots(anchor: np.ndarray, *, roi: tuple[int, int, int, int],
     return out
 
 
-def _read_bits_relative(code_frames: list[np.ndarray], x: float, y: float) -> list[int]:
+def _read_bits_relative(code_frames: list[np.ndarray], x: float, y: float,
+                        anchor: np.ndarray) -> list[int]:
     """Pass 3.3: read each code frame's on/off for the dot at (x,y) RELATIVE to
     that dot's own min/max across the code frames (not a global 128). Robustly
-    handles dim/oblique dots whose lit level sits below the background."""
+    handles dim/oblique dots whose lit level sits below the background.
+
+    The all-on `anchor` supplies this dot's per-dot LIT reference level. When a
+    dot's samples are CONSTANT across the code region the code frames alone can't
+    tell on from off, so we compare the constant level against the anchor-lit
+    level: a dot still ~as bright as in the anchor is constant-LIT (all ones), a
+    dark one is constant-OFF (all zeros). This keeps an all-ones codeword (the max
+    id when data_bits is odd — lit in every code frame) decoding to its true id
+    instead of silently collapsing to a duplicate id=0; id=0 (off every code
+    frame) still reads all zeros."""
     ix, iy = int(round(x)), int(round(y))
-    samples = []
-    for f in code_frames:
+
+    def _patch(f: np.ndarray) -> float:
         y0, y1 = max(0, iy - 1), min(f.shape[0], iy + 2)
         x0, x1 = max(0, ix - 1), min(f.shape[1], ix + 2)
-        samples.append(float(f[y0:y1, x0:x1].mean()))
+        return float(f[y0:y1, x0:x1].mean())
+
+    samples = [_patch(f) for f in code_frames]
     lo, hi = min(samples), max(samples)
     if hi - lo < 1e-6:
-        return [0] * len(samples)
+        on_level = _patch(anchor)
+        return [1 if lo > on_level * 0.5 else 0] * len(samples)
     mid = (lo + hi) / 2.0
     return [1 if s > mid else 0 for s in samples]
 
@@ -248,7 +266,7 @@ def run_decode_structured_light(cmd: DecodeStructuredLightInput) -> int:
 
     points = []
     for (x, y) in seeds:
-        bits = _read_bits_relative(code_frames, x, y)
+        bits = _read_bits_relative(code_frames, x, y, anchor)
         dot_id = decode_bits(bits, data_bits)
         if dot_id is None or dot_id not in uv_by_id:
             continue

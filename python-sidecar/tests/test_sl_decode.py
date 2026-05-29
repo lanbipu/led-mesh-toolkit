@@ -199,8 +199,28 @@ def test_read_bits_relative_uses_own_min_max_not_global_128():
     cv2.circle(lit, (70, 60), 6, 90, -1)
     off = np.full((120, 160), 20, np.uint8)
     code_frames = [lit, off]
-    bits = _read_bits_relative(code_frames, 70.0, 60.0)
+    bits = _read_bits_relative(code_frames, 70.0, 60.0, anchor=lit)
     assert bits == [1, 0]
+
+
+def test_read_bits_relative_all_one_codeword_not_silent_id0():
+    # data_bits=5 (odd) -> max id 31 is the ALL-ONES codeword: lit in EVERY code
+    # frame. A constant-LIT dot must read all-ones (its true id), NOT silently
+    # collapse to all-zeros (a duplicate id=0 + lost correspondence). Regression
+    # for the Codex P2 finding.
+    from lmt_vba_sidecar.sl_codec import decode_bits, encode_id
+    anchor = np.full((120, 160), 20, np.uint8)
+    cv2.circle(anchor, (70, 60), 6, 200, -1)             # dot lit in the all-on anchor
+    lit = anchor.copy()                                   # ... and lit in every code frame
+    code_frames = [lit] * 6                               # total_bits = data_bits(5)+1
+    bits = _read_bits_relative(code_frames, 70.0, 60.0, anchor=anchor)
+    assert bits == [1, 1, 1, 1, 1, 1]
+    assert encode_id(31, 5) == [1, 1, 1, 1, 1, 1]         # sanity: 31 IS the all-ones codeword
+    assert decode_bits(bits, 5) == 31                     # true max id, NOT 0
+    # A constant-DARK dot (id=0, off in every code frame) still reads all zeros.
+    dark = np.full((120, 160), 20, np.uint8)              # no lit dot in the code frames
+    assert _read_bits_relative([dark] * 6, 70.0, 60.0, anchor=anchor) == [0, 0, 0, 0, 0, 0]
+    assert decode_bits([0, 0, 0, 0, 0, 0], 5) == 0
 
 
 def test_decode_gray_bg_regression(tmp_path):
