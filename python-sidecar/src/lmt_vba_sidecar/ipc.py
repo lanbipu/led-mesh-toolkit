@@ -226,6 +226,11 @@ class DecodeStructuredLightInput(BaseModel):
     sl_meta_path: str
     output_path: str
     sentinel_threshold: float = Field(gt=0.0, le=1.0, default=0.85)
+    # None = auto: Pass-1 temporal-activity map derives the screen ROI. A manual
+    # [x, y, w, h] overrides it (fallback when auto fails on hard scenes).
+    screen_roi: tuple[int, int, int, int] | None = None
+    # Write the Pass-3 seed binary mask to <output_path>.debug.png for eyeball QA.
+    emit_debug_image: bool = False
 
 
 class CorrespondencePoint(BaseModel):
@@ -243,6 +248,9 @@ class CorrespondenceFile(BaseModel):
     screen_resolution: PositiveIntPair
     camera_image_size: Annotated[list[int], Field(min_length=2, max_length=2)]
     source_input: str          # the decoded video/dir path
+    # Detection provenance: the screen ROI actually used (auto-derived or manual).
+    # Optional so old corr.json still validate; reconstruct ignores it.
+    screen_roi: tuple[int, int, int, int] | None = None
     points: list[CorrespondencePoint]
 
 
