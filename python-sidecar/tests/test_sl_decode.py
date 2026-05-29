@@ -36,6 +36,40 @@ def test_index_plateaus_raises_on_mismatch():
         index_plateaus([_g(10), _g(200)], expected=5)
 
 
+from lmt_vba_sidecar.sl_decode import derive_screen_roi
+
+
+def test_derive_screen_roi_finds_blinking_rect_ignoring_static_bright_bg():
+    # Static bright textured background (range==0) + a blinking rect in the
+    # middle (range high). ROI must be the rect, not the whole frame.
+    rng = np.random.default_rng(0)
+    bg = rng.integers(180, 256, size=(120, 160), dtype=np.uint8)  # bright, static
+    frames = []
+    for k in range(8):
+        f = bg.copy()
+        if k % 2 == 0:                       # rect blinks on even frames
+            f[40:90, 50:130] = 255
+        else:
+            f[40:90, 50:130] = 20
+        frames.append(f)
+    x, y, w, h = derive_screen_roi(frames)
+    assert 45 <= x <= 55 and 35 <= y <= 45      # near rect top-left (50,40)
+    assert 70 <= w <= 90 and 45 <= h <= 60      # near rect 80x50
+    assert (x, y, w, h) != (0, 0, 160, 120)     # not the whole frame
+
+
+def test_derive_screen_roi_rejects_only_thin_offscreen_motion():
+    # Only a thin, non-solid moving streak (an off-screen person/car) and no
+    # screen activity -> no solid rect -> raise (caller maps to detection_failed).
+    frames = []
+    for k in range(8):
+        f = np.full((120, 160), 200, np.uint8)
+        f[10:14, (10 + k * 8):(14 + k * 8)] = 255   # thin sliding streak
+        frames.append(f)
+    with pytest.raises(ValueError):
+        derive_screen_roi(frames)
+
+
 import json
 from lmt_vba_sidecar.ipc import GenerateStructuredLightInput, DecodeStructuredLightInput
 from lmt_vba_sidecar.structured_light import run_generate_structured_light

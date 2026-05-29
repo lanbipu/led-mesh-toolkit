@@ -42,6 +42,43 @@ def load_frames(input_path: str) -> list[np.ndarray]:
     return frames
 
 
+def derive_screen_roi(frames: list[np.ndarray]) -> tuple[int, int, int, int]:
+    """Pass 1: per-pixel temporal range (max-min) over the whole clip -> screen ROI.
+
+    The screen rectangle is swept by the white sentinel + blinking dots, so it is
+    a SOLID high-activity region. Off-screen movers (person/car) are thin, sparse,
+    non-solid blobs. We Otsu-threshold the activity map, keep the connected
+    component whose bbox is most rectangle-filled (component area / bbox area),
+    and return its bounding box. Brightness never enters the decision."""
+    stack = np.stack(frames).astype(np.int16)
+    activity = (stack.max(axis=0) - stack.min(axis=0)).astype(np.uint8)
+    if int(activity.max()) == 0:
+        raise ValueError("no temporal activity; nothing blinks (static clip?)")
+    _t, mask = cv2.threshold(activity, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    n, _lbl, stats, _cent = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    # A screen ROI is BOTH solid (bbox well-filled) AND large; off-screen movers
+    # are tiny specks that are individually "100% filled" but cover a negligible
+    # fraction of the frame. Keep the largest-area solid component and reject if
+    # it is still too small to be a screen.
+    frame_area = float(activity.shape[0] * activity.shape[1])
+    best: tuple[int, int, int, int] | None = None
+    best_area = 0
+    for i in range(1, n):
+        x, y, w, h, area = (int(stats[i][c]) for c in range(5))
+        if w < 4 or h < 4:
+            continue
+        fill = area / float(w * h)        # how solidly the bbox is filled
+        if fill < 0.5:                    # not a solid rectangle
+            continue
+        if area > best_area:
+            best_area, best = area, (x, y, w, h)
+    if best is None or best_area < 0.01 * frame_area:   # only thin/small movers
+        raise ValueError(
+            "could not auto-derive a solid screen ROI from temporal activity; "
+            "pass --screen-roi X,Y,W,H to specify it manually")
+    return best
+
+
 def segment_code_region(frames: list[np.ndarray], *, sentinel_threshold: float) -> tuple[int, int]:
     """Code region = ONE cycle: the frames between the first white-sentinel RUN
     and the NEXT one. Robust to three real-world capture shapes:
