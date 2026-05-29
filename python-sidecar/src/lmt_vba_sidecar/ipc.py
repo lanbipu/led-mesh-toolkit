@@ -118,6 +118,19 @@ class ReconstructInput(BaseModel):
     pose_report_path: str | None = None
 
 
+class ReconstructStructuredLightInput(BaseModel):
+    command: Literal["reconstruct_structured_light"]
+    version: Literal[1]
+    project: ReconstructProject
+    # One CorrespondenceFile per camera pose (decode_structured_light output).
+    correspondence_paths: Annotated[list[str], Field(min_length=2)]
+    sl_meta_path: str
+    # Camera intrinsics JSON (visual calibrate output): {K, dist_coeffs, image_size}.
+    intrinsics_path: str
+    # If set, the sidecar writes cabinet_pose_report.json here (spec §9).
+    pose_report_path: str | None = None
+
+
 class CalibrateInput(BaseModel):
     command: Literal["calibrate"]
     version: Literal[1]

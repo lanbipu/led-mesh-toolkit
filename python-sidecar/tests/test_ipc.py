@@ -188,3 +188,18 @@ def test_meta_and_correspondence_carry_provenance():
         "points": [{"id": 0, "u": 240.0, "v": 240.0, "x": 12.0, "y": 34.0}],
     })
     assert corr.sl_meta_sha256 == "abc" and corr.points[0].id == 0
+
+
+def test_reconstruct_structured_light_input_defaults():
+    from lmt_vba_sidecar.ipc import ReconstructStructuredLightInput
+    m = ReconstructStructuredLightInput.model_validate({
+        "command": "reconstruct_structured_light", "version": 1,
+        "project": {"screen_id": "MAIN",
+                    "cabinet_array": {"cols": 2, "rows": 1,
+                                      "absent_cells": [], "cabinet_size_mm": [500, 500]}},
+        "correspondence_paths": ["/c/p0.json", "/c/p1.json"],
+        "sl_meta_path": "/sl/sl_meta.json", "intrinsics_path": "/cal/intr.json",
+    })
+    assert m.project.shape_prior == "flat"          # ReconstructProject default
+    assert m.pose_report_path is None
+    assert len(m.correspondence_paths) == 2
