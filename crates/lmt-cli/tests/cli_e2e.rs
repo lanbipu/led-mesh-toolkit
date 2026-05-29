@@ -1912,6 +1912,17 @@ fn decode_structured_light_dry_run_writes_nothing() {
 }
 
 #[test]
+fn decode_structured_light_help_lists_new_flags() {
+    let assert = lmt()
+        .args(["visual", "decode-structured-light", "--help"])
+        .assert()
+        .success();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(out.contains("--screen-roi"), "help must document --screen-roi: {out}");
+    assert!(out.contains("--emit-debug-image"), "help must document --emit-debug-image: {out}");
+}
+
+#[test]
 fn reconstruct_structured_light_refuses_without_yes() {
     let tmp = TempDir::new().unwrap();
     let proj = tmp.path().join("proj");

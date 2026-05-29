@@ -75,6 +75,8 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             sl_meta,
             out,
             sentinel_threshold,
+            // screen_roi + emit_debug_image are wired into the handler in Task 8.
+            ..
         } => decode_structured_light(
             mode, &input_path, &sl_meta, &out, sentinel_threshold, yes, dry_run,
         ),
