@@ -45,6 +45,9 @@ pub struct ReconstructOut {
     pub measured_points: MeasuredPoints,
     pub pose_report_path: String,
     pub ba_rms_px: f64,
+    pub ba_observations_total: usize,
+    pub ba_observations_used: usize,
+    pub ba_rejected: usize,
     pub cabinet_summaries: Vec<CabinetSummary>,
 }
 
@@ -151,6 +154,9 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
     let result: ResultData = serde_json::from_value(value).map_err(VbaError::BadEventJson)?;
 
     let ba_rms_px = result.ba_stats.rms_reprojection_px;
+    let ba_observations_total = result.ba_stats.n_observations_total;
+    let ba_observations_used = result.ba_stats.n_observations_used;
+    let ba_rejected = result.ba_stats.n_rejected;
     let points: Vec<lmt_core::point::MeasuredPoint> = result
         .measured_points
         .into_iter()
@@ -172,6 +178,9 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
         measured_points,
         pose_report_path: args.pose_report_path,
         ba_rms_px,
+        ba_observations_total,
+        ba_observations_used,
+        ba_rejected,
         cabinet_summaries,
     })
 }
@@ -221,6 +230,9 @@ pub async fn reconstruct_structured_light(
     let result: ResultData = serde_json::from_value(value).map_err(VbaError::BadEventJson)?;
 
     let ba_rms_px = result.ba_stats.rms_reprojection_px;
+    let ba_observations_total = result.ba_stats.n_observations_total;
+    let ba_observations_used = result.ba_stats.n_observations_used;
+    let ba_rejected = result.ba_stats.n_rejected;
     let points: Vec<lmt_core::point::MeasuredPoint> = result
         .measured_points
         .into_iter()
@@ -242,6 +254,9 @@ pub async fn reconstruct_structured_light(
         measured_points,
         pose_report_path: args.pose_report_path,
         ba_rms_px,
+        ba_observations_total,
+        ba_observations_used,
+        ba_rejected,
         cabinet_summaries,
     })
 }
