@@ -566,3 +566,32 @@ def test_seeded_flip_is_corrected_by_nominal():
     n_est = out[1][0] @ np.array([0.0, 0.0, 1.0])
     n_true = R_true @ np.array([0.0, 0.0, 1.0])
     assert np.degrees(np.arccos(np.clip(n_est @ n_true, -1, 1))) < 5.0
+
+
+def test_stageA_pnp_ransac_inliers_drops_far_outlier():
+    from lmt_vba_sidecar.reconstruct import stage_a_prune
+    from lmt_vba_sidecar.model_constrained_ba import Observation
+    K = np.array([[2000.0, 0, 960], [0, 2000.0, 540], [0, 0, 1.0]])
+    R = cv2.Rodrigues(np.array([0.05, 0.1, 0.0]))[0]
+    t = np.array([0.0, 0.0, 2300.0])
+    obj = np.array([[x, y, 0.0] for x in (-300.0, -100.0, 100.0, 300.0)
+                    for y in (-170.0, 0.0, 170.0)], dtype=float)
+    observations, pvcc = [], {}
+    for p in obj:
+        xc = R @ p + t
+        pr = K @ xc
+        pix = pr[:2] / pr[2]
+        observations.append(Observation(camera_idx=0, cabinet_idx=0, p_local=p, pixel=pix))
+        pvcc.setdefault((0, 0), []).append((p, pix))
+    # Inject ONE far outlier (wrong-id pixel 500px off) into the SAME group.
+    bad_pix = observations[0].pixel + np.array([500.0, 0.0])
+    observations.append(Observation(camera_idx=0, cabinet_idx=0, p_local=obj[5], pixel=bad_pix))
+    pvcc[(0, 0)].append((obj[5], bad_pix))
+
+    obs2, pvcc2, views2, pts2, n_rej, rej_per_cab = stage_a_prune(observations, pvcc, K)
+    assert n_rej == 1
+    assert rej_per_cab == {0: 1}            # the one outlier is on cabinet 0
+    assert len(obs2) == len(obj)            # the clean dozen survive
+    assert pts2[0] == len(obj)
+    assert views2[0] == {0}
+    assert all(not np.allclose(o.pixel, bad_pix) for o in obs2)

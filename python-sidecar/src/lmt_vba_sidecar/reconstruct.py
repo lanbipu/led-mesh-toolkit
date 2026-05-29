@@ -321,6 +321,10 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
         ))
         return 1
 
+    # --- 5b. Stage A pre-clean: per-(cam,cab) PnP-RANSAC inlier filter ---
+    (observations, per_view_cab_corners, per_cabinet_views, per_cabinet_points,
+     n_rej_stage_a, rej_per_cab_stage_a) = stage_a_prune(observations, per_view_cab_corners, K)
+
     # --- 6. observability ---
     try:
         check_observability(observations, n_cabinets, min_views=2, min_points=8)
@@ -343,6 +347,7 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
         per_cabinet_views=per_cabinet_views, per_cabinet_points=per_cabinet_points,
         corners_local_provider=lambda cid: _active_surface_corners_mm(screen_mapping, cid),
         pose_report_path=cmd.pose_report_path,
+        n_rejected_pre=n_rej_stage_a, rejected_per_cab_pre=rej_per_cab_stage_a,
     )
 
 
@@ -361,6 +366,8 @@ def solve_and_emit(
     per_cabinet_points: dict[int, int],
     corners_local_provider: Callable[[str], np.ndarray],
     pose_report_path: str | None,
+    n_rejected_pre: int = 0,
+    rejected_per_cab_pre: dict[int, int] | None = None,
 ) -> int:
     """Shared init -> model_constrained_ba -> per-cabinet geometry -> report ->
     ResultEvent. Used by both run_reconstruct (charuco) and
@@ -596,6 +603,57 @@ def _solve_pnp(corners, K):
         return None
     branches, _mask = res
     return branches[0]
+
+
+def stage_a_prune(observations, per_view_cab_corners, K):
+    """Stage A pre-clean: per-(cam,cab) PnP-RANSAC inlier filter. Drops gross /
+    random-far and independent near-neighbor mis-IDs whose reprojection exceeds
+    PNP_RANSAC_REPROJ_PX. NOT authoritative for coherent shifts (those pass to
+    Stage B). Groups with < MIN_PNP_CORNERS are kept whole. Rebuilds the
+    observation list + per_view_cab_corners + per-cabinet view/point indices
+    from the inliers. Returns (obs_out, pvcc_out, per_cabinet_views,
+    per_cabinet_points, n_rejected_total, rejected_per_cab) where
+    rejected_per_cab: dict[int,int] is the per-cabinet Stage-A reject count
+    (Task 6 stats + Task 7 tests consume it)."""
+    # Map each (cam,cab) corner index back to its source so we can keep aligned
+    # Observation objects (assembly appends to both lists in lockstep).
+    keep_mask: dict[tuple[int, int], list[bool]] = {}
+    n_rejected_total = 0
+    rejected_per_cab: dict[int, int] = {}
+    for key, corners in per_view_cab_corners.items():
+        _cam_idx, cab_idx = key
+        if len(corners) < MIN_PNP_CORNERS:
+            keep_mask[key] = [True] * len(corners)
+            continue
+        res = _solve_pnp_branches(corners, K)
+        if res is None:
+            keep_mask[key] = [True] * len(corners)  # degenerate -> defer to Stage B
+            continue
+        _branches, mask = res
+        keep_mask[key] = list(mask)
+        n_rej = int((~mask).sum())
+        n_rejected_total += n_rej
+        if n_rej:
+            rejected_per_cab[cab_idx] = rejected_per_cab.get(cab_idx, 0) + n_rej
+
+    # Rebuild aligned outputs. Walk observations in order, consuming each
+    # group's mask in the same append order assembly used.
+    cursor: dict[tuple[int, int], int] = {}
+    obs_out = []
+    pvcc_out: dict[tuple[int, int], list] = {}
+    views_out: dict[int, set] = {}
+    pts_out: dict[int, int] = {}
+    for o in observations:
+        key = (o.camera_idx, o.cabinet_idx)
+        i = cursor.get(key, 0)
+        cursor[key] = i + 1
+        if not keep_mask[key][i]:
+            continue
+        obs_out.append(o)
+        pvcc_out.setdefault(key, []).append((o.p_local, o.pixel))
+        views_out.setdefault(o.cabinet_idx, set()).add(o.camera_idx)
+        pts_out[o.cabinet_idx] = pts_out.get(o.cabinet_idx, 0) + 1
+    return obs_out, pvcc_out, views_out, pts_out, n_rejected_total, rejected_per_cab
 
 
 def _avg_rotation(rotations):
