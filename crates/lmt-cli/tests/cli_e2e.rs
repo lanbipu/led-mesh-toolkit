@@ -2010,6 +2010,62 @@ fn decode_structured_light_happy_with_roi_provenance_and_debug() {
         "<out>.debug.png must exist");
 }
 
+/// decode-structured-light accepts a disguise-style .dpx frame DIRECTORY through
+/// the REAL sidecar: generate PNG frames, transcode them to 10-bit Method-A DPX
+/// via the test fixture writer (single source of truth), then decode the .dpx
+/// directory. Asserts the CLI seam loads .dpx end to end (n_dots_decoded > 0).
+#[cfg(unix)]
+#[test]
+fn decode_structured_light_accepts_dpx_dir() {
+    let tmp = TempDir::new().unwrap();
+    let wrapper = match make_sidecar_wrapper(tmp.path()) {
+        Some(w) => w,
+        None => {
+            eprintln!("skipping decode_structured_light_accepts_dpx_dir: python-sidecar venv not found");
+            return;
+        }
+    };
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 1, 1);
+    lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &wrapper)
+        .args(["--json", "--yes", "visual", "generate-structured-light",
+            proj.to_str().unwrap(), "MAIN"])
+        .assert()
+        .success();
+    let sl_dir = proj.join("patterns/MAIN/sl");
+    let frames = sl_dir.join("frames");
+    let dpx_dir = sl_dir.join("frames_dpx");
+    let meta = sl_dir.join("sl_meta.json");
+    let out = tmp.path().join("corr.json");
+
+    // Transcode PNG frames -> .dpx using the venv python + the fixture writer.
+    let py = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../python-sidecar/.venv/bin/python");
+    let fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../python-sidecar/tests/_dpx_fixtures.py");
+    let status = std::process::Command::new(&py)
+        .arg(&fixtures)
+        .arg(&frames)
+        .arg(&dpx_dir)
+        .status()
+        .expect("run _dpx_fixtures.py converter");
+    assert!(status.success(), "DPX conversion failed");
+    assert!(dpx_dir.join("frame0000.dpx").is_file(), "converter wrote .dpx frames");
+
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &wrapper)
+        .args(["--json", "--yes", "visual", "decode-structured-light",
+            dpx_dir.to_str().unwrap(), meta.to_str().unwrap(),
+            "--out", out.to_str().unwrap()])
+        .assert()
+        .success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true, "envelope ok: {env}");
+    assert!(env["data"]["n_dots_decoded"].as_u64().unwrap() > 0,
+        "decoded > 0 dots from .dpx dir");
+}
+
 /// The manifest's decode-structured-light CLI string documents the new flags and
 /// keeps the exit-code set unchanged (no new error codes per spec A.3).
 /// (Operations live under the `manifest` envelope, keyed by `operation_id`.)
