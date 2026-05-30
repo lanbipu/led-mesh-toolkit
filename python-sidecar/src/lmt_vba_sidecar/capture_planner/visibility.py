@@ -119,3 +119,50 @@ def coverage_report(geom: ScreenGeometry, cams: list[Camera], *, margin_frac=0.0
                             reconstructable, low_obs)
         )
     return per_cabinet, counts
+
+
+@dataclass(frozen=True)
+class BridgingReport:
+    n_components: int
+    broken_edges: list           # [((col,row),(col,row)), ...] adjacent but unbridged
+    components: list             # [[(col,row), ...], ...]
+
+
+def bridging_report(geom: ScreenGeometry, cams: list[Camera], *, margin_frac=0.05,
+                    incidence_max_deg=60.0) -> BridgingReport:
+    _, counts = coverage_report(geom, cams, margin_frac=margin_frac,
+                                incidence_max_deg=incidence_max_deg)
+
+    def covers(ci, key):
+        return counts.get((ci, key), 0) >= gates.MIN_PNP_CORNERS
+
+    present = {(c.col, c.row) for c in geom.cabinets}
+    parent = {k: k for k in present}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        parent[find(a)] = find(b)
+
+    broken: list = []
+    for (col, row) in present:
+        for (dc, dr) in ((1, 0), (0, 1)):            # right / up neighbours only
+            nb = (col + dc, row + dr)
+            if nb not in present:
+                continue
+            here = (col, row)
+            shared = any(covers(ci, here) and covers(ci, nb) for ci in range(len(cams)))
+            if shared:
+                union(here, nb)
+            else:
+                broken.append((here, nb))
+
+    roots: dict = {}
+    for k in present:
+        roots.setdefault(find(k), []).append(k)
+    components = [sorted(v) for v in roots.values()]
+    return BridgingReport(len(components), broken, components)

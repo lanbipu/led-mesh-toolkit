@@ -119,3 +119,35 @@ def test_four_views_not_low_observation():
     assert len(cov.covering_cams) == 4
     assert cov.reconstructable is True
     assert cov.low_observation is False
+
+
+from lmt_vba_sidecar.capture_planner.visibility import bridging_report
+
+
+def test_bridging_single_camera_covering_two_adjacent_is_one_component():
+    cab = CabinetArray(cols=2, rows=1, cabinet_size_mm=[500.0, 500.0], absent_cells=[])
+    geom = expand_screen(cab, "flat", sample_grid=(4, 4))
+    K = intrinsics_from_fov((1920, 1080), hfov_deg=70.0)
+    # one camera centered on the 2-wide wall, far enough to cover both cabinets
+    center = np.array([500.0, 250.0, 0.0])
+    cam = look_at_camera(K, center + [0.0, 0.0, 4000.0], center, (1920, 1080))
+    rep = bridging_report(geom, [cam])
+    assert rep.broken_edges == []
+    assert rep.n_components == 1
+
+
+def test_bridging_disjoint_cameras_break_the_chain():
+    cab = CabinetArray(cols=2, rows=1, cabinet_size_mm=[500.0, 500.0], absent_cells=[])
+    geom = expand_screen(cab, "flat", sample_grid=(4, 4))
+    K = intrinsics_from_fov((1920, 1080), hfov_deg=30.0)
+    # two tight-FOV cameras close in, each frontal to ONE cabinet only; at 800mm
+    # the other cabinet's nearest (seam) column projects off-sensor -> no shared cover
+    left_c = np.array([250.0, 250.0, 0.0])
+    right_c = np.array([750.0, 250.0, 0.0])
+    cams = [
+        look_at_camera(K, left_c + [0.0, 0.0, 800.0], left_c, (1920, 1080)),
+        look_at_camera(K, right_c + [0.0, 0.0, 800.0], right_c, (1920, 1080)),
+    ]
+    rep = bridging_report(geom, cams)
+    assert ((0, 0), (1, 0)) in rep.broken_edges or ((1, 0), (0, 0)) in rep.broken_edges
+    assert rep.n_components == 2
