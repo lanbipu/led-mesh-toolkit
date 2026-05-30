@@ -163,9 +163,13 @@ class BridgingReport:
 
 
 def bridging_report(geom: ScreenGeometry, cams: list[Camera], *, margin_frac=0.05,
-                    incidence_max_deg=60.0) -> BridgingReport:
-    _, counts = coverage_report(geom, cams, margin_frac=margin_frac,
-                                incidence_max_deg=incidence_max_deg)
+                    incidence_max_deg=60.0, counts=None) -> BridgingReport:
+    # `counts` is the per-(cam, cabinet) visible-point map from coverage_report.
+    # Callers that already computed it (e.g. score_screen) pass it in to avoid a
+    # second full visibility scan over the same cameras.
+    if counts is None:
+        _, counts = coverage_report(geom, cams, margin_frac=margin_frac,
+                                    incidence_max_deg=incidence_max_deg)
 
     def covers(ci, key):
         return counts.get((ci, key), 0) >= gates.MIN_PNP_CORNERS

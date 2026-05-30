@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from lmt_vba_sidecar.capture_planner.geometry import ScreenGeometry
-from lmt_vba_sidecar.capture_planner.visibility import Camera, look_at_camera
+from lmt_vba_sidecar.capture_planner.visibility import Camera, coverage_report, look_at_camera
 from lmt_vba_sidecar.capture_planner.seed import Shell
 from lmt_vba_sidecar.capture_planner.scoring import score_screen
 
@@ -41,6 +41,7 @@ class OptimizeResult:
     cameras: list          # final list[Camera]
     report: dict           # score_screen output for the final set
     unreachable: list      # [(col,row), ...] cabinets that never pass
+    counts: dict           # per-(cam_idx, (col,row)) visible-point count for `cameras`
 
 
 def _n_failing(report) -> int:
@@ -78,5 +79,9 @@ def optimize(geom: ScreenGeometry, K, image_size, shell: Shell, *, seed_cams=Non
                              "n_views": 0, "total_observations": 0}
             for c in geom.cabinets
         }
+    # Final per-(cam, cabinet) visibility for the chosen cameras, so callers can
+    # derive per-station covered-cabinet lists without re-running coverage.
+    inc = score_kwargs.get("incidence_max_deg", 60.0)
+    _, counts = coverage_report(geom, cams, incidence_max_deg=inc) if cams else ([], {})
     unreachable = [k for k, v in report.items() if not v["pass"]]
-    return OptimizeResult(cams, report, unreachable)
+    return OptimizeResult(cams, report, unreachable, counts)

@@ -18,7 +18,7 @@ from lmt_vba_sidecar.ipc import (
 )
 from lmt_vba_sidecar.capture_planner import gates
 from lmt_vba_sidecar.capture_planner.geometry import expand_screen
-from lmt_vba_sidecar.capture_planner.visibility import coverage_report, intrinsics_from_fov
+from lmt_vba_sidecar.capture_planner.visibility import intrinsics_from_fov
 from lmt_vba_sidecar.capture_planner.seed import Shell, seed_cameras
 from lmt_vba_sidecar.capture_planner.optimize import optimize
 
@@ -57,8 +57,10 @@ def run_plan_capture(cmd: PlanCaptureInput) -> int:
                       n_height=cmd.n_height, n_azimuth=cmd.n_azimuth,
                       score_kwargs=score_kwargs)
 
-    per_cab, counts = coverage_report(geom, result.cameras,
-                                      incidence_max_deg=cmd.incidence_max_deg)
+    # Single source of truth: optimize already computed the final report (all
+    # per-cabinet fields) and the per-(cam, cabinet) `counts` for the chosen
+    # cameras. Reuse both instead of re-running coverage_report.
+    counts = result.counts
 
     roles = ([s.role for s in seed_stations]
              + ["added"] * (len(result.cameras) - len(seed_cams)))
@@ -80,13 +82,13 @@ def run_plan_capture(cmd: PlanCaptureInput) -> int:
         ))
 
     coverage = []
-    for c in per_cab:
-        v = result.report[(c.col, c.row)]
+    for cabg in geom.cabinets:
+        v = result.report[(cabg.col, cabg.row)]
         p95 = v["p95_mm"]
         coverage.append(CabinetCoverageData(
-            col=c.col, row=c.row,
+            col=cabg.col, row=cabg.row,
             p95_residual_mm=(None if (p95 is None or math.isnan(p95)) else float(p95)),
-            n_views=v["n_views"], total_observations=c.total_observations,
+            n_views=v["n_views"], total_observations=v["total_observations"],
             reconstructable=v["reconstructable"], low_observation=v["low_observation"],
             bridged=v["bridged"], pass_=v["pass"],
         ))
