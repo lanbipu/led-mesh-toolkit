@@ -2346,11 +2346,21 @@ output:
     proj
 }
 
+#[cfg(unix)]
 #[test]
 fn visual_plan_capture_returns_plan() {
     let tmp = TempDir::new().unwrap();
     let proj = write_min_project(tmp.path());
+    // Real sidecar: skip gracefully when the dev venv is absent (CI/fresh checkout).
+    let wrapper = match make_sidecar_wrapper(tmp.path()) {
+        Some(w) => w,
+        None => {
+            eprintln!("skipping visual_plan_capture_returns_plan: python-sidecar venv not found");
+            return;
+        }
+    };
     let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &wrapper)
         .args([
             "--json", "visual", "plan-capture",
             proj.to_str().unwrap(), "MAIN",
@@ -2408,11 +2418,20 @@ fn visual_plan_capture_bad_image_size_is_invalid_input() {
     assert_eq!(env["error"]["code"], "invalid_input");
 }
 
+#[cfg(unix)]
 #[test]
 fn visual_capture_card_emits_self_contained_html() {
     let tmp = TempDir::new().unwrap();
     let proj = write_min_project(tmp.path());
+    let wrapper = match make_sidecar_wrapper(tmp.path()) {
+        Some(w) => w,
+        None => {
+            eprintln!("skipping visual_capture_card_emits_self_contained_html: venv not found");
+            return;
+        }
+    };
     let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &wrapper)
         .args([
             "visual", "capture-card", proj.to_str().unwrap(), "MAIN",
             "--image-size", "1920x1080", "--hfov-deg", "60",
