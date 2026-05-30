@@ -421,6 +421,10 @@ pub struct CabinetCoverageData {
     pub reconstructable: bool,
     pub low_observation: bool,
     pub bridged: bool,
+    // Accept both `pass` (pydantic >=2.11 serialize_by_alias) and `pass_`
+    // (older pydantic ignores that config key) so the wire contract is robust
+    // across the `pydantic>=2.0,<3.0` pin range.
+    #[serde(alias = "pass_")]
     pub pass: bool,
 }
 
