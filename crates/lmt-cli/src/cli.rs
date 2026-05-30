@@ -429,6 +429,71 @@ pub enum VisualCmd {
         /// known_geometry.json 路径(用户填的真值)。
         known: String,
     },
+    /// 采集指导:几何 + 内参 → 推荐机位 plan(逐箱体覆盖/残差)。side_effect: write_safe
+    #[command(name = "plan-capture")]
+    PlanCapture {
+        /// 项目根目录。
+        project_path: String,
+        /// screen id。
+        screen_id: String,
+        /// 传感器分辨率 WxH,例如 3840x2160。
+        #[arg(long = "image-size")]
+        image_size: String,
+        /// 水平 FOV(度);与 --vfov-deg 二选一。
+        #[arg(long = "hfov-deg")]
+        hfov_deg: Option<f64>,
+        /// 垂直 FOV(度);与 --hfov-deg 二选一。
+        #[arg(long = "vfov-deg")]
+        vfov_deg: Option<f64>,
+        /// 后退距离区间 MIN..MAX(mm),例如 3000..12000。
+        #[arg(long)]
+        standoff: String,
+        /// 架高区间 MIN..MAX(mm),例如 400..3000。
+        #[arg(long)]
+        height: String,
+        /// 每箱体 p95 3D 残差目标(mm)。
+        #[arg(long = "target-mm", default_value_t = 3.0)]
+        target_mm: f64,
+        /// Monte-Carlo 试验次数。
+        #[arg(long, default_value_t = 20)]
+        trials: u32,
+        /// RNG 种子。
+        #[arg(long, default_value_t = 0)]
+        seed: u32,
+    },
+    /// 采集指导可视化:渲染自包含 HTML 指导卡(俯视机位图 + 正视覆盖热力图 + 机位清单)。
+    /// human 模式 stdout 出 HTML(`... > card.html`);--json 包 `{html_content}`。side_effect: read_only
+    #[command(name = "capture-card")]
+    CaptureCard {
+        /// 项目根目录。
+        project_path: String,
+        /// screen id。
+        screen_id: String,
+        /// 传感器分辨率 WxH,例如 3840x2160。
+        #[arg(long = "image-size")]
+        image_size: String,
+        /// 水平 FOV(度);与 --vfov-deg 二选一。
+        #[arg(long = "hfov-deg")]
+        hfov_deg: Option<f64>,
+        /// 垂直 FOV(度);与 --hfov-deg 二选一。
+        #[arg(long = "vfov-deg")]
+        vfov_deg: Option<f64>,
+        /// 后退距离区间 MIN..MAX(mm)。
+        #[arg(long)]
+        standoff: String,
+        /// 架高区间 MIN..MAX(mm)。
+        #[arg(long)]
+        height: String,
+        /// 每箱体 p95 3D 残差目标(mm)。
+        #[arg(long = "target-mm", default_value_t = 3.0)]
+        target_mm: f64,
+        /// Monte-Carlo 试验次数。
+        #[arg(long, default_value_t = 20)]
+        trials: u32,
+        /// RNG 种子。
+        #[arg(long, default_value_t = 0)]
+        seed: u32,
+    },
 }
 
 impl Cli {

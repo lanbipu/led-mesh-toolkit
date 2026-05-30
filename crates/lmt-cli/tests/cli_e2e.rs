@@ -2407,3 +2407,23 @@ fn visual_plan_capture_bad_image_size_is_invalid_input() {
     let env: Value = serde_json::from_str(stderr).unwrap();
     assert_eq!(env["error"]["code"], "invalid_input");
 }
+
+#[test]
+fn visual_capture_card_emits_self_contained_html() {
+    let tmp = TempDir::new().unwrap();
+    let proj = write_min_project(tmp.path());
+    let assert = lmt()
+        .args([
+            "visual", "capture-card", proj.to_str().unwrap(), "MAIN",
+            "--image-size", "1920x1080", "--hfov-deg", "60",
+            "--standoff", "2000..4000", "--height", "400..2200", "--trials", "6",
+        ])
+        .assert()
+        .success();
+    let html = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(html.starts_with("<!DOCTYPE html>"));
+    assert!(html.matches("<svg").count() >= 2);
+    assert!(html.contains("PingFang SC"));
+    // self-contained — no external resources
+    assert!(!html.contains("https://") && !html.contains("http://") && !html.contains("cdn"));
+}
