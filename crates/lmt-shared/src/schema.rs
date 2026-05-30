@@ -83,6 +83,7 @@ pub fn dump_all() -> Value {
     add!("CaptureStation", dto::CaptureStation);
     add!("CabinetCoverage", dto::CabinetCoverage);
     add!("UnreachableRegion", dto::UnreachableRegion);
+    add!("CaptureCardResult", dto::CaptureCardResult);
 
     // 错误模型
     add!("LmtError", error::LmtError);

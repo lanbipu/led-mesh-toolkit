@@ -613,3 +613,9 @@ pub struct CapturePlan {
     pub all_pass: bool,
     pub target_p95_residual_mm: f64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CaptureCardResult {
+    /// Self-contained HTML (inline SVG, no external deps).
+    pub html_content: String,
+}
