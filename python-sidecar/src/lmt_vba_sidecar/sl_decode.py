@@ -19,18 +19,32 @@ import pathlib
 import cv2
 import numpy as np
 
+from lmt_vba_sidecar.dpx import read_dpx_gray8
 from lmt_vba_sidecar.io_utils import write_event
 from lmt_vba_sidecar.ipc import DecodeStructuredLightInput, ErrorEvent
 from lmt_vba_sidecar.sl_codec import decode_bits
 
 _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
+_DPX_EXT = ".dpx"
+
+
+def _read_frame_file(f: pathlib.Path) -> np.ndarray:
+    # cv2 cannot decode 10-bit DPX (returns None); route .dpx through our parser.
+    if f.suffix.lower() == _DPX_EXT:
+        return read_dpx_gray8(f)
+    return cv2.imread(str(f), cv2.IMREAD_GRAYSCALE)
 
 
 def load_frames(input_path: str) -> list[np.ndarray]:
     p = pathlib.Path(input_path)
     if p.is_dir():
-        files = sorted(f for f in p.iterdir() if f.suffix.lower() in _IMG_EXTS)
-        return [cv2.imread(str(f), cv2.IMREAD_GRAYSCALE) for f in files]
+        files = sorted(
+            f for f in p.iterdir()
+            if f.suffix.lower() in _IMG_EXTS or f.suffix.lower() == _DPX_EXT
+        )
+        return [_read_frame_file(f) for f in files]
+    if p.suffix.lower() == _DPX_EXT:          # single .dpx = one frame (still format)
+        return [read_dpx_gray8(p)]
     cap = cv2.VideoCapture(str(p))
     frames: list[np.ndarray] = []
     while True:
@@ -223,7 +237,16 @@ def run_decode_structured_light(cmd: DecodeStructuredLightInput) -> int:
     dot_radius_px = int(meta["dot_radius_px"])
     uv_by_id = {int(d["id"]): (float(d["u"]), float(d["v"])) for d in meta["dots"]}
 
-    frames = load_frames(cmd.input_path)
+    try:
+        frames = load_frames(cmd.input_path)
+    except (ValueError, OSError) as exc:
+        # ValueError = unsupported/corrupt DPX variant (read_dpx_gray8 guards);
+        # OSError/FileNotFoundError = a missing single .dpx path hits read_bytes()
+        # before any ValueError. Both must surface as a clean fatal decode_failed,
+        # never escape to __main__.py's internal_error+traceback fallback.
+        write_event(ErrorEvent(event="error", code="decode_failed",
+            message=f"failed to read frames: {exc}", fatal=True))
+        return 1
     if not frames:
         write_event(ErrorEvent(event="error", code="decode_failed",
             message="no frames loaded from input", fatal=True))
