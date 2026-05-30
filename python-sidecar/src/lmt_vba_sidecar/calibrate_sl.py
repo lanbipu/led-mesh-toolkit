@@ -29,25 +29,34 @@ from lmt_vba_sidecar.nominal import (
 from lmt_vba_sidecar.sl_reconstruct import validate_sl_provenance
 from lmt_vba_sidecar.calibrate import _atomic_write, FOCAL_BOUNDS_FRACTION
 
-# Observability gate constants (spec §8 starting values).
-# Coverage is the LARGER per-axis union-bbox span fraction, not a bbox-AREA
-# product: a real LED wall (wide, short) projects to a thin band whose area
-# fraction can never reach 0.40 even when perfectly observed, but whose dominant
-# axis still spans a healthy fraction of the frame. The gate's intent — reject
-# dots crammed into one small image region — is preserved by the per-axis span.
+# Observability gate constants — FAIL-SAFE: refuse an under-constrained capture
+# rather than emit a confidently-wrong K (spec §2.1/§3.2/§8).
+#
+# Coverage is the SMALLER per-axis union-bbox span fraction (min, not max): both
+# image axes must span the frame. A near-1D distribution (dots on ~one scanline,
+# or a wide/short wall seen fronto-parallel) passes a max() gate while the
+# collapsed axis is wholly unconstrained -> fy/cy garbage. min() forces 2D
+# coverage. Pinned empirically: a well-conditioned multi-row + oblique +
+# multi-distance capture gives min-axis span >= 0.22; the shallow-arc / wide-thin
+# / 1D cases collapse to <= 0.06. 0.20 sits cleanly between.
 COVERAGE_MIN_FRAC = 0.20
 COPLANAR_RATIO_MIN = 1e-3
 POSE_ROT_DIVERSITY_DEG = 5.0
-# Covariance gates retuned against the synthetic substrate (spec §8 says the plan
-# pins final numbers there). A wide/short LED wall viewed from a shallow front arc
-# constrains the principal point only weakly: at 0.3 px centroid noise this rig
-# yields pp_std ~= 7-10 px and focal_std ~= 1.0%, while still recovering fx to
-# < 2%. The §8 starting values (pp <= 3 px, focal <= 1%) were tighter than the
-# geometry can deliver; these keep real margin (a genuinely degenerate solve
-# produces tens-to-hundreds of px pp_std) and are caught earlier by the
-# coplanarity / rotation-diversity gates regardless.
-PP_STDDEV_MAX_PX = 12.0
-FOCAL_STDDEV_MAX_FRAC = 0.015
+# Covariance gates re-tightened against a GENUINELY well-conditioned substrate
+# (3x3 curved wall + oblique, multi-distance poses). The earlier loosening
+# (focal 1%->1.5%, pp 3->12 px, coverage area->max) was fitted to a MARGINAL
+# substrate (single-row wall, shallow single-distance front arc) and let a
+# 38-41%-wrong fx through. Empirically the good vs under-constrained geometries
+# are cleanly separable:
+#   well-conditioned (passes): foc_std ~0.15-0.20%, pp_std ~2.0-2.7 px
+#   shallow-arc 2-pose / 1D / few-pose (must refuse): foc_std 2.3-8.6%,
+#                                                     pp_std 12.6-138 px
+# So foc_std <= 0.5% + min-axis coverage alone refuse every under-constrained
+# case while passing the well-conditioned one with huge margin; pp_std <= 3 px is
+# a backstop. No separate extrinsic-diversity gate is needed (the covariance +
+# coverage gates already separate the cases cleanly).
+PP_STDDEV_MAX_PX = 3.0
+FOCAL_STDDEV_MAX_FRAC = 0.005
 MIN_DOTS_PER_POSE = 4
 
 
@@ -75,11 +84,14 @@ def _max_pairwise_rot_deg(rvecs) -> float:
 
 
 def _coverage_frac(image_points, image_size) -> float:
-    """Larger per-axis union-bbox span fraction (not a bbox-area product)."""
+    """Smaller per-axis union-bbox span fraction (min, not max): BOTH image axes
+    must span the frame. A near-1D distribution (dots on ~one scanline) leaves the
+    collapsed axis unconstrained while a max() gate would still pass it -> refuse
+    via min(). FAIL-SAFE."""
     allpts = np.concatenate([np.asarray(p).reshape(-1, 2) for p in image_points], axis=0)
     w = (allpts[:, 0].max() - allpts[:, 0].min()) / image_size[0]
     h = (allpts[:, 1].max() - allpts[:, 1].min()) / image_size[1]
-    return float(max(w, h))
+    return float(min(w, h))
 
 
 def run_calibrate_structured_light(cmd: CalibrateStructuredLightInput) -> int:
@@ -197,7 +209,7 @@ def run_calibrate_structured_light(cmd: CalibrateStructuredLightInput) -> int:
     if max(pp_std) > PP_STDDEV_MAX_PX:
         return _err("observability_failed", f"principal-point std {pp_std} px > {PP_STDDEV_MAX_PX} (under-constrained)")
     if max(foc_std) > FOCAL_STDDEV_MAX_FRAC * fx:
-        return _err("observability_failed", f"focal std {foc_std} px > {FOCAL_STDDEV_MAX_FRAC*100:.0f}% of focal")
+        return _err("observability_failed", f"focal std {foc_std} px > {FOCAL_STDDEV_MAX_FRAC*100:.1f}% of focal")
 
     # 11. write intrinsics (5-key contract + provenance)
     payload = json.dumps({

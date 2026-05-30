@@ -16,25 +16,40 @@ K_TRUE = np.array([[3000.0, 0.0, 2000.0], [0.0, 3000.0, 1500.0], [0.0, 0.0, 1.0]
 IMG = (4000, 3000)
 
 
-def _curved_meta(cols=4, radius_mm=4000.0, grid=4):
-    cab = CabinetArray(cols=cols, rows=1, cabinet_size_mm=[500.0, 500.0])
-    shape = ShapePriorCurved(curved=ShapePriorCurvedBody(radius_mm=radius_mm))
+def _grid_meta(cols, rows, radius_mm=4000.0, grid=4, px=540):
+    """A cols x rows curved wall with grid x grid dots per cabinet. radius_mm=None
+    => flat. Default 1-row preserves the original single-row substrate for the
+    under-constraint refusal tests that need a wide/thin wall."""
+    cab = CabinetArray(cols=cols, rows=rows, cabinet_size_mm=[500.0, 500.0])
+    shape = "flat" if radius_mm is None else ShapePriorCurved(curved=ShapePriorCurvedBody(radius_mm=radius_mm))
     rects, dots, did = [], [], 0
-    px = 540
-    for c in range(cols):
-        rects.append(CabinetRect(col=c, row=0, input_rect_px=[c*px, 0, px, px], pixel_pitch_mm=[500.0/px, 500.0/px]))
-        for i in range(grid):
-            for j in range(grid):
-                u = c*px + (i + 0.5) * px / grid
-                v = (j + 0.5) * px / grid
-                dots.append(StructuredLightDot(id=did, u=float(u), v=float(v), cabinet=[c, 0])); did += 1
+    for r in range(rows):
+        for c in range(cols):
+            rects.append(CabinetRect(col=c, row=r, input_rect_px=[c*px, r*px, px, px], pixel_pitch_mm=[500.0/px, 500.0/px]))
+            for i in range(grid):
+                for j in range(grid):
+                    u = c*px + (i + 0.5) * px / grid
+                    v = r*px + (j + 0.5) * px / grid
+                    dots.append(StructuredLightDot(id=did, u=float(u), v=float(v), cabinet=[c, r])); did += 1
     meta = StructuredLightMeta(
-        schema_version=1, screen_id="MAIN", screen_resolution=[cols*px, px], dot_radius_px=4,
+        schema_version=1, screen_id="MAIN", screen_resolution=[cols*px, rows*px], dot_radius_px=4,
         code=CodeSpec(data_bits=8, total_bits=9), sequence=SequenceSpec(n_code_frames=9, hold_ms=100, fps=30),
         cabinets=rects, dots=dots,
     )
     proj = ReconstructProject(screen_id="MAIN", cabinet_array=cab, shape_prior=shape)
     return meta, proj, cab, shape
+
+
+def _curved_meta(cols=4, radius_mm=4000.0, grid=4):
+    """Original single-row (wide/thin) curved substrate — kept for the
+    under-constraint refusal tests. NOT well-conditioned (see _well_meta)."""
+    return _grid_meta(cols, 1, radius_mm=radius_mm, grid=grid)
+
+
+def _well_meta():
+    """GENUINELY well-conditioned substrate: a 3x3 curved wall (2D image coverage,
+    non-coplanar). Pair with _well_poses for the happy tests."""
+    return _grid_meta(cols=3, rows=3, radius_mm=6000.0, grid=3)
 
 
 def _write_corr(tmp, meta, world, poses, sha="sha-test", noise=0.0, seed=0):
@@ -57,10 +72,31 @@ def _write_corr(tmp, meta, world, poses, sha="sha-test", noise=0.0, seed=0):
 
 def _ring_poses(n=4, dist_m=6.0):
     # Cameras on a shallow arc in front of the wall (meters; world is meters).
+    # Single distance, near fronto-parallel -> UNDER-CONSTRAINED (refusal substrate).
     poses = []
     for k in range(n):
         x = -1.0 + 2.0 * k / max(1, n - 1)
         poses.append(look_at_pose(np.array([x, 0.0, -dist_m]), np.array([1.0, 0.0, 0.0])))
+    return poses
+
+
+def _wall_center(meta, cab, shape):
+    world = nominal_dot_positions_world(meta, cab, shape)
+    return np.array(list(world.values())).mean(0)
+
+
+def _well_poses(center):
+    """6 poses with REAL diversity: oblique azimuth/elevation orbit at TWO distinct
+    camera distances. This is the operating envelope the gates require to pass."""
+    cx, cy, cz = center
+    poses = []
+    for az, el, dist in [(-25, -12, 4.5), (20, 10, 4.5), (-15, 15, 8.0),
+                         (30, -18, 8.0), (0, 0, 6.0), (-35, 5, 5.5)]:
+        a, e = np.radians(az), np.radians(el)
+        pos = np.array([cx + dist * np.sin(a) * np.cos(e),
+                        cy + dist * np.sin(e),
+                        cz - dist * np.cos(a) * np.cos(e)])
+        poses.append(look_at_pose(pos, center))
     return poses
 
 
@@ -81,9 +117,12 @@ def _run(tmp, meta, proj, paths):
 
 
 def test_recovers_K_noise_free(tmp_path):
-    meta, proj, cab, shape = _curved_meta()
+    # Well-conditioned: 3x3 curved wall (2D coverage) + oblique, multi-distance
+    # poses. This is the operating envelope the tightened gates require.
+    meta, proj, cab, shape = _well_meta()
     world = nominal_dot_positions_world(meta, cab, shape)
-    paths = _write_corr(tmp_path, meta, world, _ring_poses(4), noise=0.0)
+    poses = _well_poses(_wall_center(meta, cab, shape))
+    paths = _write_corr(tmp_path, meta, world, poses, noise=0.0)
     rc, out = _run(tmp_path, meta, proj, paths)
     assert rc == 0
     intr = json.loads(out.read_text())
@@ -92,13 +131,14 @@ def test_recovers_K_noise_free(tmp_path):
     assert abs(K[0, 2] - 2000.0) < 1.5
     assert abs(K[1, 2] - 1500.0) < 1.5
     assert intr["calibration_method"] == "structured_light_nominal"
-    assert intr["frames_used"] == 4
+    assert intr["frames_used"] == len(poses)
 
 
 def test_recovers_K_with_noise_within_budget(tmp_path):
-    meta, proj, cab, shape = _curved_meta()
+    meta, proj, cab, shape = _well_meta()
     world = nominal_dot_positions_world(meta, cab, shape)
-    paths = _write_corr(tmp_path, meta, world, _ring_poses(4), noise=0.3)
+    poses = _well_poses(_wall_center(meta, cab, shape))
+    paths = _write_corr(tmp_path, meta, world, poses, noise=0.3)
     rc, out = _run(tmp_path, meta, proj, paths)
     assert rc == 0
     K = np.array(json.loads(out.read_text())["K"])
@@ -106,10 +146,14 @@ def test_recovers_K_with_noise_within_budget(tmp_path):
 
 
 def test_structured_deviation_within_budget_or_refused(tmp_path):
-    meta, proj, cab, shape = _curved_meta(radius_mm=4000.0)
-    dev_shape = ShapePriorCurved(curved=ShapePriorCurvedBody(radius_mm=4080.0))
+    # As-built arc radius deviates +2% from nominal (6000 -> 6120). Calibrate
+    # against nominal; global deviation is absorbed into the per-pose extrinsics,
+    # not K (spec §2.1), so K stays within budget (or the solve refuses).
+    meta, proj, cab, shape = _well_meta()  # nominal radius 6000mm
+    dev_shape = ShapePriorCurved(curved=ShapePriorCurvedBody(radius_mm=6120.0))
     truth_world = nominal_dot_positions_world(meta, cab, dev_shape)
-    paths = _write_corr(tmp_path, meta, truth_world, _ring_poses(4), noise=0.3)
+    poses = _well_poses(_wall_center(meta, cab, shape))
+    paths = _write_corr(tmp_path, meta, truth_world, poses, noise=0.3)
     rc, out = _run(tmp_path, meta, proj, paths)
     if rc == 0:
         K = np.array(json.loads(out.read_text())["K"])
@@ -136,25 +180,40 @@ def test_near_flat_single_pose_refused(tmp_path):
     assert rc == 1
 
 
-def test_near_duplicate_poses_refused(tmp_path):
-    meta, proj, cab, shape = _curved_meta()
+def test_near_duplicate_poses_refused(tmp_path, capsys):
+    # 3 captures from almost the same viewpoint of the well-conditioned 3x3 wall
+    # at close range: coverage PASSES (2D, ~0.33) so the refusal is the
+    # rotation-diversity gate firing on baseline collapse — pose count (3) is
+    # satisfied but baseline diversity is not (F2). A single-row wall would refuse
+    # here too, but via coverage, masking the diversity gate.
+    meta, proj, cab, shape = _well_meta()
     world = nominal_dot_positions_world(meta, cab, shape)
-    dup = [look_at_pose(np.array([0.0 + 1e-3*k, 0.0, -6.0]), np.array([1.0, 0.0, 0.0])) for k in range(3)]
+    center = _wall_center(meta, cab, shape)
+    dup = [look_at_pose(np.array([center[0] + 1e-3 * k, center[1], center[2] - 3.0]), center) for k in range(3)]
     paths = _write_corr(tmp_path, meta, world, dup, noise=0.1)
     rc, _ = _run(tmp_path, meta, proj, paths)
     assert rc == 1
+    errs = [json.loads(l) for l in capsys.readouterr().out.splitlines()
+            if l.strip() and json.loads(l).get("event") == "error"]
+    assert errs[0]["code"] == "observability_failed"
+    assert "rotation diversity" in errs[0]["message"].lower(), errs[0]["message"]
 
 
 def test_single_pose_covariance_gate_refused(tmp_path, capsys):
-    # Isolates the parameter-observability (covariance) gate — the Codex-review
-    # gate that catches a low-RMS-but-under-constrained K. A CURVED (non-coplanar)
-    # target seen from ONE pose: the coplanarity gate passes (ratio > 1e-3),
-    # coverage passes, the rotation-diversity gate is SKIPPED (only 1 rvec), and
-    # the fit's RMS stays ~0.4px (under the 1.5px gate). But a single view cannot
-    # pin the principal point, so pp_std (~16-21px > 12) trips the covariance gate.
-    meta, proj, cab, shape = _curved_meta()
+    # Isolates the parameter-observability (covariance) gate — the gate that
+    # catches a low-RMS-but-under-constrained K. The well-conditioned 3x3 curved
+    # target seen from ONE close frontal pose: coplanarity passes (ratio > 1e-3),
+    # COVERAGE passes (min-axis ~0.33 from one near pose), the rotation-diversity
+    # gate is SKIPPED (only 1 rvec), and the fit's RMS stays ~0.4px (under 1.5px).
+    # But a single view cannot pin focal/principal point, so foc_std (~1.8% >
+    # 0.5%) / pp_std (~11px > 3px) trip the covariance gate. The companion
+    # noise-free single pose (next test) fits perfectly and IS accepted, proving
+    # the gate fires on genuine under-constraint, not on pose count.
+    meta, proj, cab, shape = _well_meta()
     world = nominal_dot_positions_world(meta, cab, shape)
-    paths = _write_corr(tmp_path, meta, world, _ring_poses(1), noise=0.3)
+    center = _wall_center(meta, cab, shape)
+    single = [look_at_pose(np.array([center[0], center[1], center[2] - 3.0]), center)]
+    paths = _write_corr(tmp_path, meta, world, single, noise=0.3)
     rc, _ = _run(tmp_path, meta, proj, paths)
     assert rc == 1
     # Prove it is the covariance gate firing, not an earlier gate.
@@ -164,6 +223,46 @@ def test_single_pose_covariance_gate_refused(tmp_path, capsys):
     assert errs[0]["code"] == "observability_failed"
     msg = errs[0]["message"].lower()
     assert "principal-point std" in msg or "focal std" in msg, errs[0]["message"]
+
+
+def test_single_pose_noise_free_accepted(tmp_path):
+    # Companion to the covariance refusal: the SAME single close frontal pose,
+    # NOISE-FREE, fits perfectly (foc_std ~0.001%, pp_std ~0px) and is ACCEPTED.
+    # Confirms the covariance gate refuses on genuine under-constraint (noise +
+    # one view) rather than on pose count.
+    meta, proj, cab, shape = _well_meta()
+    world = nominal_dot_positions_world(meta, cab, shape)
+    center = _wall_center(meta, cab, shape)
+    single = [look_at_pose(np.array([center[0], center[1], center[2] - 3.0]), center)]
+    paths = _write_corr(tmp_path, meta, world, single, noise=0.0)
+    rc, out = _run(tmp_path, meta, proj, paths)
+    assert rc == 0
+    K = np.array(json.loads(out.read_text())["K"])
+    assert abs(K[0, 0] - 3000.0) / 3000.0 < 0.01
+
+
+def test_shallow_arc_few_pose_refused(tmp_path):
+    # The reviewer's case: a shallow-curved (sagitta ~0.09m) single-row wall seen
+    # from 2 fronto-parallel-ish poses recovers fx 1-10% WRONG but at low RMS.
+    # FAIL-SAFE: this MUST refuse (under-constrained focal/pp). foc_std ~6% > 0.5%
+    # and min-axis coverage ~0.06 < 0.20 both fire.
+    meta, proj, cab, shape = _curved_meta(cols=4, radius_mm=5560.0)  # sagitta ~0.09m over 2m
+    world = nominal_dot_positions_world(meta, cab, shape)
+    rc, _ = _run(tmp_path, meta, proj, _write_corr(tmp_path, meta, world, _ring_poses(2), noise=0.3))
+    assert rc == 1
+
+
+def test_one_dimensional_coverage_refused(tmp_path):
+    # A wide/short wall (8x1 cabinets) seen fronto-parallel projects to a thin
+    # horizontal band: the vertical image axis collapses (~0.04 span) so fy/cy are
+    # unconstrained. FAIL-SAFE: the min-axis coverage gate must refuse (a max()
+    # gate would let the dominant axis carry it through).
+    meta, proj, cab, shape = _grid_meta(cols=8, rows=1, radius_mm=None, grid=4)
+    world = nominal_dot_positions_world(meta, cab, shape)
+    center = _wall_center(meta, cab, shape)
+    poses = [look_at_pose(np.array([center[0] + dx, 0.0, -10.0]), center) for dx in (-1.0, 0.0, 1.0)]
+    rc, _ = _run(tmp_path, meta, proj, _write_corr(tmp_path, meta, world, poses, noise=0.3))
+    assert rc == 1
 
 
 def test_sl_meta_subset_of_project_cells_refused(tmp_path, capsys):
