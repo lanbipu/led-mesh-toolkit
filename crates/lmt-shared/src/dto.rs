@@ -333,11 +333,31 @@ pub struct DecodeStructuredLightResult {
 
 // ── Pose-OBJ export DTO types ─────────────────────────────────────────────────
 
+/// pose report 的 `frame.gauge_strategy` 帧版本位。
+/// `fix_root_cabinet` = 旧的根箱体局部帧（导出需猜朝向）；
+/// `align_to_nominal` = 已稳健配准到 nominal 设计帧（导出跳过猜测）。
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PoseReportGauge {
+    #[default]
+    FixRootCabinet,
+    AlignToNominal,
+}
+
+/// 读 `cabinet_pose_report.json` 的 `frame` 帧版本位（其余 frame 字段忽略）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct PoseReportFrame {
+    #[serde(default)]
+    pub gauge_strategy: PoseReportGauge,
+}
+
 /// 读 `cabinet_pose_report.json`（visual reconstruct 产出）用的精简视图，
 /// 只取导出 OBJ 需要的字段。完整 schema 见 python-sidecar 的 `CabinetPoseReport`。
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CabinetPoseReportFile {
     pub schema_version: String,
+    #[serde(default)]
+    pub frame: PoseReportFrame,
     pub cabinet_poses: Vec<CabinetPoseEntry>,
 }
 
@@ -367,6 +387,24 @@ pub struct InstructionCardResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pose_report_file_frame_defaults_to_fix_root() {
+        let old = r#"{"schema_version":"visual_pose_report.v1","cabinet_poses":[]}"#;
+        let r: CabinetPoseReportFile = serde_json::from_str(old).unwrap();
+        assert_eq!(r.frame.gauge_strategy, PoseReportGauge::FixRootCabinet);
+    }
+
+    #[test]
+    fn pose_report_file_reads_align_to_nominal() {
+        // Real reports carry extra frame fields (type/units/handedness/...) — ignored.
+        let s = r#"{"schema_version":"visual_pose_report.v1",
+            "frame":{"type":"screen_local","gauge_strategy":"align_to_nominal",
+                     "root_cabinet":[0,0],"units":"mm","handedness":"right","z_axis":"outward"},
+            "cabinet_poses":[]}"#;
+        let r: CabinetPoseReportFile = serde_json::from_str(s).unwrap();
+        assert_eq!(r.frame.gauge_strategy, PoseReportGauge::AlignToNominal);
+    }
 
     #[test]
     fn visual_dtos_roundtrip() {
