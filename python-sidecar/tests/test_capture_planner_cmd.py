@@ -54,3 +54,47 @@ def test_run_plan_capture_curved_radius_too_small_is_invalid_input(capsys):
     ev = json.loads(line)
     assert ev["event"] == "error"
     assert ev["code"] == "invalid_input"
+
+
+import subprocess
+import sys
+
+
+def _flat_payload():
+    return {
+        "command": "plan_capture", "version": 1,
+        "project": {"screen_id": "V000",
+                    "cabinet_array": {"cols": 2, "rows": 2,
+                                      "cabinet_size_mm": [500.0, 500.0], "absent_cells": []},
+                    "shape_prior": "flat"},
+        "intrinsics": {"image_size": [1920, 1080], "hfov_deg": 60.0},
+        "shell": {"standoff_min_mm": 2000.0, "standoff_max_mm": 4000.0,
+                  "height_min_mm": 400.0, "height_max_mm": 2200.0},
+        "target_p95_residual_mm": 4.0, "trials": 6, "n_fan": 5,
+    }
+
+
+def test_subprocess_plan_capture_happy():
+    proc = subprocess.run(
+        [sys.executable, "-m", "lmt_vba_sidecar", "plan_capture"],
+        input=json.dumps(_flat_payload()), capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    ev = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert ev["event"] == "result"
+    assert ev["data"]["all_pass"] is True
+    # output must be valid JSON end-to-end (no bare NaN tokens)
+    assert "NaN" not in proc.stdout
+
+
+def test_subprocess_plan_capture_invalid_input_envelope():
+    payload = _flat_payload()
+    payload["project"]["shape_prior"] = {"curved": {"radius_mm": 1.0}}
+    proc = subprocess.run(
+        [sys.executable, "-m", "lmt_vba_sidecar", "plan_capture"],
+        input=json.dumps(payload), capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    ev = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert ev["event"] == "error"
+    assert ev["code"] == "invalid_input"
