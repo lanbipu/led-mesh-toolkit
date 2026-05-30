@@ -2259,9 +2259,12 @@ fn reconstruct_structured_light_reports_rejection_stats() {
 // calibrate-structured-light E2E (Task 8)
 // ---------------------------------------------------------------------------
 
-/// Python helper: project nominal dot 3D (curved wall) through a known K from
-/// 4 poses and write 4 corr files.  argv: meta_path intr_path out_dir.
-/// Prints the JSON path array.
+/// Python helper: project nominal dot 3D (3×3 curved wall, radius 6000mm) through a
+/// known K from 6 oblique multi-distance poses and write 6 corr files.
+/// This geometry mirrors the `_well_meta` / `_well_poses` substrate in
+/// python-sidecar/tests/test_calibrate_sl.py — the proven well-conditioned envelope
+/// that passes all hardened observability gates.
+/// argv: meta_path intr_path out_dir.  Prints the JSON path array.
 const SL_CALIB_CORR_GEN_PY: &str = r#"
 import json, hashlib, sys
 import numpy as np
@@ -2272,12 +2275,23 @@ from lmt_vba_sidecar.sl_feasibility import look_at_pose, project_point
 meta_path, intr_path, out_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 meta = StructuredLightMeta.model_validate_json(open(meta_path).read())
 K = np.array(json.loads(open(intr_path).read())["K"], float)
-cab = CabinetArray(cols=4, rows=1, cabinet_size_mm=[500.0, 500.0])
-shape = ShapePriorCurved(curved=ShapePriorCurvedBody(radius_mm=4000.0))
+# 3x3 curved wall, radius 6000mm — matches _well_meta() in test_calibrate_sl.py
+cab = CabinetArray(cols=3, rows=3, cabinet_size_mm=[500.0, 500.0])
+shape = ShapePriorCurved(curved=ShapePriorCurvedBody(radius_mm=6000.0))
 world = nominal_dot_positions_world(meta, cab, shape)
+center = np.array(list(world.values())).mean(0)
+cx, cy, cz = center
 sha = hashlib.sha256(open(meta_path, "rb").read()).hexdigest()
-poses = [look_at_pose(np.array([x, 0.0, -6.0]), np.array([1.0, 0.0, 0.0]))
-         for x in (-1.0, -0.33, 0.33, 1.0)]
+# 6 oblique poses at 2 distinct distances — mirrors _well_poses() in test_calibrate_sl.py
+pose_params = [(-25, -12, 4.5), (20, 10, 4.5), (-15, 15, 8.0),
+               (30, -18, 8.0), (0, 0, 6.0), (-35, 5, 5.5)]
+poses = []
+for az, el, dist in pose_params:
+    a, e = np.radians(az), np.radians(el)
+    pos = np.array([cx + dist * np.sin(a) * np.cos(e),
+                    cy + dist * np.sin(e),
+                    cz - dist * np.cos(a) * np.cos(e)])
+    poses.append(look_at_pose(pos, center))
 rng = np.random.default_rng(0)
 paths = []
 for vi, (R, t) in enumerate(poses):
@@ -2294,13 +2308,14 @@ for vi, (R, t) in enumerate(poses):
 print(json.dumps(paths))
 "#;
 
-/// Write a minimal curved-screen project.yaml (4×1 cabinets, radius 4000mm).
+/// Write a minimal curved-screen project.yaml (3×3 cabinets, radius 6000mm).
+/// Matches the `_well_meta()` substrate in test_calibrate_sl.py — the
+/// well-conditioned geometry the hardened gates require.
 /// shape_prior uses `{ type: curved, radius_mm: N }` — the Rust dto is a
 /// serde "internally-tagged" enum (`#[serde(tag = "type", rename_all = "snake_case")]`).
-fn write_curved_project(dir: &Path, cols: u32) {
-    let yaml = format!(
-        "project: {{ name: GP, unit: mm }}\nscreens:\n  MAIN:\n    cabinet_count: [{cols}, 1]\n    cabinet_size_mm: [500, 500]\n    pixels_per_cabinet: [540, 540]\n    shape_prior: {{ type: curved, radius_mm: 4000 }}\n    shape_mode: rectangle\n    irregular_mask: []\ncoordinate_system:\n  origin_point: MAIN_V000_R000\n  x_axis_point: MAIN_V000_R000\n  xy_plane_point: MAIN_V000_R000\noutput:\n  target: neutral\n  obj_filename: \"{{screen_id}}.obj\"\n  weld_vertices_tolerance_mm: 1.0\n  triangulate: true\n"
-    );
+fn write_curved_project(dir: &Path) {
+    let yaml =
+        "project: { name: GP, unit: mm }\nscreens:\n  MAIN:\n    cabinet_count: [3, 3]\n    cabinet_size_mm: [500, 500]\n    pixels_per_cabinet: [540, 540]\n    shape_prior: { type: curved, radius_mm: 6000 }\n    shape_mode: rectangle\n    irregular_mask: []\ncoordinate_system:\n  origin_point: MAIN_V000_R000\n  x_axis_point: MAIN_V000_R000\n  xy_plane_point: MAIN_V000_R000\noutput:\n  target: neutral\n  obj_filename: \"{screen_id}.obj\"\n  weld_vertices_tolerance_mm: 1.0\n  triangulate: true\n";
     std::fs::create_dir_all(dir).unwrap();
     std::fs::write(dir.join("project.yaml"), yaml).unwrap();
 }
@@ -2326,11 +2341,17 @@ fn write_sl_calib_corr(dir: &Path, sidecar: &str, meta_path: &Path, intr: &Path)
         "calib corr gen failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    serde_json::from_slice(out.stdout.trim_ascii_end()).expect("JSON path array")
+    let paths: Vec<String> =
+        serde_json::from_slice(out.stdout.trim_ascii_end()).expect("JSON path array");
+    assert_eq!(paths.len(), 6, "expected 6 corr files (6 oblique poses)");
+    paths
 }
 
-/// Real-sidecar happy path: a synthetic curved 4-cabinet SL scene calibrated from
-/// 4 poses must recover the ground-truth focal within ~2% and write _sl_intrinsics.json.
+/// Real-sidecar happy path: a synthetic 3×3 curved-wall SL scene (radius 6000mm)
+/// calibrated from 6 oblique multi-distance poses must recover the ground-truth
+/// focal within 2% and write _sl_intrinsics.json.
+/// Geometry mirrors `_well_meta` + `_well_poses` in test_calibrate_sl.py —
+/// the well-conditioned envelope that passes all hardened observability gates.
 #[test]
 #[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary/wrapper"]
 fn calibrate_structured_light_recovers_focal() {
@@ -2343,7 +2364,7 @@ fn calibrate_structured_light_recovers_focal() {
     };
     let tmp = TempDir::new().unwrap();
     let proj = tmp.path().join("proj");
-    write_curved_project(&proj, 4);
+    write_curved_project(&proj);
 
     lmt()
         .env("LMT_VBA_SIDECAR_PATH", &sidecar)
