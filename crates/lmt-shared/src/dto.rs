@@ -249,6 +249,11 @@ pub struct VisualReconstructResult {
     pub ba_observations_total: usize,
     pub ba_observations_used: usize,
     pub ba_rejected: usize,
+    /// align_to_nominal 把整墙刚体配准到 nominal 设计帧的对齐残差（米）。
+    /// SL 路径 > 0（残差越大说明 as-built 与 nominal 偏差越大 / shape_prior 可能选错）；
+    /// charuco/fix_root_cabinet 路径恒为 0（不做配准）。
+    #[serde(default)]
+    pub procrustes_align_rms_m: f64,
     pub cabinets: Vec<CabinetPoseSummary>,
 }
 
@@ -426,6 +431,7 @@ mod tests {
             ba_observations_total: 96,
             ba_observations_used: 94,
             ba_rejected: 2,
+            procrustes_align_rms_m: 0.0017,
             cabinets: vec![cabinet],
         };
         let json = serde_json::to_string(&vr).unwrap();

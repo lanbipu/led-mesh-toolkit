@@ -48,6 +48,8 @@ pub struct ReconstructOut {
     pub ba_observations_total: usize,
     pub ba_observations_used: usize,
     pub ba_rejected: usize,
+    /// align_to_nominal Procrustes 残差（米）；fix_root_cabinet 路径为 0。
+    pub procrustes_align_rms_m: f64,
     pub cabinet_summaries: Vec<CabinetSummary>,
 }
 
@@ -157,6 +159,7 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
     let ba_observations_total = result.ba_stats.n_observations_total;
     let ba_observations_used = result.ba_stats.n_observations_used;
     let ba_rejected = result.ba_stats.n_rejected;
+    let procrustes_align_rms_m = result.procrustes_align_rms_m;
     let points: Vec<lmt_core::point::MeasuredPoint> = result
         .measured_points
         .into_iter()
@@ -181,6 +184,7 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
         ba_observations_total,
         ba_observations_used,
         ba_rejected,
+        procrustes_align_rms_m,
         cabinet_summaries,
     })
 }
@@ -233,6 +237,7 @@ pub async fn reconstruct_structured_light(
     let ba_observations_total = result.ba_stats.n_observations_total;
     let ba_observations_used = result.ba_stats.n_observations_used;
     let ba_rejected = result.ba_stats.n_rejected;
+    let procrustes_align_rms_m = result.procrustes_align_rms_m;
     let points: Vec<lmt_core::point::MeasuredPoint> = result
         .measured_points
         .into_iter()
@@ -257,6 +262,7 @@ pub async fn reconstruct_structured_light(
         ba_observations_total,
         ba_observations_used,
         ba_rejected,
+        procrustes_align_rms_m,
         cabinet_summaries,
     })
 }

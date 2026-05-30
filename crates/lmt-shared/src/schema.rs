@@ -75,6 +75,8 @@ pub fn dump_all() -> Value {
     add!("GenerateStructuredLightResult", dto::GenerateStructuredLightResult);
     add!("DecodeStructuredLightResult", dto::DecodeStructuredLightResult);
     add!("CabinetPoseReportFile", dto::CabinetPoseReportFile);
+    add!("PoseReportFrame", dto::PoseReportFrame);
+    add!("PoseReportGauge", dto::PoseReportGauge);
     add!("CabinetPoseEntry", dto::CabinetPoseEntry);
     add!("ExportPoseObjResult", dto::ExportPoseObjResult);
 
