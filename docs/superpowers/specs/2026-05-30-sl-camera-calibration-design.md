@@ -35,31 +35,42 @@ from a single pose is degenerate. **Step 1 MUST detect degeneracy and refuse —
 confidently-wrong K.** Phase-0 synthetic study sets the accuracy budget: focal must be ≲2%,
 principal point within a few px, or the downstream 0.3° angle gate blows.
 
-### 2.1 Calibrating against nominal (which has as-built deviation) — the risk and how we bound it
+### 2.1 Calibrating against nominal (which has as-built deviation) — what actually threatens K
 
-We calibrate against the *design* wall, but the *as-built* wall deviates. Two regimes:
+We calibrate against the *design* wall, but the *as-built* wall deviates. The original worry (Codex
+F1) was that deviation gets *absorbed into K* as a confidently-wrong, low-RMS estimate. We swept this
+empirically against the synthetic substrate (radius error 0–15%, global scale ±10%, rigid tilt 0–20°)
+and the finding reshapes the risk model:
 
-- **Random per-cabinet deviation** (~mm–cm on a meters-wide wall) largely averages out → object-point
-  error ~0.01–0.1% relative, well under the 2% focal budget.
-- **Structured / global deviation** (as-built arc radius ≠ nominal, global scale/tilt, per-column lean)
-  is the real danger: it is *correlated* with the very parameters the solver estimates (focal,
-  curvature, extrinsics) and can be partly **absorbed into K while reproj RMS stays low** — a
-  confidently-wrong K that passes a RMS-only gate and then systematically pollutes Step 2's 0.3° gate.
+- **Global structured deviation** (as-built arc radius ≠ nominal, global scale, rigid tilt) is
+  geometrically **absorbed into the per-pose extrinsics, NOT into K** — single-camera intrinsic
+  calibration can't distinguish "the wall is 2% bigger" from "the camera is 2% farther." In the sweep,
+  fx recovers to **~0% error even at 15% radius error** (noise-free). So global deviation is **not** a
+  threat to K; it shifts where the solver thinks the camera was, leaving K intact. This is a property
+  of the geometry — not something a gate enforces.
+- **Random per-cabinet deviation** (~mm–cm) averages out → object-point error ~0.01–0.1% relative,
+  well under the 2% focal budget.
+- **The real threat to K is UNDER-CONSTRAINT, not bias:** too few / near-duplicate poses, a near-coplanar
+  patch, or thin image coverage leave K genuinely uncertain (wide covariance), and *that* can land on a
+  wrong value. Gross non-absorbable target error instead inflates reproj RMS.
 
-So a single pass against nominal is **approximate, not provably self-consistent**, and a RMS gate
-alone is insufficient. We bound the risk three ways instead of asserting it away:
-1. **Verifiable acceptance test** (§6): inject *structured* as-built deviation (global radius error,
-   per-column tilt, global scale) into the synthetic substrate, calibrate against nominal, and require
-   recovered K within the focal/pp budget **OR** the observability gate refuses. This is a test inside
-   the build — not the upfront feasibility bench the user chose to skip.
-2. **Observability gate, not just RMS** (§3.2): parameter covariance / condition number, so a
-   degenerate-but-absorbed low-RMS solution is still refused.
-3. **Non-destructive output** (§3.2/§4): the SL-derived K never overwrites a trusted checkerboard
-   intrinsics file by default and records `calibration_method`, so a bad SL calibration cannot silently
-   become Step 2's input.
+So the safety design targets the threat that actually exists:
+1. **RMS gate** catches gross non-absorbable target error (§3.2).
+2. **Observability gate, not just RMS** (§3.2): pose/baseline diversity, coverage, and parameter
+   covariance / condition number refuse an **under-constrained** solve — the case where K is uncertain.
+   This gate detects *variance* (under-constraint), not *bias*; bias from global deviation is a non-issue
+   per the sweep above.
+3. **K-robustness acceptance test** (§6): the deviation case asserts recovered K stays within the
+   focal/pp budget across the deviation range — verifying K's robustness to absorbed deviation (NOT that
+   a gate refuses, which it correctly need not). The gate-*refusal* path is pinned separately by the
+   under-constraint tests (single-pose covariance, near-flat, near-duplicate).
+4. **Non-destructive output** (§3.2/§4): the SL-derived K never overwrites a trusted checkerboard
+   intrinsics file by default and records `calibration_method`, so a questionable SL calibration cannot
+   silently become Step 2's input.
 
-Iterating calibrate↔reconstruct against the *recovered* as-built geometry is a possible future
-refinement, explicitly **out of scope** here.
+A single pass against nominal is thus sound for the deviation regimes a real wall exhibits; iterating
+calibrate↔reconstruct against the *recovered* as-built geometry remains a possible future refinement,
+explicitly **out of scope** here.
 
 ## 3. Architecture
 
@@ -141,10 +152,10 @@ run_calibrate_structured_light(cmd) -> writes intrinsics.json, returns {reproj_e
    - **target non-coplanarity OR genuine multi-pose**: smallest/largest singular-value ratio of the
      centered object-point cloud below threshold AND <3 *diverse* poses ⇒ refuse (the planar-PoC
      degeneracy: a flat patch from one viewpoint).
-   - **parameter observability** (the gate that catches a low-RMS-but-absorbed solution, §2.1): from
-     `cv2.calibrateCameraExtended` std-deviations / normal-equation condition number — principal-point
-     and focal std-dev ≤ documented bounds; focal within `(0.2..5.0)×long_dim`; principal point inside
-     image (reuse calibrate.py bounds).
+   - **parameter observability** (the gate that catches an UNDER-CONSTRAINED solve — wide covariance,
+     §2.1; it detects variance, not bias): from `cv2.calibrateCameraExtended` std-deviations /
+     normal-equation condition number — principal-point and focal std-dev ≤ documented bounds; focal
+     within `(0.2..5.0)×long_dim`; principal point inside image (reuse calibrate.py bounds).
 6. Write `<out>` with the 5-key contract **plus provenance**: `K` (3×3), `dist_coeffs` = `[k1,k2,0,0,0]`
    (tangential & k3 forced 0), `image_size`, `reproj_error_px`, `frames_used` (= poses), and diagnostic
    keys `calibration_method: "structured_light_nominal"`, `pp_stddev_px`, `focal_stddev_px`, `n_poses`.
@@ -227,9 +238,11 @@ Acceptance (synthetic, noise-free → noisy → adversarial):
 - noise-free curved + 3 diverse poses ⇒ recovered focal within **<1%**, principal point within **~1px**.
 - 0.3px centroid noise ⇒ focal within **<2%** (the downstream budget); pp/focal std-dev reported.
 - **structured as-built deviation** injected into the *true* scene while calibrating against *nominal*
-  (global radius error e.g. ±2%, per-column tilt, global scale): recovered K stays within the focal/pp
-  budget **OR** the observability gate refuses — never a confidently-wrong K that passes. This is the
-  §2.1 risk made into a pass/fail test.
+  (global radius error up to ±15%, global scale, rigid tilt): recovered K stays within the focal/pp
+  budget across the whole range. This verifies **K-robustness** — global deviation is absorbed into the
+  per-pose extrinsics, not K (§2.1), so the solver returns a good K and the gate correctly does NOT
+  refuse. (The test asserts within-budget; it does NOT claim a gate fires — that would be wrong, since
+  there is no K bias to catch. The gate-refusal path is pinned by the under-constraint cases below.)
 - near-flat single pose ⇒ `observability_failed` (refused), NOT a wrong K.
 - **near-duplicate poses** (3 captures from almost the same viewpoint) ⇒ `observability_failed` — the
   pose-count is satisfied but baseline diversity is not (F2).
