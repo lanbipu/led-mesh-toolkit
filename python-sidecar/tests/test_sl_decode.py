@@ -406,3 +406,64 @@ def test_decode_emit_debug_image_writes_png(tmp_path):
     assert run_decode_structured_light(dec) == 0
     dbg = tmp_path / "corr.json.debug.png"
     assert dbg.is_file() and dbg.stat().st_size > 0
+
+
+def test_roundtrip_from_dpx_frame_dir(tmp_path):
+    # disguise feed export = a directory of 10-bit .dpx frames. Decoding it must
+    # match the PNG-directory happy path (every dot, including id=0, recovered).
+    from _dpx_fixtures import convert_dir_to_dpx
+
+    sl = _gen(tmp_path)
+    meta = json.loads((sl / "sl_meta.json").read_text())
+    dpx_dir = sl / "frames_dpx"
+    n = convert_dir_to_dpx(sl / "frames", dpx_dir)
+    assert n > 0
+
+    dec = DecodeStructuredLightInput.model_validate({
+        "command": "decode_structured_light", "version": 1,
+        "input_path": str(dpx_dir), "sl_meta_path": str(sl / "sl_meta.json"),
+        "output_path": str(tmp_path / "corr.json")})
+    assert run_decode_structured_light(dec) == 0
+    corr = json.loads((tmp_path / "corr.json").read_text())
+    by_id = {p["id"]: p for p in corr["points"]}
+    assert len(corr["points"]) == len(meta["dots"])
+    assert 0 in by_id
+
+
+def test_decode_bad_dpx_reports_decode_failed(tmp_path, capsys):
+    # An unsupported/garbage .dpx must surface as a clean fatal decode_failed
+    # envelope, not an internal_error traceback.
+    from lmt_vba_sidecar.ipc import GenerateStructuredLightInput  # noqa: F401 (sl already generated below)
+
+    sl = _gen(tmp_path)
+    bad_dir = tmp_path / "bad_dpx"
+    bad_dir.mkdir()
+    (bad_dir / "frame0000.dpx").write_bytes(b"NOTADPX" + b"\x00" * 2000)
+
+    dec = DecodeStructuredLightInput.model_validate({
+        "command": "decode_structured_light", "version": 1,
+        "input_path": str(bad_dir), "sl_meta_path": str(sl / "sl_meta.json"),
+        "output_path": str(tmp_path / "corr.json")})
+    assert run_decode_structured_light(dec) == 1
+    events = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
+    err = [e for e in events if e.get("event") == "error"][-1]
+    assert err["code"] == "decode_failed"
+    assert err["fatal"] is True
+
+
+def test_decode_missing_dpx_file_reports_decode_failed(tmp_path, capsys):
+    # Regression guard for the dispatch we add in Step 4: a missing SINGLE .dpx
+    # path is routed to read_dpx_gray8, whose read_bytes() raises FileNotFoundError
+    # (an OSError, NOT a ValueError). The load wrapper must map it to a clean fatal
+    # decode_failed, never let it escape to __main__.py's internal_error+traceback.
+    sl = _gen(tmp_path)
+    dec = DecodeStructuredLightInput.model_validate({
+        "command": "decode_structured_light", "version": 1,
+        "input_path": str(tmp_path / "nope.dpx"),
+        "sl_meta_path": str(sl / "sl_meta.json"),
+        "output_path": str(tmp_path / "corr.json")})
+    assert run_decode_structured_light(dec) == 1
+    events = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
+    err = [e for e in events if e.get("event") == "error"][-1]
+    assert err["code"] == "decode_failed"
+    assert err["fatal"] is True
