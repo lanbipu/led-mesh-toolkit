@@ -229,10 +229,19 @@ pub fn run_export_pose_obj(
     //   - neutral → 原始帧(+可选 --ground),不套任何 disguise 约定。
     // flipY 是反射:后面对所有 disguise 反转 winding(发光面 +Z)、panel UV cell 内 V 翻转(内容正向)。
     let disguise = target_enum == TargetSoftware::Disguise;
-    // align 模式跳过 canonical 猜测:几何已在设计帧,只补 disguise 约定(flipY+贴地)。
+    // align report 已被 sidecar 的 Procrustes 摆进 nominal 设计帧（+Y up / +Z outward /
+    // rows-up：row0 在底部）。它**已经是** fix_root 经 flipY 后要达到的那个朝向,所以
+    // disguise 这条不能再套 flipY(会上下行颠倒,Codex P1),也不能强制贴地(破坏设计帧绝对
+    // 位置)。flipY 的补偿(winding swap + UV cell V 翻)同样只对非 align 路径做(见下)。
     let canonical_disguise = !align && root.is_none() && disguise;
+    let disguise_compensate = disguise && !align; // 补偿 flipY 反射的 winding/UV 处理
     if canonical_disguise {
         apply_canonical_frame(&mut panels, cols)?;
+    } else if align {
+        // 几何不动。仅在用户显式 --ground 时贴地(align 原点本就≈底部,通常 no-op)。
+        if ground {
+            ground_shift(&mut panels, root);
+        }
     } else {
         if disguise {
             // disguise --root:re-root 后补 flipY,使其与 canonical 同手性/约定。
@@ -244,18 +253,7 @@ pub fn run_export_pose_obj(
         }
         // 贴地:disguise 总贴地;neutral 仅 --ground。基准块 = root(无 root 时整体最低)。
         if ground || disguise {
-            let min_y = panels
-                .iter()
-                .filter(|(id, _, _, _)| root.map_or(true, |r| id == r))
-                .flat_map(|(_, _, _, cs)| cs.iter().map(|c| c[1]))
-                .fold(f64::INFINITY, f64::min);
-            if min_y.is_finite() {
-                for (_, _, _, cs) in panels.iter_mut() {
-                    for c in cs.iter_mut() {
-                        c[1] -= min_y;
-                    }
-                }
-            }
+            ground_shift(&mut panels, root);
         }
     }
 
@@ -265,7 +263,8 @@ pub fn run_export_pose_obj(
     for (cid, col, row, cs) in &panels {
         // disguise 的 flipY 把每块几何竖直翻转,UV 的 cell 内 V 要跟着翻
         // (否则每块内容上下颠倒 → 整墙横条错位)。U 不翻(水平没动)。
-        let surface = panel_surface(cid, cs, *col, *row, cols, rows, disguise);
+        // align 路径没 flipY → 不翻 V(几何已在设计帧)。
+        let surface = panel_surface(cid, cs, *col, *row, cols, rows, disguise_compensate);
         meshes.push(surface_to_mesh_output(
             &surface,
             &unit_array,
@@ -276,7 +275,8 @@ pub fn run_export_pose_obj(
     let mut combined = merge_mesh_outputs(TargetSoftware::Neutral, &meshes);
     // disguise 的 flipY 是反射,翻转了三角 winding;反转回来让发光面外法向落 +Z
     // (对账已验证的 disguise 模型 lmt_test_v02)。root / no-root 都适用。
-    if disguise {
+    // align 路径没 flipY(无反射)→ 不 swap(几何已是 +Z outward,见测试)。
+    if disguise_compensate {
         for t in combined.triangles.iter_mut() {
             t.swap(1, 2);
         }
@@ -517,6 +517,22 @@ fn apply_canonical_frame(
         }
     }
     Ok(())
+}
+
+/// 贴地:所有顶点 Y 减去基准块的最低 Y(基准=root 块,无 root 时整体最低)。
+fn ground_shift(panels: &mut [(String, u32, u32, [[f64; 3]; 4])], root: Option<&str>) {
+    let min_y = panels
+        .iter()
+        .filter(|(id, _, _, _)| root.map_or(true, |r| id == r))
+        .flat_map(|(_, _, _, cs)| cs.iter().map(|c| c[1]))
+        .fold(f64::INFINITY, f64::min);
+    if min_y.is_finite() {
+        for (_, _, _, cs) in panels.iter_mut() {
+            for c in cs.iter_mut() {
+                c[1] -= min_y;
+            }
+        }
+    }
 }
 
 /// 一块 cabinet 的 4 个世界系角点（mm，BL,BR,TR,TL）→ 1×1 ReconstructedSurface（米，原样）。
@@ -1035,6 +1051,51 @@ mod tests {
         // dry-run 必须同样拒(parity)。
         let derr = check_pose_obj_inputs(&rp, "neutral", Some("V000_R000")).unwrap_err();
         assert!(matches!(derr, LmtError::InvalidInput(_)), "dry-run must also reject align + --root, got {derr:?}");
+    }
+
+    #[test]
+    fn export_pose_obj_align_disguise_preserves_row_order_and_lit_face() {
+        // 2 行 1 列。align report 已在 nominal 设计帧（rows-up：row0 低 Y / row1 高 Y，
+        // row0 在物理底部）。disguise **不得再 flipY**，否则上下行垂直颠倒（Codex P1）。
+        let dir = tempdir().unwrap();
+        let rp = dir.path().join("ALIGN2_cabinet_pose_report.json");
+        std::fs::write(
+            &rp,
+            r#"{"schema_version":"visual_pose_report.v1",
+            "frame":{"gauge_strategy":"align_to_nominal"},
+            "cabinet_poses":[
+            {"cabinet_id":"V000_R000","corners_mm":[[0,0,0],[400,0,0],[400,400,0],[0,400,0]]},
+            {"cabinet_id":"V000_R001","corners_mm":[[0,400,0],[400,400,0],[400,800,0],[0,800,0]]}]}"#,
+        )
+        .unwrap();
+        let out = dir.path().join("a2.obj");
+        run_export_pose_obj(&rp, "disguise", &out, None, false).unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
+        let verts = parse_obj_verts(&text);
+        assert_eq!(verts.len(), 8, "2 cabinets × 4 verts");
+        // pose 顺序 0=V000_R000(row0), 1=V000_R001(row1)
+        let cen = |i: usize| {
+            let s = &verts[4 * i..4 * i + 4];
+            [
+                s.iter().map(|v| v[0]).sum::<f64>() / 4.0,
+                s.iter().map(|v| v[1]).sum::<f64>() / 4.0,
+                s.iter().map(|v| v[2]).sum::<f64>() / 4.0,
+            ]
+        };
+        // ① 行序保持：row0 几何 Y < row1 几何 Y（align 不翻转；bug 会让 row0 跑到顶部）。
+        assert!(cen(0)[1] < cen(1)[1], "row0 must stay below row1 (no flipY): {} vs {}", cen(0)[1], cen(1)[1]);
+        // ② 发光面 winding 法向落 +Z（朝观众；与 v02 disguise 约定一致）。
+        let face0: Vec<usize> = text
+            .lines()
+            .find(|l| l.starts_with("f "))
+            .unwrap()
+            .split_whitespace()
+            .skip(1)
+            .map(|t| t.split('/').next().unwrap().parse::<usize>().unwrap() - 1)
+            .collect();
+        let v = |i: usize| Vector3::new(verts[i][0], verts[i][1], verts[i][2]);
+        let n = (v(face0[1]) - v(face0[0])).cross(&(v(face0[2]) - v(face0[0]))).normalize();
+        assert!(n.z > 0.9, "align disguise lit face winding normal must be +Z, got {n:?}");
     }
 
     #[test]
