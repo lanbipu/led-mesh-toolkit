@@ -222,7 +222,7 @@ class StructuredLightMeta(BaseModel):
 class DecodeStructuredLightInput(BaseModel):
     command: Literal["decode_structured_light"]
     version: Literal[1]
-    input_path: str           # a video file OR a directory of frame images
+    input_path: str           # a video file OR a directory of frame images (PNG/JPG/BMP/TIFF or disguise 10-bit .dpx)
     sl_meta_path: str
     output_path: str
     sentinel_threshold: float = Field(gt=0.0, le=1.0, default=0.85)
