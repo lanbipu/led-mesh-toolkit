@@ -164,3 +164,31 @@ def test_single_pose_covariance_gate_refused(tmp_path, capsys):
     assert errs[0]["code"] == "observability_failed"
     msg = errs[0]["message"].lower()
     assert "principal-point std" in msg or "focal std" in msg, errs[0]["message"]
+
+
+def test_sl_meta_subset_of_project_cells_refused(tmp_path, capsys):
+    # Stale sl_meta covering only a SUBSET of the project's present cells must be
+    # refused (parity with reconstruct-structured-light). Project stays at full
+    # cols=4; meta drops the last cabinet's rect AND its dots (so the kept dots
+    # only reference present cabinets -> nominal_dot_positions_world's own per-dot
+    # raise does NOT pre-empt; the cabinet-SET gate must be what fires).
+    meta, proj, cab, shape = _curved_meta(cols=4)
+    drop_cr = (3, 0)
+    sub_rects = [r for r in meta.cabinets if (r.col, r.row) != drop_cr]
+    sub_dots = [d for d in meta.dots if tuple(d.cabinet) != drop_cr]
+    sub_meta = StructuredLightMeta(
+        schema_version=1, screen_id="MAIN", screen_resolution=meta.screen_resolution,
+        dot_radius_px=meta.dot_radius_px, code=meta.code, sequence=meta.sequence,
+        cabinets=sub_rects, dots=sub_dots,
+    )
+    # World built from the subset meta so the kept dots have valid 3D + projections.
+    world = nominal_dot_positions_world(sub_meta, cab, shape)
+    paths = _write_corr(tmp_path, sub_meta, world, _ring_poses(4), noise=0.0)
+    rc, _ = _run(tmp_path, sub_meta, proj, paths)
+    assert rc == 1
+    errs = [json.loads(l) for l in capsys.readouterr().out.splitlines()
+            if l.strip() and json.loads(l).get("event") == "error"]
+    assert len(errs) == 1, errs
+    assert errs[0]["code"] == "invalid_input"
+    msg = errs[0]["message"].lower()
+    assert "cabinet set" in msg and "present cells" in msg, errs[0]["message"]

@@ -22,7 +22,10 @@ from lmt_vba_sidecar.ipc import (
     ResultEvent,
     StructuredLightMeta,
 )
-from lmt_vba_sidecar.nominal import nominal_dot_positions_world
+from lmt_vba_sidecar.nominal import (
+    nominal_cabinet_centers_model_frame,
+    nominal_dot_positions_world,
+)
 from lmt_vba_sidecar.sl_reconstruct import validate_sl_provenance
 from lmt_vba_sidecar.calibrate import _atomic_write, FOCAL_BOUNDS_FRACTION
 
@@ -106,7 +109,24 @@ def run_calibrate_structured_light(cmd: CalibrateStructuredLightInput) -> int:
         return _err("invalid_input", f"correspondences disagree on camera_image_size: {sorted(sizes)}")
     (image_size,) = sizes
 
-    # 4. per-dot nominal 3D world (known target). keys() == project present cells.
+    # 4. nominal model (project) + cabinet-set match (mirrors sl_reconstruct,
+    #    minus the ROOT_CABINET requirement — calibration has no world-gauge/root
+    #    concept; it solves K + per-pose extrinsics). nominal_m.keys() IS the
+    #    project present-cell set (nominal.py skips absent_cells), so this ties the
+    #    sl_meta universe to the project: a stale sl_meta covering only a SUBSET of
+    #    present cells (same screen_id+sha) is rejected instead of silently
+    #    calibrating against the wrong cabinet universe.
+    try:
+        nominal_m = nominal_cabinet_centers_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
+    except ValueError as e:
+        return _err("invalid_input", str(e))
+    present = sorted({(c.col, c.row) for c in meta.cabinets}, key=lambda cr: (cr[1], cr[0]))
+    if set(present) != set(nominal_m.keys()):
+        return _err("invalid_input",
+                    f"sl_meta cabinet set {present} != project present cells "
+                    f"{sorted(nominal_m.keys())} (stale sl_meta or edited project layout)")
+
+    # 4b. per-dot nominal 3D world (known target). keys() == project present cells.
     try:
         dot_world = nominal_dot_positions_world(meta, cmd.project.cabinet_array, cmd.project.shape_prior)
     except ValueError as e:
