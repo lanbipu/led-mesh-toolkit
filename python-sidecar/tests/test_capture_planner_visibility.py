@@ -157,17 +157,22 @@ from lmt_vba_sidecar.capture_planner.geometry import ArcOccluder
 from lmt_vba_sidecar.capture_planner.visibility import point_visible as pv
 
 
-def test_arc_occlusion_blocks_far_point_from_end_camera():
-    radius = 2500.0
-    width = 6000.0
-    arc = ArcOccluder(cx=width / 2.0, cz=radius, radius=radius,
-                      a_min=-width / (2 * radius), a_max=width / (2 * radius))
-    a = width / (2 * radius)
-    q = np.array([arc.cx + radius * np.sin(a), 250.0, radius - radius * np.cos(a)])
-    n = np.array([np.sin(a), 0.0, np.cos(a)])
+def test_arc_occlusion_isolates_check_d():
+    # A strong concave arc point that passes (a) cheirality, (b) in-frame, and
+    # (c) incidence — but the near arc physically blocks it from an off-side
+    # camera. Asserting visible WITHOUT the occluder and occluded WITH it proves
+    # check (d) is the differentiator (not grazing/back-facing).
+    cab = CabinetArray(cols=10, rows=1, cabinet_size_mm=[500.0, 500.0], absent_cells=[])
+    geom = expand_screen(cab, {"curved": {"radius_mm": 2200.0}}, sample_grid=(4, 4))
+    arc = geom.arc_occluder
+    cabg = next(c for c in geom.cabinets if (c.col, c.row) == (1, 0))
+    q = cabg.sample_points_mm[1]            # the point found to flip under (d)
+    n = cabg.normal
     K = intrinsics_from_fov((3840, 2160), hfov_deg=70.0)
-    cam = look_at_camera(K, [-4000.0, 250.0, 3500.0], q, (3840, 2160))
-    assert pv(cam, q, n, arc=arc) is False
+    cam = look_at_camera(K, [-1000.0, 250.0, 4500.0],
+                         [geom.total_width_mm / 2.0, 250.0, 0.0], (3840, 2160))
+    assert pv(cam, q, n, arc=None) is True       # passes (a)(b)(c)
+    assert pv(cam, q, n, arc=arc) is False        # ... but (d) occludes it
 
 
 def test_arc_occlusion_does_not_block_frontal_view():

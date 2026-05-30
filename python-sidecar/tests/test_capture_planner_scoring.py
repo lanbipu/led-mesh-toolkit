@@ -62,3 +62,17 @@ def test_under_observed_cabinet_is_flagged_not_scored():
         assert cov["reconstructable"] is False
         assert cov["pass"] is False
         assert np.isnan(cov["p95_mm"])     # not scored, not an optimistic number
+
+
+def test_strong_arc_far_end_not_optimistically_covered():
+    # A strong wide arc with only frontal-ish cameras: the far ends must NOT all
+    # pass (self-occlusion + grazing make them under-observed), proving the
+    # planner is honest rather than optimistic about strong curves.
+    from lmt_vba_sidecar.ipc import CabinetArray
+    cab = CabinetArray(cols=10, rows=1, cabinet_size_mm=[500.0, 500.0], absent_cells=[])
+    geom = expand_screen(cab, {"curved": {"radius_mm": 2200.0}}, sample_grid=(4, 4))
+    K = intrinsics_from_fov((3840, 2160), hfov_deg=60.0)
+    cams = _ring(geom, K, n=3, span_deg=30.0, dist=4000.0)
+    report = score_screen(geom, cams, pixel_sigma=0.3, nominal_deviation_mm=1.0,
+                          trials=6, seed=0, target_p95_residual_mm=3.0)
+    assert not all(v["pass"] for v in report.values())   # far ends not all covered

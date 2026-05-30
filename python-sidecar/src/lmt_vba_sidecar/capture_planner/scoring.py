@@ -47,11 +47,12 @@ def score_screen(geom: ScreenGeometry, cams: list[Camera], *, pixel_sigma=0.3,
 
     truth, owner, normals = _all_points(geom)
     n_pts = len(truth)
+    arc = geom.arc_occluder
     # which cameras see each truth point (true geometry, fixed across trials)
     sees = [
         [ci for ci, cam in enumerate(cams)
          if point_visible(cam, truth[i], normals[i], margin_frac=margin_frac,
-                          incidence_max_deg=incidence_max_deg)]
+                          incidence_max_deg=incidence_max_deg, arc=arc)]
         for i in range(n_pts)
     ]
     # which points each camera uses for its PnP (only points it can see)
