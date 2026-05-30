@@ -6,7 +6,9 @@ use lmt_core::surface::{
 };
 use lmt_core::uv::compute_grid_uv;
 use lmt_shared::data::{runs, Db};
-use lmt_shared::dto::{CabinetPoseReportFile, ExportPoseObjResult, ReconstructionReport, ShapeMode};
+use lmt_shared::dto::{
+    CabinetPoseReportFile, ExportPoseObjResult, PoseReportGauge, ReconstructionReport, ShapeMode,
+};
 use lmt_shared::error::{LmtError, LmtResult};
 use nalgebra::Vector3;
 use std::path::{Path, PathBuf};
@@ -166,6 +168,15 @@ pub fn run_export_pose_obj(
         ));
     }
 
+    // align_to_nominal report 已被重建端 Procrustes 摆进设计帧,导出**不能**再
+    // 猜朝向(apply_canonical_frame);--root 会覆盖这个已定的摆放,故拒。
+    let align = report.frame.gauge_strategy == PoseReportGauge::AlignToNominal;
+    if align && root.is_some() {
+        return Err(LmtError::InvalidInput(
+            "align_to_nominal report is already in the design frame; --root would override it".into(),
+        ));
+    }
+
     // 网格维度（同时校验每个 cabinet_id 可解析）。
     let ids: Vec<&str> = report
         .cabinet_poses
@@ -218,7 +229,8 @@ pub fn run_export_pose_obj(
     //   - neutral → 原始帧(+可选 --ground),不套任何 disguise 约定。
     // flipY 是反射:后面对所有 disguise 反转 winding(发光面 +Z)、panel UV cell 内 V 翻转(内容正向)。
     let disguise = target_enum == TargetSoftware::Disguise;
-    let canonical_disguise = root.is_none() && disguise;
+    // align 模式跳过 canonical 猜测:几何已在设计帧,只补 disguise 约定(flipY+贴地)。
+    let canonical_disguise = !align && root.is_none() && disguise;
     if canonical_disguise {
         apply_canonical_frame(&mut panels, cols)?;
     } else {
@@ -298,6 +310,12 @@ pub fn check_pose_obj_inputs(
     if report.cabinet_poses.is_empty() {
         return Err(LmtError::InvalidInput(
             "pose report has no cabinet_poses".into(),
+        ));
+    }
+    // dry-run 与 execute 对齐：align_to_nominal report 拒 --root。
+    if report.frame.gauge_strategy == PoseReportGauge::AlignToNominal && root.is_some() {
+        return Err(LmtError::InvalidInput(
+            "align_to_nominal report is already in the design frame; --root would override it".into(),
         ));
     }
     // dry-run 与 execute 对齐：不可解析的 cabinet_id 现在就拒。
@@ -927,6 +945,96 @@ mod tests {
             uvs[vt_of[&top]][1],
             uvs[vt_of[&bot]][1]
         );
+    }
+
+    // ── align_to_nominal (Task 3): 跳过 canonical 猜测,复用已验证 disguise 约定 ──
+    fn parse_obj_verts(text: &str) -> Vec<[f64; 3]> {
+        text.lines()
+            .filter_map(|l| l.strip_prefix("v "))
+            .map(|l| {
+                let n: Vec<f64> = l.split_whitespace().map(|t| t.parse().unwrap()).collect();
+                [n[0], n[1], n[2]]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn export_pose_obj_align_neutral_is_passthrough() {
+        // align_to_nominal report → neutral → 几何原样(米),不猜/不居中/不 yaw。
+        let dir = tempdir().unwrap();
+        let rp = dir.path().join("ALIGN_cabinet_pose_report.json");
+        std::fs::write(
+            &rp,
+            r#"{"schema_version":"visual_pose_report.v1",
+            "frame":{"gauge_strategy":"align_to_nominal"},
+            "cabinet_poses":[
+            {"cabinet_id":"V000_R000","corners_mm":[[100,-170,50],[500,-170,50],[500,170,-30],[100,170,-30]]}]}"#,
+        )
+        .unwrap();
+        let out = dir.path().join("a.obj");
+        run_export_pose_obj(&rp, "neutral", &out, None, false).unwrap();
+        let verts = parse_obj_verts(&std::fs::read_to_string(&out).unwrap());
+        assert_eq!(verts.len(), 4);
+        // 顺序无关地断言输入 4 角(米)原样出现(passthrough)。
+        let expect = [
+            [0.1, -0.17, 0.05],
+            [0.5, -0.17, 0.05],
+            [0.5, 0.17, -0.03],
+            [0.1, 0.17, -0.03],
+        ];
+        for e in expect {
+            assert!(
+                verts.iter().any(|v| (v[0] - e[0]).abs() < 1e-9
+                    && (v[1] - e[1]).abs() < 1e-9
+                    && (v[2] - e[2]).abs() < 1e-9),
+                "expected passthrough vertex {e:?} in {verts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn export_pose_obj_align_disguise_skips_canonical_center() {
+        // 一面 X 偏移到 ~+1m 的平墙。canonical 会把 XZ 质心移到 0;align 必须保留偏移
+        // (只 flipY+贴地,不 yaw/不居中)。
+        let dir = tempdir().unwrap();
+        let rp = dir.path().join("ALIGND_cabinet_pose_report.json");
+        std::fs::write(
+            &rp,
+            r#"{"schema_version":"visual_pose_report.v1",
+            "frame":{"gauge_strategy":"align_to_nominal"},
+            "cabinet_poses":[
+            {"cabinet_id":"V000_R000","corners_mm":[[800,0,0],[1200,0,0],[1200,400,0],[800,400,0]]}]}"#,
+        )
+        .unwrap();
+        let out = dir.path().join("ad.obj");
+        run_export_pose_obj(&rp, "disguise", &out, None, false).unwrap();
+        let verts = parse_obj_verts(&std::fs::read_to_string(&out).unwrap());
+        let cx = verts.iter().map(|v| v[0]).sum::<f64>() / verts.len() as f64;
+        assert!(cx > 0.9, "align must NOT recenter X (canonical would → 0): cx={cx}");
+        // disguise 约定:flipY + 贴地 → Y 落 [0, 0.4]。
+        let ymin = verts.iter().map(|v| v[1]).fold(f64::INFINITY, f64::min);
+        let ymax = verts.iter().map(|v| v[1]).fold(f64::NEG_INFINITY, f64::max);
+        assert!(ymin.abs() < 1e-9 && (ymax - 0.4).abs() < 1e-9, "grounded Y [0,0.4]: [{ymin},{ymax}]");
+    }
+
+    #[test]
+    fn export_pose_obj_align_rejects_root() {
+        let dir = tempdir().unwrap();
+        let rp = dir.path().join("ALIGNR_cabinet_pose_report.json");
+        std::fs::write(
+            &rp,
+            r#"{"schema_version":"visual_pose_report.v1",
+            "frame":{"gauge_strategy":"align_to_nominal"},
+            "cabinet_poses":[
+            {"cabinet_id":"V000_R000","corners_mm":[[0,0,0],[400,0,0],[400,400,0],[0,400,0]]}]}"#,
+        )
+        .unwrap();
+        let out = dir.path().join("ar.obj");
+        let err = run_export_pose_obj(&rp, "neutral", &out, Some("V000_R000"), false).unwrap_err();
+        assert!(matches!(err, LmtError::InvalidInput(_)), "align + --root must be rejected, got {err:?}");
+        // dry-run 必须同样拒(parity)。
+        let derr = check_pose_obj_inputs(&rp, "neutral", Some("V000_R000")).unwrap_err();
+        assert!(matches!(derr, LmtError::InvalidInput(_)), "dry-run must also reject align + --root, got {derr:?}");
     }
 
     #[test]
