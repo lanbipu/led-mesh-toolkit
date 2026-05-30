@@ -26,3 +26,55 @@ def test_candidates_lie_within_the_shell():
         standoff = np.linalg.norm([pos[0] - cx, pos[2]])    # radial dist in x-z
         assert 2000.0 - 1.0 <= standoff <= 6000.0 + 1.0     # standoff in shell
         assert pos[2] > 0                                    # in front of the wall
+
+
+from lmt_vba_sidecar.capture_planner.seed import seed_cameras
+from lmt_vba_sidecar.capture_planner.optimize import optimize
+
+
+def _score_kwargs():
+    return dict(pixel_sigma=0.2, nominal_deviation_mm=0.5, trials=6,
+               seed=0, target_p95_residual_mm=4.0)
+
+
+def test_optimize_covers_a_reachable_flat_wall():
+    K = intrinsics_from_fov((1920, 1080), hfov_deg=60.0)
+    shell = Shell(2000.0, 4000.0, 400.0, 2200.0)
+    geom = _wall(2, 2)
+    seed = [s.camera for s in seed_cameras(geom, K, (1920, 1080), shell, n_fan=5)]
+    result = optimize(geom, K, (1920, 1080), shell, seed_cams=seed,
+                      max_stations=16, n_standoff=2, n_height=3, n_azimuth=5,
+                      score_kwargs=_score_kwargs())
+    assert result.unreachable == []
+    assert all(v["pass"] for v in result.report.values())
+    assert len(result.cameras) >= len(seed)        # warm-started, add-only
+
+
+def test_optimize_reports_unreachable_when_shell_too_tight():
+    K = intrinsics_from_fov((1920, 1080), hfov_deg=60.0)
+    # a degenerate shell collapsed to a single near-frontal pencil: no two views
+    # can ever form a baseline -> nothing reconstructable -> all unreachable.
+    shell = Shell(3000.0, 3000.0, 1249.0, 1251.0)
+    geom = _wall(2, 2)
+    result = optimize(geom, K, (1920, 1080), shell, seed_cams=[],
+                      max_stations=4, n_standoff=1, n_height=1, n_azimuth=1,
+                      score_kwargs=_score_kwargs())
+    assert len(result.unreachable) > 0
+    assert not all(v["pass"] for v in result.report.values())
+
+
+def test_optimize_adds_cameras_to_a_single_camera_start():
+    # one frontal camera alone -> every cabinet has 1 view -> all fail. The
+    # greedy MUST add cameras (exercise the add path) and converge.
+    K = intrinsics_from_fov((1920, 1080), hfov_deg=60.0)
+    shell = Shell(2000.0, 4000.0, 400.0, 2200.0)
+    geom = _wall(2, 2)
+    cx, cy = geom.total_width_mm / 2.0, geom.total_height_mm / 2.0
+    from lmt_vba_sidecar.capture_planner.visibility import look_at_camera
+    lone = look_at_camera(K, [cx, cy, 2500.0], [cx, cy, 0.0], (1920, 1080))
+    result = optimize(geom, K, (1920, 1080), shell, seed_cams=[lone],
+                      max_stations=16, n_standoff=2, n_height=3, n_azimuth=5,
+                      score_kwargs=_score_kwargs())
+    assert len(result.cameras) > 1                  # greedy added at least one
+    assert result.unreachable == []
+    assert all(v["pass"] for v in result.report.values())
