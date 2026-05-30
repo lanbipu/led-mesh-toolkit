@@ -11,10 +11,10 @@ use std::path::Path;
 
 use lmt_adapter_visual_ba::api::{
     calibrate, compare_known, decode_structured_light, eval, generate_pattern,
-    generate_structured_light, reconstruct, reconstruct_structured_light, simulate, CalibrateArgs,
-    CompareKnownArgs, DecodeStructuredLightArgs, EvalArgs, GeneratePatternArgs,
-    GenerateStructuredLightArgs, ReconstructArgs, ReconstructOut, ReconstructStructuredLightArgs,
-    SimulateArgs,
+    generate_structured_light, plan_capture, reconstruct, reconstruct_structured_light, simulate,
+    CalibrateArgs, CompareKnownArgs, DecodeStructuredLightArgs, EvalArgs, GeneratePatternArgs,
+    GenerateStructuredLightArgs, PlanCaptureArgs, ReconstructArgs, ReconstructOut,
+    ReconstructStructuredLightArgs, SimulateArgs,
 };
 use lmt_adapter_visual_ba::ipc;
 
@@ -675,6 +675,142 @@ pub fn run_compare_known(
             .collect(),
         passed: out.passed,
         thresholds: out.thresholds,
+    })
+}
+
+// ── plan-capture ──────────────────────────────────────────────────────────────
+
+/// Parse `"3840x2160"` → `[3840, 2160]`.
+fn parse_wxh(s: &str) -> LmtResult<[u32; 2]> {
+    let (a, b) = s
+        .split_once(['x', 'X'])
+        .ok_or_else(|| LmtError::InvalidInput(format!("image-size must be WxH, got '{s}'")))?;
+    let p = |t: &str| {
+        t.trim()
+            .parse::<u32>()
+            .map_err(|_| LmtError::InvalidInput(format!("image-size component '{t}' invalid")))
+            .and_then(|v| {
+                if v == 0 {
+                    Err(LmtError::InvalidInput(
+                        "image-size components must be > 0".into(),
+                    ))
+                } else {
+                    Ok(v)
+                }
+            })
+    };
+    Ok([p(a)?, p(b)?])
+}
+
+/// Parse `"2000..12000"` → `(2000.0, 12000.0)`; min must be < max.
+fn parse_range(s: &str, name: &str) -> LmtResult<(f64, f64)> {
+    let (a, b) = s
+        .split_once("..")
+        .ok_or_else(|| LmtError::InvalidInput(format!("{name} must be MIN..MAX, got '{s}'")))?;
+    let lo = a
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| LmtError::InvalidInput(format!("{name} min '{a}' invalid")))?;
+    let hi = b
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| LmtError::InvalidInput(format!("{name} max '{b}' invalid")))?;
+    if !(lo < hi) {
+        return Err(LmtError::InvalidInput(format!(
+            "{name} needs MIN < MAX, got {lo}..{hi}"
+        )));
+    }
+    Ok((lo, hi))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn run_plan_capture(
+    project_path: &Path,
+    screen_id: &str,
+    image_size: &str,
+    hfov_deg: Option<f64>,
+    vfov_deg: Option<f64>,
+    standoff: &str,
+    height: &str,
+    target_p95_residual_mm: f64,
+    trials: u32,
+    seed: u32,
+) -> LmtResult<lmt_shared::dto::CapturePlan> {
+    use lmt_shared::dto::{CabinetCoverage, CapturePlan, CaptureStation, UnreachableRegion};
+
+    if hfov_deg.is_some() == vfov_deg.is_some() {
+        return Err(LmtError::InvalidInput(
+            "pass exactly one of --hfov-deg / --vfov-deg".into(),
+        ));
+    }
+    let image_size = parse_wxh(image_size)?;
+    let (standoff_min_mm, standoff_max_mm) = parse_range(standoff, "standoff")?;
+    let (height_min_mm, height_max_mm) = parse_range(height, "height")?;
+
+    let cfg = load_project_yaml_from_path(project_path)?;
+    let screen_cfg = load_screen(&cfg, screen_id)?;
+    let project = ipc::ReconstructProject {
+        screen_id: screen_id.to_string(),
+        cabinet_array: ipc_cabinet_array(screen_cfg),
+        shape_prior: ipc_shape_prior(screen_cfg),
+    };
+
+    let args = PlanCaptureArgs {
+        project,
+        image_size,
+        hfov_deg,
+        vfov_deg,
+        standoff_min_mm,
+        standoff_max_mm,
+        height_min_mm,
+        height_max_mm,
+        target_p95_residual_mm,
+        trials,
+        seed,
+        progress_tx: None,
+        cancel: None,
+    };
+    let out = rt()?.block_on(plan_capture(args)).map_err(map_vba_err)?;
+
+    Ok(CapturePlan {
+        stations: out
+            .stations
+            .into_iter()
+            .map(|s| CaptureStation {
+                id: s.id,
+                position_mm: s.position_mm,
+                look_at_mm: s.look_at_mm,
+                standoff_mm: s.standoff_mm,
+                height_mm: s.height_mm,
+                role: s.role,
+                covers_cabinets: s.covers_cabinets,
+            })
+            .collect(),
+        coverage: out
+            .coverage
+            .into_iter()
+            .map(|c| CabinetCoverage {
+                col: c.col,
+                row: c.row,
+                p95_residual_mm: c.p95_residual_mm,
+                n_views: c.n_views,
+                total_observations: c.total_observations,
+                reconstructable: c.reconstructable,
+                low_observation: c.low_observation,
+                bridged: c.bridged,
+                pass: c.pass,
+            })
+            .collect(),
+        unreachable_regions: out
+            .unreachable_regions
+            .into_iter()
+            .map(|u| UnreachableRegion {
+                cabinets: u.cabinets,
+                reason: u.reason,
+            })
+            .collect(),
+        all_pass: out.all_pass,
+        target_p95_residual_mm: out.target_p95_residual_mm,
     })
 }
 
