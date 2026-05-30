@@ -842,6 +842,16 @@ pub fn render_capture_card(
     let cov = |c: u32, r: u32| plan.coverage.iter().find(|x| x.col == c && x.row == r);
 
     // ---- top-down plan SVG (X horizontal, Z depth: 0 = wall, + toward cameras) ----
+    // Fan / side stations sit at x < 0 or x > total_width_mm, so the viewBox
+    // x-range must span every station position, not just the screen [0, width],
+    // or those dots/arrows get clipped off the SVG.
+    let mut x_lo = 0.0_f64;
+    let mut x_hi = geom.total_width_mm;
+    for s in &plan.stations {
+        x_lo = x_lo.min(s.position_mm[0]);
+        x_hi = x_hi.max(s.position_mm[0]);
+    }
+    let x_extent = (x_hi - x_lo).max(1.0);
     let max_z = plan
         .stations
         .iter()
@@ -849,12 +859,12 @@ pub fn render_capture_card(
         .fold(0.0_f64, f64::max)
         .max(geom.total_width_mm * 0.3)
         * 1.12;
-    let span = geom.total_width_mm.max(max_z).max(1.0);
+    let span = x_extent.max(max_z).max(1.0);
     let pad = 36.0_f64;
     let sc = 720.0_f64 / span;
-    let sx = |x: f64| pad + x * sc;
+    let sx = |x: f64| pad + (x - x_lo) * sc;
     let sz = |z: f64| pad + z * sc;
-    let svg_w = pad * 2.0 + geom.total_width_mm * sc;
+    let svg_w = pad * 2.0 + x_extent * sc;
     let svg_h = pad * 2.0 + max_z * sc;
 
     let mut plan_svg = String::new();
@@ -1041,15 +1051,28 @@ mod tests {
     fn render_capture_card_contains_plan_svg_and_table() {
         use lmt_shared::dto::{CabinetCoverage, CapturePlan, CaptureStation, UnreachableRegion};
         let plan = CapturePlan {
-            stations: vec![CaptureStation {
-                id: "S01".into(),
-                position_mm: [250.0, 250.0, 3000.0],
-                look_at_mm: [250.0, 250.0, 0.0],
-                standoff_mm: 3000.0,
-                height_mm: 250.0,
-                role: "fan".into(),
-                covers_cabinets: vec![[0, 0]],
-            }],
+            stations: vec![
+                CaptureStation {
+                    id: "S01".into(),
+                    position_mm: [250.0, 250.0, 3000.0],
+                    look_at_mm: [250.0, 250.0, 0.0],
+                    standoff_mm: 3000.0,
+                    height_mm: 250.0,
+                    role: "fan".into(),
+                    covers_cabinets: vec![[0, 0]],
+                },
+                // a fan station LEFT of the 1000mm-wide wall (x < 0) — must not
+                // be clipped off the SVG viewBox.
+                CaptureStation {
+                    id: "S02".into(),
+                    position_mm: [-600.0, 250.0, 2000.0],
+                    look_at_mm: [500.0, 250.0, 0.0],
+                    standoff_mm: 2300.0,
+                    height_mm: 250.0,
+                    role: "fan".into(),
+                    covers_cabinets: vec![[0, 0]],
+                },
+            ],
             coverage: vec![
                 CabinetCoverage {
                     col: 0, row: 0, p95_residual_mm: Some(1.2), n_views: 4,
@@ -1085,6 +1108,9 @@ mod tests {
         assert!(html.contains("不可重建") || html.contains("✗"));
         assert!(html.matches("<svg").count() >= 2);
         assert!(!html.contains("http://") && !html.contains("https://") && !html.contains("cdn"));
+        // the x<0 station must not be clipped: no negative SVG coordinates.
+        assert!(!html.contains("cx=\"-"), "station clipped off the plan viewBox");
+        assert!(!html.contains("x1=\"-") && !html.contains("x2=\"-"));
     }
 
     // ── sidecar wrapper plumbing (mirrors adapter's simulate_eval_test) ────────
