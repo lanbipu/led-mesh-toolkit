@@ -15,8 +15,8 @@ use tokio::sync::{mpsc, oneshot};
 use crate::error::{VbaError, VbaResult};
 use crate::ipc::{
     CabinetArray as IpcCabinetArray, CabinetSummary, CompareKnownResultData,
-    CoordinateFrame as IpcCoordinateFrame, EvalResultData, Event, ReconstructProject, ResultData,
-    ShapePrior as IpcShapePrior, SimulateResultData,
+    CoordinateFrame as IpcCoordinateFrame, EvalResultData, Event, PlanCaptureResultData,
+    ReconstructProject, ResultData, ShapePrior as IpcShapePrior, SimulateResultData,
 };
 use crate::sidecar::{run_sidecar, SidecarRequest};
 
@@ -665,5 +665,57 @@ pub async fn compare_known(args: CompareKnownArgs) -> VbaResult<CompareKnownResu
     .await?;
 
     // Undecodable result = sidecar protocol violation → BadEventJson.
+    serde_json::from_value(value).map_err(VbaError::BadEventJson)
+}
+
+// ---------------------------------------------------------------------------
+// plan_capture
+// ---------------------------------------------------------------------------
+
+pub struct PlanCaptureArgs {
+    pub project: ReconstructProject,
+    pub image_size: [u32; 2],
+    pub hfov_deg: Option<f64>,
+    pub vfov_deg: Option<f64>,
+    pub standoff_min_mm: f64,
+    pub standoff_max_mm: f64,
+    pub height_min_mm: f64,
+    pub height_max_mm: f64,
+    pub target_p95_residual_mm: f64,
+    pub trials: u32,
+    pub seed: u32,
+    pub progress_tx: Option<mpsc::Sender<Event>>,
+    pub cancel: Option<oneshot::Receiver<()>>,
+}
+
+pub async fn plan_capture(args: PlanCaptureArgs) -> VbaResult<PlanCaptureResultData> {
+    let payload = json!({
+        "command": "plan_capture",
+        "version": 1,
+        "project": &args.project,
+        "intrinsics": {
+            "image_size": [args.image_size[0], args.image_size[1]],
+            "hfov_deg": args.hfov_deg,
+            "vfov_deg": args.vfov_deg,
+        },
+        "shell": {
+            "standoff_min_mm": args.standoff_min_mm,
+            "standoff_max_mm": args.standoff_max_mm,
+            "height_min_mm": args.height_min_mm,
+            "height_max_mm": args.height_max_mm,
+        },
+        "target_p95_residual_mm": args.target_p95_residual_mm,
+        "trials": args.trials,
+        "seed": args.seed,
+    });
+
+    let value = run_sidecar(SidecarRequest {
+        subcommand: "plan_capture".into(),
+        payload,
+        progress_tx: args.progress_tx,
+        cancel: args.cancel,
+    })
+    .await?;
+
     serde_json::from_value(value).map_err(VbaError::BadEventJson)
 }
