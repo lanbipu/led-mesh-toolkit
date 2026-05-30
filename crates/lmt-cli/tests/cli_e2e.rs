@@ -2311,3 +2311,99 @@ fn reconstruct_structured_light_reports_rejection_stats() {
     assert!(proj.join("measurements/measured.yaml").exists());
 }
 
+
+// ── plan-capture (visual capture guidance) ─────────────────────────────────────
+// Uses a tiny inline 2x2 flat screen so the Monte-Carlo planner covers fast.
+
+fn write_min_project(dir: &Path) -> std::path::PathBuf {
+    let proj = dir.join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(
+        proj.join("project.yaml"),
+        r#"project:
+  name: PlanCaptureE2E
+  unit: mm
+screens:
+  MAIN:
+    cabinet_count: [2, 2]
+    cabinet_size_mm: [500, 500]
+    shape_prior:
+      type: flat
+    shape_mode: rectangle
+    irregular_mask: []
+coordinate_system:
+  origin_point: MAIN_V001_R001
+  x_axis_point: MAIN_V002_R001
+  xy_plane_point: MAIN_V001_R002
+output:
+  target: disguise
+  obj_filename: "{screen_id}_mesh.obj"
+  weld_vertices_tolerance_mm: 1.0
+  triangulate: true
+"#,
+    )
+    .unwrap();
+    proj
+}
+
+#[test]
+fn visual_plan_capture_returns_plan() {
+    let tmp = TempDir::new().unwrap();
+    let proj = write_min_project(tmp.path());
+    let assert = lmt()
+        .args([
+            "--json", "visual", "plan-capture",
+            proj.to_str().unwrap(), "MAIN",
+            "--image-size", "1920x1080", "--hfov-deg", "60",
+            "--standoff", "2000..4000", "--height", "400..2200",
+            "--trials", "6",
+        ])
+        .assert()
+        .success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    assert!(env["data"]["stations"].as_array().unwrap().len() >= 5);
+    assert_eq!(env["data"]["coverage"].as_array().unwrap().len(), 4);
+    assert_eq!(env["data"]["all_pass"], true);
+    // valid JSON end-to-end — no NaN leaked through (null p95 only)
+    assert!(!std::str::from_utf8(&assert.get_output().stdout).unwrap().contains("NaN"));
+}
+
+#[test]
+fn visual_plan_capture_bad_screen_is_error_envelope() {
+    let tmp = TempDir::new().unwrap();
+    let proj = write_min_project(tmp.path());
+    let assert = lmt()
+        .args([
+            "--json", "visual", "plan-capture",
+            proj.to_str().unwrap(), "BOGUS",
+            "--image-size", "1920x1080", "--hfov-deg", "60",
+            "--standoff", "2000..4000", "--height", "400..2200",
+            "--trials", "6",
+        ])
+        .assert()
+        .failure();
+    let stderr = std::str::from_utf8(&assert.get_output().stderr).unwrap().trim_end();
+    assert!(!stderr.contains('\n'), "stderr must be a single envelope line; got:\n{stderr}");
+    let env: Value = serde_json::from_str(stderr).expect("stderr must be JSON envelope");
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "not_found");
+}
+
+#[test]
+fn visual_plan_capture_bad_image_size_is_invalid_input() {
+    let tmp = TempDir::new().unwrap();
+    let proj = write_min_project(tmp.path());
+    let assert = lmt()
+        .args([
+            "--json", "visual", "plan-capture",
+            proj.to_str().unwrap(), "MAIN",
+            "--image-size", "nonsense", "--hfov-deg", "60",
+            "--standoff", "2000..4000", "--height", "400..2200",
+        ])
+        .assert()
+        .failure();
+    let stderr = std::str::from_utf8(&assert.get_output().stderr).unwrap().trim_end();
+    let env: Value = serde_json::from_str(stderr).unwrap();
+    assert_eq!(env["error"]["code"], "invalid_input");
+}
