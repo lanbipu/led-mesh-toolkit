@@ -151,3 +151,32 @@ def test_bridging_disjoint_cameras_break_the_chain():
     rep = bridging_report(geom, cams)
     assert ((0, 0), (1, 0)) in rep.broken_edges or ((1, 0), (0, 0)) in rep.broken_edges
     assert rep.n_components == 2
+
+
+from lmt_vba_sidecar.capture_planner.geometry import ArcOccluder
+from lmt_vba_sidecar.capture_planner.visibility import point_visible as pv
+
+
+def test_arc_occlusion_blocks_far_point_from_end_camera():
+    radius = 2500.0
+    width = 6000.0
+    arc = ArcOccluder(cx=width / 2.0, cz=radius, radius=radius,
+                      a_min=-width / (2 * radius), a_max=width / (2 * radius))
+    a = width / (2 * radius)
+    q = np.array([arc.cx + radius * np.sin(a), 250.0, radius - radius * np.cos(a)])
+    n = np.array([np.sin(a), 0.0, np.cos(a)])
+    K = intrinsics_from_fov((3840, 2160), hfov_deg=70.0)
+    cam = look_at_camera(K, [-4000.0, 250.0, 3500.0], q, (3840, 2160))
+    assert pv(cam, q, n, arc=arc) is False
+
+
+def test_arc_occlusion_does_not_block_frontal_view():
+    radius = 2500.0
+    width = 6000.0
+    arc = ArcOccluder(cx=width / 2.0, cz=radius, radius=radius,
+                      a_min=-width / (2 * radius), a_max=width / (2 * radius))
+    q = np.array([arc.cx, 250.0, 0.0])
+    n = np.array([0.0, 0.0, 1.0])
+    K = intrinsics_from_fov((3840, 2160), hfov_deg=70.0)
+    cam = look_at_camera(K, [arc.cx, 250.0, 5000.0], q, (3840, 2160))
+    assert pv(cam, q, n, arc=arc) is True

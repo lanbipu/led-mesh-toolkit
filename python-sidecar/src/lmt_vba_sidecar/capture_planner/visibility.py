@@ -10,6 +10,7 @@ conservative vs reconstruct's bare gate (which counts >=1-obs views).
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -45,8 +46,36 @@ def look_at_camera(K, cam_pos_mm, target_mm, image_size, up=None) -> Camera:
     return Camera(np.asarray(K, float), R, t, tuple(image_size))
 
 
+def _arc_occludes(arc, cam_center, p) -> bool:
+    """True if the cylinder's near arc blocks the camera→point ray (check (d)).
+    Works in the XZ plane (cylinder axis vertical): solve segment↔circle and
+    treat an intersection nearer than the target — whose angle lies within the
+    screen's arc range — as occlusion."""
+    px, pz = float(cam_center[0]), float(cam_center[2])
+    qx, qz = float(p[0]), float(p[2])
+    dx, dz = qx - px, qz - pz
+    fx, fz = px - arc.cx, pz - arc.cz
+    a = dx * dx + dz * dz
+    if a < 1e-9:
+        return False
+    b = 2.0 * (fx * dx + fz * dz)
+    c = fx * fx + fz * fz - arc.radius * arc.radius
+    disc = b * b - 4.0 * a * c
+    if disc <= 0.0:
+        return False
+    sq = math.sqrt(disc)
+    for t in ((-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)):
+        if 1e-4 < t < 1.0 - 1e-3:
+            ix = px + t * dx
+            iz = pz + t * dz
+            ang = math.atan2(ix - arc.cx, -(iz - arc.cz))
+            if arc.a_min - 1e-6 <= ang <= arc.a_max + 1e-6:
+                return True
+    return False
+
+
 def point_visible(cam: Camera, p_mm, normal, *, margin_frac=0.05,
-                  incidence_max_deg=60.0) -> bool:
+                  incidence_max_deg=60.0, arc=None) -> bool:
     p = np.asarray(p_mm, float)
     p_cam = cam.R @ p + cam.t
     if p_cam[2] <= 0.0:                                   # (a) cheirality
@@ -62,7 +91,11 @@ def point_visible(cam: Camera, p_mm, normal, *, margin_frac=0.05,
     cos_inc = float(np.dot(np.asarray(normal, float), to_cam) / np.linalg.norm(to_cam))
     if cos_inc <= 0.0:                                     # back-facing
         return False
-    return bool(np.degrees(np.arccos(np.clip(cos_inc, -1.0, 1.0))) <= incidence_max_deg)
+    if np.degrees(np.arccos(np.clip(cos_inc, -1.0, 1.0))) > incidence_max_deg:
+        return False
+    if arc is not None and _arc_occludes(arc, cam_center, p):  # (d) self-occlusion
+        return False
+    return True
 
 
 from lmt_vba_sidecar.capture_planner.geometry import CabinetGeom
@@ -79,12 +112,12 @@ class CabinetCoverage:
 
 
 def vis_count(cam: Camera, cabg: CabinetGeom, *, margin_frac=0.05,
-              incidence_max_deg=60.0) -> int:
+              incidence_max_deg=60.0, arc=None) -> int:
     return sum(
         1
         for p in cabg.sample_points_mm
         if point_visible(cam, p, cabg.normal, margin_frac=margin_frac,
-                         incidence_max_deg=incidence_max_deg)
+                         incidence_max_deg=incidence_max_deg, arc=arc)
     )
 
 
@@ -93,11 +126,12 @@ def coverage_report(geom: ScreenGeometry, cams: list[Camera], *, margin_frac=0.0
     """Return (per_cabinet: list[CabinetCoverage], counts: dict[(ci,(col,row))->int]).
     `counts` is the per-camera per-cabinet visible-point count, reused downstream
     (bridging, scoring)."""
+    arc = geom.arc_occluder
     counts: dict[tuple[int, tuple[int, int]], int] = {}
     for ci, cam in enumerate(cams):
         for cabg in geom.cabinets:
             n = vis_count(cam, cabg, margin_frac=margin_frac,
-                          incidence_max_deg=incidence_max_deg)
+                          incidence_max_deg=incidence_max_deg, arc=arc)
             if n:
                 counts[(ci, (cabg.col, cabg.row))] = n
 

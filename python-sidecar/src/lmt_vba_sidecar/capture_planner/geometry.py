@@ -31,11 +31,23 @@ class CabinetGeom:
 
 
 @dataclass(frozen=True)
+class ArcOccluder:
+    """Vertical cylinder cross-section (XZ plane) used for curved self-occlusion.
+    Axis at (cx, cz); the screen surface spans arc angles [a_min, a_max]."""
+    cx: float
+    cz: float
+    radius: float
+    a_min: float
+    a_max: float
+
+
+@dataclass(frozen=True)
 class ScreenGeometry:
     cabinets: list[CabinetGeom]
     radius_mm: float | None
     total_width_mm: float
     total_height_mm: float
+    arc_occluder: "ArcOccluder | None" = None
 
 
 def _tangent_basis(normal: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -68,9 +80,18 @@ def expand_screen(cab: CabinetArray, shape_prior, sample_grid=(4, 4)) -> ScreenG
 
     cabinets.sort(key=lambda c: (c.row, c.col))
     radius = _curved_radius(shape_prior) if _is_curved(shape_prior) else None
+    total_w = cab.cols * cw_mm
+    arc_occluder = None
+    if radius is not None:
+        half = total_w / 2.0
+        arc_occluder = ArcOccluder(
+            cx=half, cz=radius, radius=radius,
+            a_min=-half / radius, a_max=half / radius,
+        )
     return ScreenGeometry(
         cabinets=cabinets,
         radius_mm=radius,
-        total_width_mm=cab.cols * cw_mm,
+        total_width_mm=total_w,
         total_height_mm=cab.rows * ch_mm,
+        arc_occluder=arc_occluder,
     )
