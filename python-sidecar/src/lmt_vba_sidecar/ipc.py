@@ -141,7 +141,8 @@ class CalibrateStructuredLightInput(BaseModel):
     # Where the intrinsics JSON is written (NON-destructive default chosen by lmt-app).
     output_path: str
     # reproj RMS gate (px). Looser than checkerboard's 0.5 — SL centroids are noisier.
-    max_rms_px: float = Field(default=1.5, gt=0.0)
+    # Upper cap: beyond 5 px the fit is garbage and the quality gate is effectively disabled.
+    max_rms_px: float = Field(default=1.5, gt=0.0, le=5.0)
 
 
 class CalibrateInput(BaseModel):

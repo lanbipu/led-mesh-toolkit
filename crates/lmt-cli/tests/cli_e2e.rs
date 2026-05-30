@@ -2499,3 +2499,33 @@ fn calibrate_structured_light_refuses_overwrite_without_force() {
     assert_eq!(env["error"]["code"], "invalid_input");
 }
 
+/// --dry-run + output file already exists + no --force → invalid_input (exit 2).
+/// Mirrors calibrate_structured_light_refuses_overwrite_without_force but with
+/// --dry-run, proving that dry-run and execute agree on the clobber refusal.
+#[cfg(unix)]
+#[test]
+fn calibrate_structured_light_dry_run_refuses_overwrite_without_force() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 2, 1);
+    // Pre-create the default output path so the pre-gate check fires.
+    std::fs::create_dir_all(proj.join("calibration")).unwrap();
+    std::fs::write(proj.join("calibration/MAIN_sl_intrinsics.json"), "{}").unwrap();
+    let meta = tmp.path().join("sl_meta.json");
+    std::fs::write(&meta, "{}").unwrap();
+    let c0 = tmp.path().join("c0.json");
+    std::fs::write(&c0, "{}").unwrap();
+    let assert = lmt()
+        .args(["--json", "--dry-run", "visual", "calibrate-structured-light",
+               proj.to_str().unwrap(), "MAIN",
+               "--sl-meta", meta.to_str().unwrap(),
+               "--corr", c0.to_str().unwrap()])
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    assert_eq!(out.status.code(), Some(2));
+    let env: Value =
+        serde_json::from_str(std::str::from_utf8(&out.stderr).unwrap().trim_end()).unwrap();
+    assert_eq!(env["error"]["code"], "invalid_input");
+}
+

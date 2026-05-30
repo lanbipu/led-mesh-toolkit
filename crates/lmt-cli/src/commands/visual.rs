@@ -574,14 +574,30 @@ fn calibrate_structured_light(
     yes: bool,
     dry_run: bool,
 ) -> i32 {
+    let out_path = out
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{project_path}/calibration/{screen_id}_sl_intrinsics.json"));
+
+    // Enforce the no-clobber contract BEFORE gate_destructive so --dry-run and
+    // execute agree: both refuse with invalid_input when the output file exists
+    // and --force is not passed (mirrors reconstruct_structured_light's pre-gate
+    // pattern for its >= 2 correspondences check).
+    if std::path::Path::new(&out_path).exists() && !force {
+        return output::err(
+            mode,
+            ApiError::new(
+                error_codes::INVALID_INPUT,
+                format!(
+                    "output file already exists: {out_path}; pass --force to overwrite or --out to use a different path"
+                ),
+            ),
+        );
+    }
+
     let decision = match util::gate_destructive(yes, dry_run, "visual calibrate-structured-light") {
         Ok(d) => d,
         Err(e) => return output::err(mode, e),
     };
-
-    let out_path = out
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("{project_path}/calibration/{screen_id}_sl_intrinsics.json"));
 
     match decision {
         DestructiveDecision::DryRun => {

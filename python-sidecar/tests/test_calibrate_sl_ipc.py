@@ -24,3 +24,25 @@ def test_zero_correspondences_rejected():
             "project": _project().model_dump(),
             "correspondence_paths": [], "sl_meta_path": "m.json", "output_path": "o.json",
         })
+
+
+def test_max_rms_px_above_cap_rejected():
+    """max_rms_px=50 exceeds le=5.0 upper cap → ValidationError at IPC boundary."""
+    with pytest.raises(ValidationError):
+        CalibrateStructuredLightInput.model_validate({
+            "command": "calibrate_structured_light", "version": 1,
+            "project": _project().model_dump(),
+            "correspondence_paths": ["a.json"], "sl_meta_path": "m.json", "output_path": "o.json",
+            "max_rms_px": 50,
+        })
+
+
+def test_max_rms_px_at_cap_accepted():
+    """max_rms_px=5.0 is exactly at the le=5.0 upper cap → accepted."""
+    m = CalibrateStructuredLightInput.model_validate({
+        "command": "calibrate_structured_light", "version": 1,
+        "project": _project().model_dump(),
+        "correspondence_paths": ["a.json"], "sl_meta_path": "m.json", "output_path": "o.json",
+        "max_rms_px": 5.0,
+    })
+    assert m.max_rms_px == 5.0
