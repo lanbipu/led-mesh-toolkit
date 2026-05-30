@@ -78,6 +78,12 @@ pub fn dump_all() -> Value {
     add!("CabinetPoseEntry", dto::CabinetPoseEntry);
     add!("ExportPoseObjResult", dto::ExportPoseObjResult);
 
+    // Capture guidance planner
+    add!("CapturePlan", dto::CapturePlan);
+    add!("CaptureStation", dto::CaptureStation);
+    add!("CabinetCoverage", dto::CabinetCoverage);
+    add!("UnreachableRegion", dto::UnreachableRegion);
+
     // 错误模型
     add!("LmtError", error::LmtError);
     add!("ApiError", envelope::ApiError);
@@ -131,6 +137,7 @@ mod tests {
             "CabinetPoseReportFile",
             "CabinetPoseEntry",
             "ExportPoseObjResult",
+            "CapturePlan",
         ] {
             assert!(types.contains_key(expected), "missing schema for {expected}");
         }

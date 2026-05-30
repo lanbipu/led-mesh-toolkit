@@ -572,3 +572,44 @@ output:
         assert!(!s.contains("method:"), "expected method field omitted, got: {}", s);
     }
 }
+
+// ── Capture guidance planner DTO ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CaptureStation {
+    pub id: String,
+    pub position_mm: [f64; 3],
+    pub look_at_mm: [f64; 3],
+    pub standoff_mm: f64,
+    pub height_mm: f64,
+    pub role: String,
+    pub covers_cabinets: Vec<[u32; 2]>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CabinetCoverage {
+    pub col: u32,
+    pub row: u32,
+    pub p95_residual_mm: Option<f64>,
+    pub n_views: u32,
+    pub total_observations: u32,
+    pub reconstructable: bool,
+    pub low_observation: bool,
+    pub bridged: bool,
+    pub pass: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct UnreachableRegion {
+    pub cabinets: Vec<[u32; 2]>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CapturePlan {
+    pub stations: Vec<CaptureStation>,
+    pub coverage: Vec<CabinetCoverage>,
+    pub unreachable_regions: Vec<UnreachableRegion>,
+    pub all_pass: bool,
+    pub target_p95_residual_mm: f64,
+}
