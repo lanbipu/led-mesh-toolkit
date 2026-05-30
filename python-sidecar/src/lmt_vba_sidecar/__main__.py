@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from lmt_vba_sidecar.io_utils import write_event
 from lmt_vba_sidecar.ipc import (
     CalibrateInput,
+    CalibrateStructuredLightInput,
     CompareKnownInput,
     DecodeStructuredLightInput,
     ErrorEvent,
@@ -44,6 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("generate_structured_light")
     sub.add_parser("decode_structured_light")
     sub.add_parser("reconstruct_structured_light")
+    sub.add_parser("calibrate_structured_light")
     args = parser.parse_args(argv)
 
     try:
@@ -67,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         "generate_structured_light": "lmt_vba_sidecar.structured_light",
         "decode_structured_light": "lmt_vba_sidecar.sl_decode",
         "reconstruct_structured_light": "lmt_vba_sidecar.sl_reconstruct",
+        "calibrate_structured_light": "lmt_vba_sidecar.calibrate_sl",
     }
     SUBCOMMAND_ENTRYPOINTS = {
         "calibrate": ("run_calibrate", CalibrateInput),
@@ -78,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         "generate_structured_light": ("run_generate_structured_light", GenerateStructuredLightInput),
         "decode_structured_light": ("run_decode_structured_light", DecodeStructuredLightInput),
         "reconstruct_structured_light": ("run_reconstruct_structured_light", ReconstructStructuredLightInput),
+        "calibrate_structured_light": ("run_calibrate_structured_light", CalibrateStructuredLightInput),
     }
 
     try:

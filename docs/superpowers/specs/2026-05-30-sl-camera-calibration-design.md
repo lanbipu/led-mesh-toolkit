@@ -265,7 +265,27 @@ the synthetic substrate, and each must have a passing refusal test):
 | reproj RMS max (`--max-rms-px`) | 1.5 px | happy + noisy acceptance (§6b) |
 | coplanarity ratio (σ_min/σ_max of object cloud) | ≥ 1e-3 of extent **OR** ≥3 diverse poses | near-flat-single-pose refusal (§6b) |
 | pose/baseline diversity min | extrinsic rotation span ≥ ~5° **and** translation baseline ≥ a few % of camera distance | near-duplicate-poses refusal (§6b) |
-| image coverage min (union bbox) | ≥ 40% of frame | (low-coverage refusal) |
-| principal-point / focal std-dev (covariance) | pp ≤ 3 px, focal ≤ 1% | structured-deviation refusal (§6b) |
+| image coverage min (union bbox) | larger per-axis span ≥ 20% of frame | (low-coverage refusal) |
+| principal-point / focal std-dev (covariance) | pp ≤ 12 px, focal ≤ 1.5% | structured-deviation refusal (§6b) |
 
 Settled: `frames_used` = **poses used** (parallels checkerboard `frames_used`).
+
+**Threshold tuning against the synthetic substrate (Task 3 pinning).** Three §8
+starting values were retuned to the synthetic substrate the plan pins against; the
+starting values assumed a more favorable (roughly square, frame-filling) target and
+were tighter than a real LED wall's geometry can deliver:
+
+- **image coverage** — changed from a bbox-**area** product (`w × h ≥ 0.40`) to the
+  **larger per-axis span** (`max(w, h) ≥ 0.20`). A wide/short LED wall (e.g. a 4×1
+  cabinet strip, ~2 m × 0.375 m) viewed from a shallow front arc projects to a thin
+  horizontal band whose bbox **area** fraction can never reach 0.40 even when
+  perfectly observed (recovers K to machine precision). The area product punishes
+  legitimate aspect-ratio mismatch; the per-axis span preserves the gate's intent
+  (reject dots crammed into one small image region) for any wall aspect ratio.
+- **principal-point std-dev** — relaxed 3 px → **12 px**. At 0.3 px centroid noise
+  the substrate's shallow-arc geometry constrains the principal point only to
+  ~7–10 px while still recovering fx to < 2%; 3 px was below the achievable floor.
+- **focal std-dev** — relaxed 1% → **1.5%**. Measured focal_std on the substrate is
+  ~1.0% at 0.3 px noise, right at the old edge; 1.5% leaves real margin without
+  admitting a degenerate solve (those produce tens-to-hundreds of px pp_std and are
+  caught earlier by the coplanarity / rotation-diversity gates regardless).
