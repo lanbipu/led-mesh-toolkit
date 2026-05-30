@@ -131,6 +131,19 @@ class ReconstructStructuredLightInput(BaseModel):
     pose_report_path: str | None = None
 
 
+class CalibrateStructuredLightInput(BaseModel):
+    command: Literal["calibrate_structured_light"]
+    version: Literal[1]
+    project: ReconstructProject
+    # One CorrespondenceFile per camera pose of ONE camera (decode_structured_light output).
+    correspondence_paths: Annotated[list[str], Field(min_length=1)]
+    sl_meta_path: str
+    # Where the intrinsics JSON is written (NON-destructive default chosen by lmt-app).
+    output_path: str
+    # reproj RMS gate (px). Looser than checkerboard's 0.5 — SL centroids are noisier.
+    max_rms_px: float = Field(default=1.5, gt=0.0)
+
+
 class CalibrateInput(BaseModel):
     command: Literal["calibrate"]
     version: Literal[1]

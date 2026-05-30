@@ -1,0 +1,26 @@
+import pytest
+from pydantic import ValidationError
+from lmt_vba_sidecar.ipc import CalibrateStructuredLightInput, ReconstructProject, CabinetArray
+
+
+def _project():
+    return ReconstructProject(screen_id="MAIN", cabinet_array=CabinetArray(cols=2, rows=1, cabinet_size_mm=[500.0, 500.0]), shape_prior="flat")
+
+
+def test_valid_input_parses_with_default_max_rms():
+    m = CalibrateStructuredLightInput.model_validate({
+        "command": "calibrate_structured_light", "version": 1,
+        "project": _project().model_dump(),
+        "correspondence_paths": ["a.json"], "sl_meta_path": "m.json", "output_path": "o.json",
+    })
+    assert m.max_rms_px == 1.5
+    assert len(m.correspondence_paths) == 1
+
+
+def test_zero_correspondences_rejected():
+    with pytest.raises(ValidationError):
+        CalibrateStructuredLightInput.model_validate({
+            "command": "calibrate_structured_light", "version": 1,
+            "project": _project().model_dump(),
+            "correspondence_paths": [], "sl_meta_path": "m.json", "output_path": "o.json",
+        })
