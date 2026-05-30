@@ -197,7 +197,7 @@ run_calibrate_structured_light(cmd) -> writes intrinsics.json, returns {reproj_e
 
 | Condition | Error | Code |
 | --- | --- | --- |
-| missing/unschema'd sl_meta, provenance mismatch, stale meta vs layout, bad files, mixed `camera_image_size` across corr, out path exists without `--force` | `invalid_input` | 3 |
+| missing/unschema'd sl_meta, provenance mismatch, stale meta vs layout, bad files, mixed `camera_image_size` across corr, out path exists without `--force` | `invalid_input` | 2 |
 | degenerate observability: near-coplanar target + <3 diverse poses, pose/baseline collapse (near-duplicate captures), too-low image coverage, or principal-point / focal std-dev (covariance) too high | `observability_failed` | 17 |
 | solver produced unusable K (focal/pp out of bounds, reproj RMS > max, non-finite) | `intrinsics_invalid` | 16 |
 | SL decode/segmentation issues surfaced from corr | `decode_failed` | 18 |
@@ -240,9 +240,9 @@ Acceptance (synthetic, noise-free → noisy → adversarial):
   envelope reports `reproj_error_px` + `frames_used` + `calibration_method`.
 - refuse: no `--yes` ⇒ refuse envelope, no write.
 - dry-run: prints resolved out path, writes nothing.
-- error envelopes: provenance mismatch ⇒ `invalid_input(3)`; mixed `camera_image_size` across corr ⇒
-  `invalid_input(3)`; out path exists without `--force` ⇒ `invalid_input(3)`; near-coplanar single pose
-  ⇒ `observability_failed(17)`.
+- error envelopes: provenance mismatch ⇒ `invalid_input` (exit 2); mixed `camera_image_size` across corr
+  ⇒ `invalid_input` (exit 2); out path exists without `--force` ⇒ `invalid_input` (exit 2); near-coplanar
+  single pose ⇒ `observability_failed` (exit 17).
 
 ## 7. Non-goals
 
