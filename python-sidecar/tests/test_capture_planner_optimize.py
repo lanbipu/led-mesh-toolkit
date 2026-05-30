@@ -78,3 +78,48 @@ def test_optimize_adds_cameras_to_a_single_camera_start():
     assert len(result.cameras) > 1                  # greedy added at least one
     assert result.unreachable == []
     assert all(v["pass"] for v in result.report.values())
+
+
+def test_optimize_bootstraps_two_views_from_empty_seed():
+    # From an EMPTY seed, no single added camera makes any cabinet pass (each
+    # cabinet needs 2 views). The old binary "failing count" objective would
+    # dead-stop after round 1 (failing unchanged) and report everything
+    # unreachable; the view-deficit objective must bootstrap to 2 views and pass.
+    K = intrinsics_from_fov((1920, 1080), hfov_deg=60.0)
+    shell = Shell(2000.0, 4000.0, 400.0, 2200.0)
+    geom = _wall(2, 2)
+    result = optimize(geom, K, (1920, 1080), shell, seed_cams=[],
+                      max_stations=16, n_standoff=2, n_height=3, n_azimuth=5,
+                      score_kwargs=_score_kwargs())
+    assert len(result.cameras) >= 2
+    assert result.unreachable == []
+    assert all(v["pass"] for v in result.report.values())
+
+
+def test_optimize_never_returns_duplicate_poses():
+    # Selected candidates are removed from the pool, so no two chosen cameras
+    # share the same pose (duplicate poses have no baseline yet would be counted
+    # as independent views).
+    K = intrinsics_from_fov((1920, 1080), hfov_deg=60.0)
+    shell = Shell(2000.0, 4000.0, 400.0, 2200.0)
+    geom = _wall(2, 2)
+    result = optimize(geom, K, (1920, 1080), shell, seed_cams=[],
+                      max_stations=16, n_standoff=2, n_height=3, n_azimuth=5,
+                      score_kwargs=_score_kwargs())
+    keys = {(c.R.tobytes(), c.t.tobytes()) for c in result.cameras}
+    assert len(keys) == len(result.cameras), "duplicate camera pose in plan"
+
+
+def test_optimize_respects_max_stations_below_seed_count():
+    # max_stations smaller than the recipe seed (7 = 5 fan + top + bottom) must
+    # still cap the returned plan at the budget.
+    from lmt_vba_sidecar.capture_planner.seed import seed_cameras
+    K = intrinsics_from_fov((1920, 1080), hfov_deg=60.0)
+    shell = Shell(2000.0, 4000.0, 400.0, 2200.0)
+    geom = _wall(2, 2)
+    seed = [s.camera for s in seed_cameras(geom, K, (1920, 1080), shell, n_fan=5)]
+    assert len(seed) == 7
+    result = optimize(geom, K, (1920, 1080), shell, seed_cams=seed,
+                      max_stations=3, n_standoff=2, n_height=3, n_azimuth=5,
+                      score_kwargs=_score_kwargs())
+    assert len(result.cameras) <= 3

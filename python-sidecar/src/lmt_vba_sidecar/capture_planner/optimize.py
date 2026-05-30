@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from lmt_vba_sidecar.capture_planner import gates
 from lmt_vba_sidecar.capture_planner.geometry import ScreenGeometry
 from lmt_vba_sidecar.capture_planner.visibility import Camera, coverage_report, look_at_camera
 from lmt_vba_sidecar.capture_planner.seed import Shell
@@ -44,32 +45,49 @@ class OptimizeResult:
     counts: dict           # per-(cam_idx, (col,row)) visible-point count for `cameras`
 
 
-def _n_failing(report) -> int:
-    return sum(1 for v in report.values() if not v["pass"])
+def _score(report, n_cabinets) -> tuple:
+    """Lexicographic greedy objective: failing cabinets first, then total view
+    deficit (sum of how many covering views each cabinet still lacks to reach
+    MIN_VIEWS). The deficit term lets the optimizer make progress on a cabinet
+    that needs TWO new views: the first addition lowers the deficit even though
+    the cabinet isn't reconstructable yet, so the greedy doesn't dead-stop and
+    falsely report a reachable region as unreachable."""
+    if report is None:
+        return (n_cabinets, gates.MIN_VIEWS * n_cabinets)
+    failing = sum(1 for v in report.values() if not v["pass"])
+    deficit = sum(max(0, gates.MIN_VIEWS - v["n_views"]) for v in report.values())
+    return (failing, deficit)
 
 
 def optimize(geom: ScreenGeometry, K, image_size, shell: Shell, *, seed_cams=None,
              max_stations=24, n_standoff=2, n_height=3, n_azimuth=5,
              score_kwargs=None) -> OptimizeResult:
     score_kwargs = dict(score_kwargs or {})
-    cams = list(seed_cams or [])
+    # The seed is part of the station budget: never return more than max_stations.
+    cams = list(seed_cams or [])[:max_stations]
     pool = candidate_cameras(geom, K, image_size, shell, n_standoff=n_standoff,
                              n_height=n_height, n_azimuth=n_azimuth)
+    n_cab = len(geom.cabinets)
 
     report = score_screen(geom, cams, **score_kwargs) if cams else None
-    cur_fail = _n_failing(report) if report is not None else len(geom.cabinets)
+    cur = _score(report, n_cab)
 
-    while cur_fail > 0 and len(cams) < max_stations:
-        best_fail, best_cam, best_report = cur_fail, None, report
-        for cand in pool:
+    # Greedy: each round, add the unused pool candidate that most improves the
+    # objective. Selected candidates are removed from the pool so the same pose
+    # can't be re-added (duplicate poses share no baseline yet coverage_report
+    # would count them as independent views, faking reconstructability).
+    while cur[0] > 0 and len(cams) < max_stations and pool:
+        best, best_cam, best_report, best_idx = cur, None, report, -1
+        for idx, cand in enumerate(pool):
             r = score_screen(geom, cams + [cand], **score_kwargs)
-            f = _n_failing(r)
-            if f < best_fail:
-                best_fail, best_cam, best_report = f, cand, r
-        if best_cam is None:        # no candidate improves coverage -> stop
+            s = _score(r, n_cab)
+            if s < best:
+                best, best_cam, best_report, best_idx = s, cand, r, idx
+        if best_cam is None:        # no candidate improves the objective -> stop
             break
         cams.append(best_cam)
-        report, cur_fail = best_report, best_fail
+        pool.pop(best_idx)
+        report, cur = best_report, best
 
     if report is None:
         report = score_screen(geom, cams, **score_kwargs) if cams else {
