@@ -212,19 +212,36 @@ pub fn run_export_pose_obj(
         panels.push((cab.cabinet_id.clone(), col, row, cs));
     }
 
-    // 摆放：root→手动(+ground);disguise 无 root→标准摆法;否则(neutral)→原始(+可选 ground)。
-    if root.is_none() && target_enum == TargetSoftware::Disguise {
+    // 摆放 + disguise 约定。disguise(不管有没有 --root)统一产出:发光面 +Y up、朝观众、内容正向。
+    //   - 无 root → 标准摆法(中心列转正 + flipY + 居中 + 贴地)。
+    //   - 有 root → re-root(上面已应用)+ 补 flipY(re-root 是 canonical 的镜像,差一个反射)+ 贴地。
+    //   - neutral → 原始帧(+可选 --ground),不套任何 disguise 约定。
+    // flipY 是反射:后面对所有 disguise 反转 winding(发光面 +Z)、panel UV cell 内 V 翻转(内容正向)。
+    let disguise = target_enum == TargetSoftware::Disguise;
+    let canonical_disguise = root.is_none() && disguise;
+    if canonical_disguise {
         apply_canonical_frame(&mut panels, cols)?;
-    } else if ground {
-        let min_y = panels
-            .iter()
-            .filter(|(id, _, _, _)| root.map_or(true, |r| id == r))
-            .flat_map(|(_, _, _, cs)| cs.iter().map(|c| c[1]))
-            .fold(f64::INFINITY, f64::min);
-        if min_y.is_finite() {
+    } else {
+        if disguise {
+            // disguise --root:re-root 后补 flipY,使其与 canonical 同手性/约定。
             for (_, _, _, cs) in panels.iter_mut() {
-                for c in cs.iter_mut() {
-                    c[1] -= min_y;
+                for p in cs.iter_mut() {
+                    p[1] = -p[1];
+                }
+            }
+        }
+        // 贴地:disguise 总贴地;neutral 仅 --ground。基准块 = root(无 root 时整体最低)。
+        if ground || disguise {
+            let min_y = panels
+                .iter()
+                .filter(|(id, _, _, _)| root.map_or(true, |r| id == r))
+                .flat_map(|(_, _, _, cs)| cs.iter().map(|c| c[1]))
+                .fold(f64::INFINITY, f64::min);
+            if min_y.is_finite() {
+                for (_, _, _, cs) in panels.iter_mut() {
+                    for c in cs.iter_mut() {
+                        c[1] -= min_y;
+                    }
                 }
             }
         }
@@ -234,7 +251,9 @@ pub fn run_export_pose_obj(
     let unit_array = CabinetArray::rectangle(1, 1, [1.0, 1.0]);
     let mut meshes = Vec::with_capacity(panels.len());
     for (cid, col, row, cs) in &panels {
-        let surface = panel_surface(cid, cs, *col, *row, cols, rows);
+        // disguise 的 flipY 把每块几何竖直翻转,UV 的 cell 内 V 要跟着翻
+        // (否则每块内容上下颠倒 → 整墙横条错位)。U 不翻(水平没动)。
+        let surface = panel_surface(cid, cs, *col, *row, cols, rows, disguise);
         meshes.push(surface_to_mesh_output(
             &surface,
             &unit_array,
@@ -242,7 +261,14 @@ pub fn run_export_pose_obj(
             0.0,
         )?);
     }
-    let combined = merge_mesh_outputs(TargetSoftware::Neutral, &meshes);
+    let mut combined = merge_mesh_outputs(TargetSoftware::Neutral, &meshes);
+    // disguise 的 flipY 是反射,翻转了三角 winding;反转回来让发光面外法向落 +Z
+    // (对账已验证的 disguise 模型 lmt_test_v02)。root / no-root 都适用。
+    if disguise {
+        for t in combined.triangles.iter_mut() {
+            t.swap(1, 2);
+        }
+    }
 
     let out = ensure_obj_extension(out_file);
     if let Some(parent) = out.parent() {
@@ -438,15 +464,19 @@ fn apply_canonical_frame(
             "cannot auto-orient: wall normal near-vertical or no usable cabinets; pass --root <cabinet_id>".into(),
         )
     })?;
-    // θ = atan2(fwd.x, fwd.z);把 fwd 转到 -Z(对齐 Path A disguise:发光面落 -Z,
-    // 见 path_a_disguise_front_face_is_minus_z golden)。= R_y(-θ)→+Z 再绕 Y 转 180°(取反 x,z)。
-    let theta = fwd.x.atan2(fwd.z);
+    // 对账已验证的 disguise 实拍模型(lmt_test_v02)反算出的变换:
+    //   recon → disguise = R_y(θ) · diag(1,-1,1)   (Kabsch det<0 反射 + ~6° yaw,残差 3mm)
+    // 即 ① flipY:recon 帧 +Y 来自屏内容 v 向(物理下)→ disguise +Y up;
+    //    ② yaw 把中心列发光面外法向带到 +Z(列不翻;旧代码的 180° yaw 会把 X/列翻掉)。
+    // winding 由调用方(disguise 分支)反转,补偿 flipY 反射,使发光面落 +Z。
+    let theta = -fwd.x.atan2(fwd.z); // yaw 把 fwd 带到 +Z
     let (s, c) = theta.sin_cos();
     for (_, _, _, cs) in panels.iter_mut() {
         for p in cs.iter_mut() {
             let (x, z) = (p[0], p[2]);
-            p[0] = -(x * c - z * s);
-            p[2] = -(x * s + z * c);
+            p[0] = x * c + z * s; // R_y(θ)
+            p[1] = -p[1]; // flipY
+            p[2] = -x * s + z * c;
         }
     }
     // 贴地 + 居中(全顶点)。
@@ -481,6 +511,7 @@ fn panel_surface(
     row: u32,
     cols: u32,
     rows: u32,
+    flip_v: bool,
 ) -> ReconstructedSurface {
     let m = |i: usize| {
         Vector3::new(
@@ -493,9 +524,11 @@ fn panel_surface(
     let uv_coords = compute_grid_uv(topology)
         .into_iter()
         .map(|uv| {
+            // flip_v:几何被 flipY 竖直翻转时,cell 内 V 跟着翻,内容才不上下颠倒。
+            let vy = if flip_v { 1.0 - uv.y } else { uv.y };
             nalgebra::Vector2::new(
                 (col as f64 + uv.x) / cols as f64,
-                (row as f64 + uv.y) / rows as f64,
+                (row as f64 + vy) / rows as f64,
             )
         })
         .collect();
@@ -673,15 +706,18 @@ mod tests {
     }
 
     #[test]
-    fn apply_canonical_frame_faces_minus_z_grounded_centered() {
-        // 平墙朝 +X → 标准摆法后中心列法向 ≈ -Z(对齐 Path A)、min Y=0、水平质心=0
+    fn apply_canonical_frame_flipy_grounded_centered() {
+        // 平墙朝 +X → 标准摆法后:贴地(min Y=0)、水平质心=0,且 flipY 把发光面摆到 +Z。
+        // 注意 center_column_forward 用角点叉积算法向,flipY 是反射会把它翻成 -Z;
+        // 真实 mesh 发光面 +Z 由 run_export_pose_obj 的 winding 反转保证(见
+        // export_pose_obj_disguise_matches_v02_conventions)。这里 -Z 即是 flipY 已生效的证据。
         let mut panels = vec![
             facing_panel(0, 0, 1.0, 0.0),
             facing_panel(1, 0, 1.0, 0.0),
             facing_panel(2, 0, 1.0, 0.0),
         ];
         apply_canonical_frame(&mut panels, 3).unwrap();
-        // 中心列法向 → -Z
+        // flipY 后角点叉积法向 → -Z(发光面经 winding 反转后落 +Z)
         let f = center_column_forward(&panels, 3).unwrap();
         assert!((f - Vector3::new(0.0, 0.0, -1.0)).norm() < 1e-6, "facing {f:?}");
         // 贴地 + 居中
@@ -806,6 +842,158 @@ mod tests {
         assert!(mean_x.abs() < 1e-6 && mean_z.abs() < 1e-6, "centered: ({mean_x},{mean_z})");
         // 不再是原始帧(原始 V000_R000 的 BL 是 -0.3,-0.17,0)
         assert!(!text.contains("v -0.3 -0.17 0"), "disguise should be canonical, not raw:\n{text}");
+    }
+
+    #[test]
+    fn export_pose_obj_disguise_matches_v02_conventions() {
+        // 对账已验证的 disguise 实拍模型 lmt_test_v02 反算出的约定:
+        //   ① 列不翻(col0 在左,X 不镜像) ② flipY(content row0 落几何底部)
+        //   ③ 发光面 winding 法向落 +Z。
+        // 输入:recon 帧(+X 宽 / +Y=屏内容 v 向 / +Z outward)的 3 块平墙,全朝 +Z。
+        let dir = tempdir().unwrap();
+        let rp = dir.path().join("CONV_cabinet_pose_report.json");
+        std::fs::write(
+            &rp,
+            r#"{"schema_version":"visual_pose_report.v1","frame":{},"cabinet_poses":[
+ {"cabinet_id":"V000_R000","corners_mm":[[-200,-170,0],[200,-170,0],[200,170,0],[-200,170,0]]},
+ {"cabinet_id":"V001_R000","corners_mm":[[300,-170,0],[700,-170,0],[700,170,0],[300,170,0]]},
+ {"cabinet_id":"V000_R001","corners_mm":[[-200,-670,0],[200,-670,0],[200,-330,0],[-200,-330,0]]}]}"#,
+        )
+        .unwrap();
+        let out = dir.path().join("conv.obj");
+        run_export_pose_obj(&rp, "disguise", &out, None, false).unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
+
+        let verts: Vec<[f64; 3]> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("v "))
+            .map(|l| {
+                let n: Vec<f64> = l.split_whitespace().map(|t| t.parse().unwrap()).collect();
+                [n[0], n[1], n[2]]
+            })
+            .collect();
+        assert_eq!(verts.len(), 12, "3 cabinets × 4 verts");
+        // cabinet i = verts[4i..4i+4]，顺序同 pose report:0=V000_R000,1=V001_R000,2=V000_R001
+        let cen = |i: usize| {
+            let s = &verts[4 * i..4 * i + 4];
+            [
+                s.iter().map(|v| v[0]).sum::<f64>() / 4.0,
+                s.iter().map(|v| v[1]).sum::<f64>() / 4.0,
+                s.iter().map(|v| v[2]).sum::<f64>() / 4.0,
+            ]
+        };
+        // ① col0(cab0) 在 col1(cab1) 左边
+        assert!(cen(0)[0] < cen(1)[0], "col0 must be left of col1: {} vs {}", cen(0)[0], cen(1)[0]);
+        // ② flipY:content row0(cab0) 落在 row1(cab2) 下方(更小 Y)
+        assert!(cen(0)[1] < cen(2)[1], "row0 must be below row1 (flipY): {} vs {}", cen(0)[1], cen(2)[1]);
+        // ③ 第一块第一三角的 winding 法向落 +Z(发光面朝观众)
+        let face0: Vec<usize> = text
+            .lines()
+            .find(|l| l.starts_with("f "))
+            .unwrap()
+            .split_whitespace()
+            .skip(1)
+            .map(|t| t.split('/').next().unwrap().parse::<usize>().unwrap() - 1)
+            .collect();
+        let v = |i: usize| Vector3::new(verts[i][0], verts[i][1], verts[i][2]);
+        let n = (v(face0[1]) - v(face0[0])).cross(&(v(face0[2]) - v(face0[0]))).normalize();
+        assert!(n.z > 0.9, "disguise lit face winding normal must be +Z, got {n:?}");
+
+        // ④ cell 内 V 跟几何竖直对齐:flipY 后,几何更高(Y 大)的顶点 UV-V 也更大,
+        // 否则每块内容上下颠倒(整墙横条错位)。取 cab0 的 vt,比最高/最低顶点的 V。
+        let uvs: Vec<[f64; 2]> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("vt "))
+            .map(|l| {
+                let n: Vec<f64> = l.split_whitespace().map(|t| t.parse().unwrap()).collect();
+                [n[0], n[1]]
+            })
+            .collect();
+        // 顶点 i -> vt 索引(从 f 行)
+        let mut vt_of = std::collections::HashMap::new();
+        for l in text.lines().filter(|l| l.starts_with("f ")) {
+            for tok in l.split_whitespace().skip(1) {
+                let mut it = tok.split('/');
+                let vi: usize = it.next().unwrap().parse::<usize>().unwrap() - 1;
+                let ti: usize = it.next().unwrap().parse::<usize>().unwrap() - 1;
+                vt_of.insert(vi, ti);
+            }
+        }
+        let top = (0..4).max_by(|&a, &b| verts[a][1].total_cmp(&verts[b][1])).unwrap();
+        let bot = (0..4).min_by(|&a, &b| verts[a][1].total_cmp(&verts[b][1])).unwrap();
+        assert!(
+            uvs[vt_of[&top]][1] > uvs[vt_of[&bot]][1],
+            "UV V must follow geometry up: top vert V {} should exceed bottom vert V {}",
+            uvs[vt_of[&top]][1],
+            uvs[vt_of[&bot]][1]
+        );
+    }
+
+    #[test]
+    fn export_pose_obj_disguise_root_keeps_conventions() {
+        // disguise --root 也必须满足 disguise 约定(发光面 +Z、内容正向、Y up):
+        // re-root 是 canonical 的镜像,补 flipY + winding + V翻后两条路一致。
+        let dir = tempdir().unwrap();
+        let rp = dir.path().join("CONV_cabinet_pose_report.json");
+        std::fs::write(
+            &rp,
+            r#"{"schema_version":"visual_pose_report.v1","frame":{},"cabinet_poses":[
+ {"cabinet_id":"V000_R000","corners_mm":[[-200,-170,0],[200,-170,0],[200,170,0],[-200,170,0]]},
+ {"cabinet_id":"V001_R000","corners_mm":[[300,-170,0],[700,-170,0],[700,170,0],[300,170,0]]},
+ {"cabinet_id":"V000_R001","corners_mm":[[-200,-670,0],[200,-670,0],[200,-330,0],[-200,-330,0]]}]}"#,
+        )
+        .unwrap();
+        let out = dir.path().join("conv_root.obj");
+        run_export_pose_obj(&rp, "disguise", &out, Some("V000_R000"), false).unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
+
+        let verts: Vec<[f64; 3]> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("v "))
+            .map(|l| {
+                let n: Vec<f64> = l.split_whitespace().map(|t| t.parse().unwrap()).collect();
+                [n[0], n[1], n[2]]
+            })
+            .collect();
+        let uvs: Vec<[f64; 2]> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("vt "))
+            .map(|l| {
+                let n: Vec<f64> = l.split_whitespace().map(|t| t.parse().unwrap()).collect();
+                [n[0], n[1]]
+            })
+            .collect();
+        let mut vt_of = std::collections::HashMap::new();
+        for l in text.lines().filter(|l| l.starts_with("f ")) {
+            for tok in l.split_whitespace().skip(1) {
+                let mut it = tok.split('/');
+                let vi: usize = it.next().unwrap().parse::<usize>().unwrap() - 1;
+                let ti: usize = it.next().unwrap().parse::<usize>().unwrap() - 1;
+                vt_of.insert(vi, ti);
+            }
+        }
+        // ① 发光面 winding 法向 +Z(cab0 第一三角)
+        let face0: Vec<usize> = text
+            .lines()
+            .find(|l| l.starts_with("f "))
+            .unwrap()
+            .split_whitespace()
+            .skip(1)
+            .map(|t| t.split('/').next().unwrap().parse::<usize>().unwrap() - 1)
+            .collect();
+        let v = |i: usize| Vector3::new(verts[i][0], verts[i][1], verts[i][2]);
+        let n = (v(face0[1]) - v(face0[0])).cross(&(v(face0[2]) - v(face0[0]))).normalize();
+        assert!(n.z > 0.9, "disguise --root lit face must be +Z, got {n:?}");
+        // ② 内容正向:cab0 几何更高的顶点 UV-V 更大
+        let top = (0..4).max_by(|&a, &b| verts[a][1].total_cmp(&verts[b][1])).unwrap();
+        let bot = (0..4).min_by(|&a, &b| verts[a][1].total_cmp(&verts[b][1])).unwrap();
+        assert!(
+            uvs[vt_of[&top]][1] > uvs[vt_of[&bot]][1],
+            "disguise --root: UV V must follow geometry up (content upright)"
+        );
+        // ③ Y up:content row0(cab0)落在 row1(cab2)下方
+        let cy = |i: usize| verts[4 * i..4 * i + 4].iter().map(|v| v[1]).sum::<f64>() / 4.0;
+        assert!(cy(0) < cy(2), "disguise --root: row0 must be below row1 (Y up)");
     }
 
     #[test]
