@@ -123,6 +123,23 @@ impl CoordinateFrame {
         })
     }
 
+    /// `from_three_points` followed by the M0.1 basis permutation `[b0, b2, -b1]`
+    /// → model +X = cols, +Y = screen normal, +Z = rows-up. This is the same
+    /// convention the total-station `reference_frame` builder produces; both share
+    /// this single definition so visual/SL export and total-station agree.
+    pub fn from_three_points_m01(
+        origin: Vector3<f64>,
+        x_axis_ref: Vector3<f64>,
+        xy_plane_ref: Vector3<f64>,
+    ) -> Result<Self, CoreError> {
+        let native = Self::from_three_points(origin, x_axis_ref, xy_plane_ref)?;
+        let b = &native.basis;
+        Ok(CoordinateFrame {
+            origin_world: native.origin_world,
+            basis: [b[0], b[2], [-b[1][0], -b[1][1], -b[1][2]]],
+        })
+    }
+
     fn rotation(&self) -> Matrix3<f64> {
         Matrix3::from_columns(&[
             Vector3::new(self.basis[0][0], self.basis[0][1], self.basis[0][2]),
