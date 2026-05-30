@@ -50,3 +50,15 @@ def test_seed_makes_small_flat_wall_mostly_reconstructable():
     per_cab, _ = coverage_report(geom, cams)
     n_ok = sum(1 for c in per_cab if c.reconstructable)
     assert n_ok >= 5                                 # >=5 of 6 cabinets reconstructable
+
+
+def test_seed_fan_height_clamped_into_shell():
+    # Tall wall (10 rows -> mid-height 2500mm) but a shell that tops out at 2200:
+    # fan cameras must NOT be placed at 2500 (outside the reachable shell).
+    K = intrinsics_from_fov((1920, 1080), hfov_deg=60.0)
+    shell = Shell(2500.0, 9000.0, 400.0, 2200.0)
+    cab = CabinetArray(cols=2, rows=10, cabinet_size_mm=[500.0, 500.0], absent_cells=[])
+    geom = expand_screen(cab, "flat", sample_grid=(4, 4))
+    for s in seed_cameras(geom, K, (1920, 1080), shell, n_fan=5):
+        assert 400.0 - 1e-6 <= s.position_mm[1] <= 2200.0 + 1e-6, \
+            f"{s.role} station at y={s.position_mm[1]} outside shell"

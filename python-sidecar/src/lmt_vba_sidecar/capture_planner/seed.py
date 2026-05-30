@@ -50,12 +50,16 @@ def seed_cameras(geom: ScreenGeometry, K, image_size, shell: Shell, *, n_fan=5,
         shell.standoff_min_mm, shell.standoff_max_mm,
     )
     center = np.array([cx, cy, 0.0])
+    # Fan cameras stand at the wall mid-height when reachable, else at the nearest
+    # reachable height in the shell — never outside it (the shell IS the physical
+    # constraint). They still aim at the wall's vertical center.
+    fan_y = _clamp(cy, shell.height_min_mm, shell.height_max_mm)
 
     stations: list[SeedStation] = []
-    # horizontal front fan at mid height, on an arc of radius `standoff`
+    # horizontal front fan on an arc of radius `standoff`, at the reachable height
     angles = np.deg2rad(np.linspace(-fan_span_deg / 2, fan_span_deg / 2, n_fan))
     for a in angles:
-        pos = center + np.array([standoff * np.sin(a), 0.0, standoff * np.cos(a)])
+        pos = np.array([cx + standoff * np.sin(a), fan_y, standoff * np.cos(a)])
         stations.append(SeedStation(look_at_camera(K, pos, center, image_size),
                                     pos, standoff, "fan"))
 
