@@ -143,3 +143,24 @@ def test_near_duplicate_poses_refused(tmp_path):
     paths = _write_corr(tmp_path, meta, world, dup, noise=0.1)
     rc, _ = _run(tmp_path, meta, proj, paths)
     assert rc == 1
+
+
+def test_single_pose_covariance_gate_refused(tmp_path, capsys):
+    # Isolates the parameter-observability (covariance) gate — the Codex-review
+    # gate that catches a low-RMS-but-under-constrained K. A CURVED (non-coplanar)
+    # target seen from ONE pose: the coplanarity gate passes (ratio > 1e-3),
+    # coverage passes, the rotation-diversity gate is SKIPPED (only 1 rvec), and
+    # the fit's RMS stays ~0.4px (under the 1.5px gate). But a single view cannot
+    # pin the principal point, so pp_std (~16-21px > 12) trips the covariance gate.
+    meta, proj, cab, shape = _curved_meta()
+    world = nominal_dot_positions_world(meta, cab, shape)
+    paths = _write_corr(tmp_path, meta, world, _ring_poses(1), noise=0.3)
+    rc, _ = _run(tmp_path, meta, proj, paths)
+    assert rc == 1
+    # Prove it is the covariance gate firing, not an earlier gate.
+    errs = [json.loads(l) for l in capsys.readouterr().out.splitlines()
+            if l.strip() and json.loads(l).get("event") == "error"]
+    assert len(errs) == 1, errs
+    assert errs[0]["code"] == "observability_failed"
+    msg = errs[0]["message"].lower()
+    assert "principal-point std" in msg or "focal std" in msg, errs[0]["message"]

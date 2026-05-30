@@ -266,7 +266,7 @@ the synthetic substrate, and each must have a passing refusal test):
 | coplanarity ratio (σ_min/σ_max of object cloud) | ≥ 1e-3 of extent **OR** ≥3 diverse poses | near-flat-single-pose refusal (§6b) |
 | pose/baseline diversity min | extrinsic rotation span ≥ ~5° **and** translation baseline ≥ a few % of camera distance | near-duplicate-poses refusal (§6b) |
 | image coverage min (union bbox) | larger per-axis span ≥ 20% of frame | (low-coverage refusal) |
-| principal-point / focal std-dev (covariance) | pp ≤ 12 px, focal ≤ 1.5% | structured-deviation refusal (§6b) |
+| principal-point / focal std-dev (covariance) | pp ≤ 12 px, focal ≤ 1.5% (substrate-pinned **floors** — real multi-pose capture constrains tighter) | single-pose-curved covariance refusal (§6b) |
 
 Settled: `frames_used` = **poses used** (parallels checkerboard `frames_used`).
 
@@ -289,3 +289,20 @@ were tighter than a real LED wall's geometry can deliver:
   ~1.0% at 0.3 px noise, right at the old edge; 1.5% leaves real margin without
   admitting a degenerate solve (those produce tens-to-hundreds of px pp_std and are
   caught earlier by the coplanarity / rotation-diversity gates regardless).
+
+These covariance thresholds are **substrate-pinned floors, not targets.** They
+reflect the weakest legitimate geometry the synthetic substrate exercises (a thin
+wall seen from a shallow single-distance arc); a real on-site capture with genuine
+pose diversity — varied distances, wider baseline, oblique views — should constrain
+the principal point and focal length substantially tighter. The floors exist so a
+*degenerate* solve is refused, not so a *good* one barely scrapes through.
+
+**The covariance gate now has a dedicated refusal test** (`test_single_pose_covariance_gate_refused`,
+§6b). It isolates the parameter-observability gate — the Codex-review gate that
+catches a low-RMS-but-under-constrained K — by feeding a CURVED (non-coplanar)
+target from a SINGLE pose: coplanarity passes (ratio > 1e-3), coverage passes,
+rotation-diversity is skipped (one rvec), and the fit's RMS stays ~0.4 px (under
+the 1.5 px gate), but one view cannot pin the principal point so pp_std (~16–21 px
+> 12) trips the gate. The companion noise-free single-pose case fits perfectly
+(pp_std ≈ 0.003 px) and is *accepted*, confirming the gate fires on genuine
+under-constraint rather than on pose count.
