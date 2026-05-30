@@ -398,3 +398,47 @@ mod rejection_fields_tests {
         assert_eq!(old.n_rejected, 0);
     }
 }
+
+// --- plan_capture result mirror (matches sidecar PlanCaptureResultData) -----
+#[derive(Debug, Clone, Deserialize)]
+pub struct CaptureStationData {
+    pub id: String,
+    pub position_mm: [f64; 3],
+    pub look_at_mm: [f64; 3],
+    pub standoff_mm: f64,
+    pub height_mm: f64,
+    pub role: String,
+    pub covers_cabinets: Vec<[u32; 2]>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CabinetCoverageData {
+    pub col: u32,
+    pub row: u32,
+    pub p95_residual_mm: Option<f64>,
+    pub n_views: u32,
+    pub total_observations: u32,
+    pub reconstructable: bool,
+    pub low_observation: bool,
+    pub bridged: bool,
+    // Accept both `pass` (pydantic >=2.11 serialize_by_alias) and `pass_`
+    // (older pydantic ignores that config key) so the wire contract is robust
+    // across the `pydantic>=2.0,<3.0` pin range.
+    #[serde(alias = "pass_")]
+    pub pass: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UnreachableRegionData {
+    pub cabinets: Vec<[u32; 2]>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlanCaptureResultData {
+    pub stations: Vec<CaptureStationData>,
+    pub coverage: Vec<CabinetCoverageData>,
+    pub unreachable_regions: Vec<UnreachableRegionData>,
+    pub all_pass: bool,
+    pub target_p95_residual_mm: f64,
+}

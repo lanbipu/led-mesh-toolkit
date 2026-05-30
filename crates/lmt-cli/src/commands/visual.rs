@@ -33,6 +33,54 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             seed_matrix,
         } => eval(mode, &dataset, &method, seed_matrix),
         VisualCmd::CompareKnown { report, known } => compare_known(mode, &report, &known),
+        VisualCmd::PlanCapture {
+            project_path,
+            screen_id,
+            image_size,
+            hfov_deg,
+            vfov_deg,
+            standoff,
+            height,
+            target_mm,
+            trials,
+            seed,
+        } => plan_capture(
+            mode,
+            &project_path,
+            &screen_id,
+            &image_size,
+            hfov_deg,
+            vfov_deg,
+            &standoff,
+            &height,
+            target_mm,
+            trials,
+            seed,
+        ),
+        VisualCmd::CaptureCard {
+            project_path,
+            screen_id,
+            image_size,
+            hfov_deg,
+            vfov_deg,
+            standoff,
+            height,
+            target_mm,
+            trials,
+            seed,
+        } => capture_card(
+            mode,
+            &project_path,
+            &screen_id,
+            &image_size,
+            hfov_deg,
+            vfov_deg,
+            &standoff,
+            &height,
+            target_mm,
+            trials,
+            seed,
+        ),
         VisualCmd::Calibrate {
             project_path,
             screen_id,
@@ -622,6 +670,81 @@ fn compare_known(mode: Mode, report: &str, known: &str) -> i32 {
                 p.cabinets.len(),
                 p.pairs.len()
             );
+        }),
+        Err(e) => output::err(mode, ApiError::from(e)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_capture(
+    mode: Mode,
+    project_path: &str,
+    screen_id: &str,
+    image_size: &str,
+    hfov_deg: Option<f64>,
+    vfov_deg: Option<f64>,
+    standoff: &str,
+    height: &str,
+    target_mm: f64,
+    trials: u32,
+    seed: u32,
+) -> i32 {
+    // plan-capture is write_safe (computes a plan, writes nothing) — no gate.
+    match lmt_app::visual::run_plan_capture(
+        Path::new(project_path),
+        screen_id,
+        image_size,
+        hfov_deg,
+        vfov_deg,
+        standoff,
+        height,
+        target_mm,
+        trials,
+        seed,
+    ) {
+        Ok(p) => output::ok(mode, p, |plan| {
+            let _ = writeln!(
+                std::io::stdout(),
+                "plan-capture: {} stations, all_pass={} ({} unreachable region(s))",
+                plan.stations.len(),
+                plan.all_pass,
+                plan.unreachable_regions.len()
+            );
+        }),
+        Err(e) => output::err(mode, ApiError::from(e)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn capture_card(
+    mode: Mode,
+    project_path: &str,
+    screen_id: &str,
+    image_size: &str,
+    hfov_deg: Option<f64>,
+    vfov_deg: Option<f64>,
+    standoff: &str,
+    height: &str,
+    target_mm: f64,
+    trials: u32,
+    seed: u32,
+) -> i32 {
+    // read_only: HTML to stdout in human mode (`... > card.html`); --json wraps {html_content}.
+    match lmt_app::visual::run_capture_card(
+        Path::new(project_path),
+        screen_id,
+        image_size,
+        hfov_deg,
+        vfov_deg,
+        standoff,
+        height,
+        target_mm,
+        trials,
+        seed,
+    ) {
+        Ok(c) => output::ok(mode, c, |card| {
+            let _ = std::io::stdout().write_all(card.html_content.as_bytes());
+            let _ = writeln!(std::io::stdout());
         }),
         Err(e) => output::err(mode, ApiError::from(e)),
     }

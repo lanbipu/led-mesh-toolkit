@@ -137,6 +137,10 @@ pub fn build() -> ContractManifest {
            "lmt visual eval <dataset> [--method charuco] [--seed-matrix <list>]", WriteSafe, false, false, true, Some("EvalResult"), &[0, 2, 4]),
         op("visual.compare_known", "Compare a cabinet_pose_report against known monitor geometry (size/distance/angle errors)",
            "lmt visual compare-known <report.json> <known.json>", WriteSafe, false, false, true, Some("CompareKnownResult"), &[0, 2, 4, 6]),
+        op("visual.plan_capture", "Camera capture-guidance planner: screen geometry + intrinsics + reachable shell -> recommended capture stations + per-cabinet coverage/residual + unreachable regions (CapturePlan). Writes nothing.",
+           "lmt visual plan-capture <project> <screen_id> --image-size <WxH> (--hfov-deg <f> | --vfov-deg <f>) --standoff <MIN..MAX> --height <MIN..MAX> [--target-mm 3.0] [--trials 20] [--seed 0]", WriteSafe, false, false, true, Some("CapturePlan"), &[0, 2, 3]),
+        op("visual.capture_card", "Render the capture plan as a self-contained HTML guidance card (top-down plan view + front-elevation coverage heatmap + station table) on stdout",
+           "lmt visual capture-card <project> <screen_id> --image-size <WxH> (--hfov-deg <f> | --vfov-deg <f>) --standoff <MIN..MAX> --height <MIN..MAX> [--target-mm 3.0] [--trials 20] [--seed 0]", ReadOnly, false, false, true, Some("CaptureCardResult"), &[0, 2, 3]),
     ];
 
     ContractManifest {
@@ -184,10 +188,12 @@ mod tests {
             "visual.simulate",
             "visual.eval",
             "visual.compare_known",
+            "visual.plan_capture",
+            "visual.capture_card",
         ] {
             assert!(ids.contains(&expected), "manifest missing operation_id {expected}; got {ids:?}");
         }
-        assert_eq!(m.operations.len(), 26, "operation count changed — update both build() and this test");
+        assert_eq!(m.operations.len(), 28, "operation count changed — update both build() and this test");
     }
 
     #[test]

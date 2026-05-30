@@ -504,3 +504,83 @@ class CompareKnownResultData(BaseModel):
 class CompareKnownResultEvent(BaseModel):
     event: Literal["result"]
     data: CompareKnownResultData
+
+
+# ---------------------------------------------------------------------------
+# plan_capture — recommend camera capture stations for a screen
+# ---------------------------------------------------------------------------
+
+class CaptureIntrinsicsSpec(BaseModel):
+    image_size: tuple[int, int]               # [w, h] px
+    hfov_deg: float | None = None
+    vfov_deg: float | None = None
+
+
+class ReachableShell(BaseModel):
+    standoff_min_mm: float
+    standoff_max_mm: float
+    height_min_mm: float
+    height_max_mm: float
+
+
+class PlanCaptureInput(BaseModel):
+    command: Literal["plan_capture"]
+    version: Literal[1]
+    project: ReconstructProject               # screen_id + cabinet_array + shape_prior
+    intrinsics: CaptureIntrinsicsSpec
+    shell: ReachableShell
+    target_p95_residual_mm: float = 3.0
+    pixel_sigma_px: float = 0.3
+    nominal_deviation_mm: float = 2.0
+    focal_err_frac: float = 0.0
+    incidence_max_deg: float = 60.0
+    sample_grid: tuple[int, int] = (4, 4)
+    n_fan: int = 5
+    max_stations: int = 24
+    n_standoff: int = 2
+    n_height: int = 3
+    n_azimuth: int = 7
+    trials: int = 20
+    seed: int = 0
+
+
+class CaptureStationData(BaseModel):
+    id: str
+    position_mm: list[float]                  # [x, y, z] model frame
+    look_at_mm: list[float]                   # optical axis hit on wall plane z=0
+    standoff_mm: float
+    height_mm: float
+    role: str                                 # fan | top | bottom | added
+    covers_cabinets: list[list[int]]          # [[col, row], ...]
+
+
+class CabinetCoverageData(BaseModel):
+    col: int
+    row: int
+    p95_residual_mm: float | None             # null when not reconstructable (no NaN in JSON)
+    n_views: int
+    total_observations: int
+    reconstructable: bool
+    low_observation: bool
+    bridged: bool
+    pass_: bool = Field(alias="pass")
+
+    model_config = {"populate_by_name": True, "serialize_by_alias": True}
+
+
+class UnreachableRegionData(BaseModel):
+    cabinets: list[list[int]]
+    reason: str
+
+
+class PlanCaptureResultData(BaseModel):
+    stations: list[CaptureStationData]
+    coverage: list[CabinetCoverageData]
+    unreachable_regions: list[UnreachableRegionData]
+    all_pass: bool
+    target_p95_residual_mm: float
+
+
+class PlanCaptureResultEvent(BaseModel):
+    event: Literal["result"]
+    data: PlanCaptureResultData
