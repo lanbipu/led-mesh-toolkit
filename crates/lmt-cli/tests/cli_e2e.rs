@@ -2255,3 +2255,226 @@ fn reconstruct_structured_light_reports_rejection_stats() {
     assert!(proj.join("measurements/measured.yaml").exists());
 }
 
+// ---------------------------------------------------------------------------
+// calibrate-structured-light E2E (Task 8)
+// ---------------------------------------------------------------------------
+
+/// Python helper: project nominal dot 3D (curved wall) through a known K from
+/// 4 poses and write 4 corr files.  argv: meta_path intr_path out_dir.
+/// Prints the JSON path array.
+const SL_CALIB_CORR_GEN_PY: &str = r#"
+import json, hashlib, sys
+import numpy as np
+from lmt_vba_sidecar.ipc import StructuredLightMeta, CabinetArray, ShapePriorCurved, ShapePriorCurvedBody
+from lmt_vba_sidecar.nominal import nominal_dot_positions_world
+from lmt_vba_sidecar.sl_feasibility import look_at_pose, project_point
+
+meta_path, intr_path, out_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+meta = StructuredLightMeta.model_validate_json(open(meta_path).read())
+K = np.array(json.loads(open(intr_path).read())["K"], float)
+cab = CabinetArray(cols=4, rows=1, cabinet_size_mm=[500.0, 500.0])
+shape = ShapePriorCurved(curved=ShapePriorCurvedBody(radius_mm=4000.0))
+world = nominal_dot_positions_world(meta, cab, shape)
+sha = hashlib.sha256(open(meta_path, "rb").read()).hexdigest()
+poses = [look_at_pose(np.array([x, 0.0, -6.0]), np.array([1.0, 0.0, 0.0]))
+         for x in (-1.0, -0.33, 0.33, 1.0)]
+rng = np.random.default_rng(0)
+paths = []
+for vi, (R, t) in enumerate(poses):
+    pts = []
+    for d in meta.dots:
+        p = project_point(K, R, t, world[d.id]) + rng.normal(0, 0.2, 2)
+        pts.append({"id": d.id, "u": d.u, "v": d.v, "x": float(p[0]), "y": float(p[1])})
+    cp = f"{out_dir}/ccorr_{vi}.json"
+    open(cp, "w").write(json.dumps({
+        "schema_version": 1, "screen_id": "MAIN", "sl_meta_sha256": sha,
+        "screen_resolution": meta.screen_resolution, "camera_image_size": [4000, 3000],
+        "source_input": f"/cap/pose{vi}.mp4", "points": pts}))
+    paths.append(cp)
+print(json.dumps(paths))
+"#;
+
+/// Write a minimal curved-screen project.yaml (4×1 cabinets, radius 4000mm).
+/// shape_prior uses `{ type: curved, radius_mm: N }` — the Rust dto is a
+/// serde "internally-tagged" enum (`#[serde(tag = "type", rename_all = "snake_case")]`).
+fn write_curved_project(dir: &Path, cols: u32) {
+    let yaml = format!(
+        "project: {{ name: GP, unit: mm }}\nscreens:\n  MAIN:\n    cabinet_count: [{cols}, 1]\n    cabinet_size_mm: [500, 500]\n    pixels_per_cabinet: [540, 540]\n    shape_prior: {{ type: curved, radius_mm: 4000 }}\n    shape_mode: rectangle\n    irregular_mask: []\ncoordinate_system:\n  origin_point: MAIN_V000_R000\n  x_axis_point: MAIN_V000_R000\n  xy_plane_point: MAIN_V000_R000\noutput:\n  target: neutral\n  obj_filename: \"{{screen_id}}.obj\"\n  weld_vertices_tolerance_mm: 1.0\n  triangulate: true\n"
+    );
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join("project.yaml"), yaml).unwrap();
+}
+
+/// Run SL_CALIB_CORR_GEN_PY via the venv python sibling of the sidecar wrapper.
+/// Returns the 4 corr file paths in pose order.
+fn write_sl_calib_corr(dir: &Path, sidecar: &str, meta_path: &Path, intr: &Path) -> Vec<String> {
+    let python = Path::new(sidecar)
+        .parent()
+        .expect("sidecar path has a parent dir")
+        .join("python");
+    let script = dir.join("gen_ccorr.py");
+    std::fs::write(&script, SL_CALIB_CORR_GEN_PY).unwrap();
+    let out = Command::new(&python)
+        .arg(&script)
+        .arg(meta_path)
+        .arg(intr)
+        .arg(dir)
+        .output()
+        .expect("run calib corr generator");
+    assert!(
+        out.status.success(),
+        "calib corr gen failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_slice(out.stdout.trim_ascii_end()).expect("JSON path array")
+}
+
+/// Real-sidecar happy path: a synthetic curved 4-cabinet SL scene calibrated from
+/// 4 poses must recover the ground-truth focal within ~2% and write _sl_intrinsics.json.
+#[test]
+#[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary/wrapper"]
+fn calibrate_structured_light_recovers_focal() {
+    let sidecar = match gp_sidecar() {
+        Some(s) => s,
+        None => {
+            eprintln!("skip: LMT_VBA_SIDECAR_PATH unset");
+            return;
+        }
+    };
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_curved_project(&proj, 4);
+
+    lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &sidecar)
+        .args(["--json", "visual", "generate-structured-light",
+               proj.to_str().unwrap(), "MAIN", "--yes"])
+        .assert()
+        .success();
+    let meta_path = proj.join("patterns/MAIN/sl/sl_meta.json");
+    assert!(meta_path.exists(), "sidecar must write sl_meta.json");
+
+    let intr = tmp.path().join("truthK.json");
+    std::fs::write(
+        &intr,
+        serde_json::json!({
+            "K": [[3000.0, 0, 2000.0], [0, 3000.0, 1500.0], [0, 0, 1.0]],
+            "dist_coeffs": [0, 0, 0, 0, 0], "image_size": [4000, 3000]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let corr = write_sl_calib_corr(tmp.path(), &sidecar, &meta_path, &intr);
+
+    let mut args = vec![
+        "--json", "visual", "calibrate-structured-light",
+        proj.to_str().unwrap(), "MAIN",
+        "--sl-meta", meta_path.to_str().unwrap(),
+    ];
+    for c in &corr {
+        args.push("--corr");
+        args.push(c);
+    }
+    args.push("--yes");
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &sidecar)
+        .args(&args)
+        .assert()
+        .success();
+
+    let env = gp_stdout_env(assert.get_output());
+    assert_eq!(env["ok"], true, "envelope ok: {env}");
+    let out_file = proj.join("calibration/MAIN_sl_intrinsics.json");
+    assert!(out_file.exists(), "must write _sl_intrinsics.json");
+    let intr_out: Value =
+        serde_json::from_slice(&std::fs::read(&out_file).unwrap()).unwrap();
+    let fx = intr_out["K"][0][0].as_f64().unwrap();
+    assert!(
+        (fx - 3000.0).abs() / 3000.0 < 0.02,
+        "focal within 2%, got {fx}"
+    );
+    assert_eq!(intr_out["calibration_method"], "structured_light_nominal");
+}
+
+/// No --yes and no --dry-run → gate_destructive refuses (exit 2, invalid_input).
+#[test]
+fn calibrate_structured_light_refuses_without_yes() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 2, 1);
+    let meta = tmp.path().join("sl_meta.json");
+    std::fs::write(&meta, "{}").unwrap();
+    let c0 = tmp.path().join("c0.json");
+    std::fs::write(&c0, "{}").unwrap();
+    let assert = lmt()
+        .args(["--json", "visual", "calibrate-structured-light",
+               proj.to_str().unwrap(), "MAIN",
+               "--sl-meta", meta.to_str().unwrap(),
+               "--corr", c0.to_str().unwrap()])
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    assert_eq!(out.status.code(), Some(2));
+    let env: Value =
+        serde_json::from_str(std::str::from_utf8(&out.stderr).unwrap().trim_end()).unwrap();
+    assert_eq!(env["error"]["code"], "invalid_input");
+}
+
+/// --dry-run: exit 0, envelope ok==true, data.dry_run==true, no file written.
+#[test]
+fn calibrate_structured_light_dry_run_writes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 2, 1);
+    let meta = tmp.path().join("sl_meta.json");
+    std::fs::write(&meta, "{}").unwrap();
+    let c0 = tmp.path().join("c0.json");
+    std::fs::write(&c0, "{}").unwrap();
+    let assert = lmt()
+        .args(["--json", "--dry-run", "visual", "calibrate-structured-light",
+               proj.to_str().unwrap(), "MAIN",
+               "--sl-meta", meta.to_str().unwrap(),
+               "--corr", c0.to_str().unwrap()])
+        .assert()
+        .success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["dry_run"], true);
+    assert!(!proj.join("calibration/MAIN_sl_intrinsics.json").exists());
+}
+
+/// Output file exists + no --force → invalid_input (exit 2) before the sidecar
+/// is invoked (guard at run_calibrate_structured_light line that checks
+/// output_path.exists() && !force before constructing the adapter args).
+#[cfg(unix)]
+#[test]
+fn calibrate_structured_light_refuses_overwrite_without_force() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 2, 1);
+    // Pre-create the default output path so the guard fires.
+    std::fs::create_dir_all(proj.join("calibration")).unwrap();
+    std::fs::write(proj.join("calibration/MAIN_sl_intrinsics.json"), "{}").unwrap();
+    let meta = tmp.path().join("sl_meta.json");
+    std::fs::write(&meta, "{}").unwrap();
+    let c0 = tmp.path().join("c0.json");
+    std::fs::write(&c0, "{}").unwrap();
+    // Provide an error mock as the sidecar; if the guard doesn't fire first, the
+    // mock ensures the test still fails predictably (not accidentally succeeds).
+    let mock = write_error_mock(tmp.path(), "internal_error");
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &mock)
+        .args(["--json", "visual", "calibrate-structured-light",
+               proj.to_str().unwrap(), "MAIN",
+               "--sl-meta", meta.to_str().unwrap(),
+               "--corr", c0.to_str().unwrap(),
+               "--yes"])
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    assert_eq!(out.status.code(), Some(2));
+    let env: Value =
+        serde_json::from_str(std::str::from_utf8(&out.stderr).unwrap().trim_end()).unwrap();
+    assert_eq!(env["error"]["code"], "invalid_input");
+}
+
