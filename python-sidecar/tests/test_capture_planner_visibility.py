@@ -45,3 +45,77 @@ def test_point_visible_grazing_incidence_false():
     # camera almost in the wall plane -> ~88deg incidence on a +z normal
     cam = look_at_camera(K, [5250.0, 250.0, 100.0], WALL_PT, (1920, 1080))
     assert point_visible(cam, WALL_PT, FLAT_NORMAL, incidence_max_deg=60.0) is False
+
+
+from lmt_vba_sidecar.ipc import CabinetArray
+from lmt_vba_sidecar.capture_planner.geometry import expand_screen
+from lmt_vba_sidecar.capture_planner.visibility import coverage_report, vis_count
+from lmt_vba_sidecar.capture_planner import gates
+
+
+def _single_flat_cabinet():
+    cab = CabinetArray(cols=1, rows=1, cabinet_size_mm=[500.0, 500.0], absent_cells=[])
+    return expand_screen(cab, "flat", sample_grid=(4, 4))
+
+
+def _good_cam(K, pos, geom):
+    # a camera that frontally sees the whole single cabinet
+    return look_at_camera(K, pos, geom.cabinets[0].center_mm, (1920, 1080))
+
+
+def test_guardrail_center_in_frame_but_points_clipped_is_not_covered():
+    # Codex guardrail: the cabinet CENTER projects in-frame (the old
+    # center-shortcut would PASS), but a tiny 64x64 frame with long focal length
+    # clips every off-center sample point -> vis_count 0 -> NOT covered.
+    geom = _single_flat_cabinet()
+    cabg = geom.cabinets[0]
+    K = np.array([[2000.0, 0.0, 32.0], [0.0, 2000.0, 32.0], [0.0, 0.0, 1.0]])
+    cam = look_at_camera(K, [250.0, 250.0, 1000.0], cabg.center_mm, (64, 64))
+    # the geometric center would have passed a center-only test:
+    assert point_visible(cam, cabg.center_mm, cabg.normal) is True
+    # but per-point gating sees < MIN_PNP_CORNERS sample points:
+    assert vis_count(cam, cabg) < gates.MIN_PNP_CORNERS
+    per_cab, _ = coverage_report(geom, [cam])
+    assert per_cab[0].reconstructable is False
+
+
+def test_one_view_not_reconstructable_even_if_all_points_visible():
+    geom = _single_flat_cabinet()
+    K = intrinsics_from_fov((1920, 1080), hfov_deg=50.0)
+    cam = _good_cam(K, [250.0, 250.0, 3000.0], geom)
+    assert vis_count(cam, geom.cabinets[0]) == 16   # sees all sample points
+    per_cab, _ = coverage_report(geom, [cam])
+    cov = per_cab[0]
+    assert cov.total_observations >= gates.MIN_POINTS_PER_CABINET  # points gate OK
+    assert len(cov.covering_cams) == 1
+    assert cov.reconstructable is False              # ... but views gate fails
+
+
+def test_two_views_reconstructable_but_low_observation():
+    geom = _single_flat_cabinet()
+    K = intrinsics_from_fov((1920, 1080), hfov_deg=50.0)
+    cams = [
+        _good_cam(K, [-1500.0, 250.0, 3000.0], geom),
+        _good_cam(K, [2000.0, 250.0, 3000.0], geom),
+    ]
+    per_cab, _ = coverage_report(geom, cams)
+    cov = per_cab[0]
+    assert len(cov.covering_cams) == 2
+    assert cov.reconstructable is True
+    assert cov.low_observation is True               # 2 < QUALITY_MIN_VIEWS(4)
+
+
+def test_four_views_not_low_observation():
+    geom = _single_flat_cabinet()
+    K = intrinsics_from_fov((1920, 1080), hfov_deg=50.0)
+    cams = [
+        _good_cam(K, [-1500.0, 250.0, 3000.0], geom),
+        _good_cam(K, [600.0, 250.0, 3000.0], geom),
+        _good_cam(K, [2000.0, 250.0, 3000.0], geom),
+        _good_cam(K, [250.0, 1800.0, 3000.0], geom),
+    ]
+    per_cab, _ = coverage_report(geom, cams)
+    cov = per_cab[0]
+    assert len(cov.covering_cams) == 4
+    assert cov.reconstructable is True
+    assert cov.low_observation is False
