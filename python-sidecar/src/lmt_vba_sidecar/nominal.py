@@ -157,3 +157,73 @@ def nominal_cabinet_centers_model_frame(
                 continue
             centers[(col, row)] = _cabinet_center_model_m(col, row, cab, shape_prior)
     return centers
+
+
+def _cabinet_R_y_model(col: int, row: int, cab: CabinetArray, shape_prior: Any) -> "np.ndarray":
+    """R_world_from_cabinet for this cabinet (rigid tile). Flat => I; curved =>
+    R_y(-alpha) where alpha is the arc angle of the cabinet center.
+
+    The center curve x = R·sin a, z = R·(1-cos a) has tangent [cos a, 0, +sin a].
+    Rotating a flat tile's local +x axis [1,0,0] onto that tangent needs R_y(-a)
+    (with R_y(a) = [[c,0,s],[0,1,0],[-s,0,c]], R_y(-a)·[1,0,0] = [c,0,s] = the
+    tangent). R_y(+a) would tilt each tile the wrong way, opening visible gaps
+    between adjacent cabinets at their shared boundary. (This is the tile-pose
+    convention for chaining sl_local_mm into world; _cabinet_normal_model — used
+    by reconstruct's IPPE disambiguation — keeps its own separate convention.)"""
+    import numpy as np
+    if shape_prior == "flat":
+        return np.eye(3)
+    if _is_curved(shape_prior):
+        cw_mm, _ch = cab.cabinet_size_mm
+        radius_mm = _curved_radius(shape_prior)
+        total_w_mm = cab.cols * cw_mm
+        _validate_curved_radius(radius_mm, total_w_mm / 2.0)
+        x_mm = (col + 0.5) * cw_mm
+        angle = -(x_mm - total_w_mm / 2.0) / radius_mm
+        c, s = math.cos(angle), math.sin(angle)
+        return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
+    if _is_folded(shape_prior):
+        raise ValueError("shape_prior=folded is not supported in M2")
+    raise ValueError(f"unsupported shape_prior: {shape_prior!r}")
+
+
+def nominal_dot_positions_world(meta: Any, cab: CabinetArray, shape_prior: Any) -> "dict[int, np.ndarray]":
+    """dot_id -> [x,y,z] (meters) in the model/design frame.
+
+    world_m = center_m(col,row) + R_y(-alpha).(local_m), where local_m is
+    sl_local_mm/1000 with its y component NEGATED. sl_local_mm uses +y UP
+    (h/2-(v-y)); the inter-cabinet center grid (_cabinet_center_model_m) uses
+    +y DOWN ((row+0.5)*ch grows downward as row increases). Composing the two
+    raw would make a multi-row wall a vertical sawtooth (within-cabinet y
+    decreasing, across-cabinet y jumping up) — a non-rigid target that wrecks
+    calibrateCamera. Flipping local-y here reconciles both onto +y-DOWN so the
+    multi-row flat wall is a single rigid plane. (sl_local_mm itself is left
+    +y-UP: the reconstruct path solves a per-cabinet BA pose that absorbs the
+    sign, so changing it there would mirror those poses.)
+
+    Flat => R_y(0)=I => pure (y-flipped) translation. Used by Step-1 SL
+    calibration as the known 3D target. Raises ValueError (mapped to
+    invalid_input) on unsupported shape or a dot whose cabinet is absent / not
+    in meta.cabinets.
+    """
+    import numpy as np
+    from lmt_vba_sidecar.sl_geometry import sl_local_mm
+
+    centers = nominal_cabinet_centers_model_frame(cab, shape_prior)  # present cells only
+    rect_by_cr = {(c.col, c.row): tuple(int(v) for v in c.input_rect_px) for c in meta.cabinets}
+    pitch_by_cr = {(c.col, c.row): (float(c.pixel_pitch_mm[0]), float(c.pixel_pitch_mm[1])) for c in meta.cabinets}
+    R_by_cr = {cr: _cabinet_R_y_model(cr[0], cr[1], cab, shape_prior) for cr in centers.keys()}
+
+    out: dict[int, np.ndarray] = {}
+    for d in meta.dots:
+        cr = (int(d.cabinet[0]), int(d.cabinet[1]))
+        if cr not in centers:
+            raise ValueError(f"dot {d.id} references absent/unknown cabinet {cr}")
+        if cr not in rect_by_cr:
+            raise ValueError(f"dot {d.id} cabinet {cr} not in sl_meta.cabinets")
+        local_m = sl_local_mm(rect_by_cr[cr], float(d.u), float(d.v), pitch_by_cr[cr][0], pitch_by_cr[cr][1]) / 1000.0
+        # Flip local +y-UP to the center grid's +y-DOWN so a multi-row wall is
+        # rigid (see docstring). Done before the rigid R_y compose.
+        local_m = np.array([local_m[0], -local_m[1], local_m[2]])
+        out[int(d.id)] = np.asarray(centers[cr]) + R_by_cr[cr] @ local_m
+    return out

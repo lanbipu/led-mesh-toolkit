@@ -10,9 +10,10 @@
 use std::path::Path;
 
 use lmt_adapter_visual_ba::api::{
-    calibrate, compare_known, decode_structured_light, eval, generate_pattern,
-    generate_structured_light, plan_capture, reconstruct, reconstruct_structured_light, simulate,
-    CalibrateArgs, CompareKnownArgs, DecodeStructuredLightArgs, EvalArgs, GeneratePatternArgs,
+    calibrate, calibrate_structured_light, compare_known, decode_structured_light, eval,
+    generate_pattern, generate_structured_light, plan_capture, reconstruct,
+    reconstruct_structured_light, simulate, CalibrateArgs, CalibrateStructuredLightArgs,
+    CompareKnownArgs, DecodeStructuredLightArgs, EvalArgs, GeneratePatternArgs,
     GenerateStructuredLightArgs, PlanCaptureArgs, ReconstructArgs, ReconstructOut,
     ReconstructStructuredLightArgs, SimulateArgs,
 };
@@ -264,6 +265,66 @@ pub fn run_reconstruct_structured_light(
         .block_on(reconstruct_structured_light(args))
         .map_err(map_vba_err)?;
     persist_reconstruct_result(project_path, screen_id, out)
+}
+
+// ---------------------------------------------------------------------------
+// calibrate_structured_light
+// ---------------------------------------------------------------------------
+
+/// Calibrate camera intrinsics from multi-view structured-light correspondences.
+/// Writes `<project>/calibration/<screen_id>_sl_intrinsics.json` (or `out` when
+/// provided). Returns `Err(InvalidInput)` if the output file already exists and
+/// `force` is false.
+#[allow(clippy::too_many_arguments)]
+pub fn run_calibrate_structured_light(
+    project_path: &Path,
+    screen_id: &str,
+    sl_meta: &Path,
+    correspondences: &[String],
+    out: Option<&Path>,
+    force: bool,
+    max_rms_px: f64,
+) -> LmtResult<CalibrateResult> {
+    let cfg = load_project_yaml_from_path(project_path)?;
+    let screen_cfg = load_screen(&cfg, screen_id)?;
+    let project = ipc::ReconstructProject {
+        screen_id: screen_id.to_string(),
+        cabinet_array: ipc_cabinet_array(screen_cfg),
+        shape_prior: ipc_shape_prior(screen_cfg),
+    };
+
+    let calibration_dir = project_path.join("calibration");
+    std::fs::create_dir_all(&calibration_dir)?;
+    let output_path = match out {
+        Some(p) => p.to_path_buf(),
+        None => calibration_dir.join(format!("{screen_id}_sl_intrinsics.json")),
+    };
+    if output_path.exists() && !force {
+        return Err(LmtError::InvalidInput(format!(
+            "would overwrite existing intrinsics {}; pass --force or --out",
+            output_path.display()
+        )));
+    }
+
+    let args = CalibrateStructuredLightArgs {
+        project,
+        correspondence_paths: correspondences.to_vec(),
+        sl_meta_path: sl_meta.display().to_string(),
+        output_path: output_path.display().to_string(),
+        max_rms_px,
+        progress_tx: None,
+        cancel: None,
+    };
+
+    let out = rt()?
+        .block_on(calibrate_structured_light(args))
+        .map_err(map_vba_err)?;
+
+    Ok(CalibrateResult {
+        intrinsics_path: out.intrinsics_path,
+        reproj_error_px: out.reproj_error_px,
+        frames_used: out.frames_used,
+    })
 }
 
 // ---------------------------------------------------------------------------

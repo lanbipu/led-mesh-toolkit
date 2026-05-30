@@ -386,6 +386,30 @@ pub enum VisualCmd {
         #[arg(long = "corr", required = true, num_args = 1.., action = clap::ArgAction::Append)]
         correspondences: Vec<String>,
     },
+    /// 结构光白点 + nominal 设计墙(3D 靶) → <screen_id>_sl_intrinsics.json
+    /// (cv2.calibrateCamera,病态拒标)。side_effect: destructive
+    #[command(name = "calibrate-structured-light")]
+    CalibrateStructuredLight {
+        /// 项目根目录。
+        project_path: String,
+        /// screen id。
+        screen_id: String,
+        /// sl_meta.json 路径(generate-structured-light 产出)。
+        #[arg(long)]
+        sl_meta: String,
+        /// 同一台相机每个机位一个 corr.json(decode-structured-light 产出);重复传入。
+        #[arg(long = "corr", required = true, num_args = 1.., action = clap::ArgAction::Append)]
+        correspondences: Vec<String>,
+        /// 内参输出路径(默认 <project>/calibration/<screen_id>_sl_intrinsics.json)。
+        #[arg(long)]
+        out: Option<String>,
+        /// 覆盖已存在的内参文件(否则拒绝,以免覆盖可信棋盘格标定)。
+        #[arg(long)]
+        force: bool,
+        /// reproj RMS 门槛(px)。
+        #[arg(long = "max-rms-px", default_value_t = 1.5)]
+        max_rms_px: f64,
+    },
     /// 多视角照片 → measured.yaml + cabinet_pose_report.json。side_effect: destructive
     Reconstruct {
         /// 项目根目录。
