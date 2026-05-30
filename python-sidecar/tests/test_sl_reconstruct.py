@@ -123,9 +123,19 @@ def test_synthetic_sl_reconstruction_recovers_cabinet_offset_mm(tmp_path):
 
     report = json.loads(report_path.read_text())
     by_id = {c["cabinet_id"]: c for c in report["cabinet_poses"]}
-    true_center_10 = cab_world_t[(1, 0)]
-    got = np.array(by_id["V001_R000"]["position_mm"])
-    assert np.linalg.norm(got - true_center_10) < 5.0   # mm (conservative; BA + 0.1px noise)
+    # SL output now lands in the NOMINAL DESIGN frame (gauge_strategy=align_to_nominal):
+    # the whole wall is rigidly placed onto the nominal grid, so absolute positions are
+    # the design positions — NOT the root-local frame. The recovered DEVIATION is
+    # gauge-invariant (a rigid transform preserves the inter-cabinet vector), so assert
+    # the RELATIVE geometry against the known true deviation.
+    assert report["frame"]["gauge_strategy"] == "align_to_nominal"
+    got0 = np.array(by_id["V000_R000"]["position_mm"])
+    got1 = np.array(by_id["V001_R000"]["position_mm"])
+    true_rel = cab_world_t[(1, 0)] - cab_world_t[(0, 0)]   # [503, 2, 1] mm (offset + deviation)
+    assert np.linalg.norm((got1 - got0) - true_rel) < 5.0  # mm (BA + 0.1px noise)
+    # Absolute frame check: cabinet 0 sits at its nominal design center (250,250,0) mm
+    # for a 2x1 wall of 500mm cabinets (within the alignment residual).
+    assert np.linalg.norm(got0 - np.array([250.0, 250.0, 0.0])) < 5.0
 
     # Finding-2 guard: correspondence (u,v) must be IGNORED (canonical (u,v) comes
     # from sl_meta). Corrupt every corr point's u,v to garbage, reconstruct again ->
@@ -139,7 +149,7 @@ def test_synthetic_sl_reconstruction_recovers_cabinet_offset_mm(tmp_path):
     assert run_reconstruct_structured_light(cmd.model_copy(update={"pose_report_path": str(report2)})) == 0
     got2 = np.array({c["cabinet_id"]: c for c in json.loads(report2.read_text())["cabinet_poses"]}
                     ["V001_R000"]["position_mm"])
-    np.testing.assert_allclose(got, got2, atol=1e-6)
+    np.testing.assert_allclose(got1, got2, atol=1e-6)
 
 
 def _valid_corr(tmp_path, sha, n=2, screen_res=(960, 480)):

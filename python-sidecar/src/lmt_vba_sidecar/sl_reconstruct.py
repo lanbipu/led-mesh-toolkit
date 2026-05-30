@@ -196,4 +196,5 @@ def run_reconstruct_structured_light(cmd: ReconstructStructuredLightInput) -> in
         n_cabinets=n_cabinets, nominal_m=nominal_m, nominal_normals_m=nominal_normals_m,
         per_cabinet_views=per_cabinet_views, per_cabinet_points=per_cabinet_points,
         corners_local_provider=corners_provider, pose_report_path=cmd.pose_report_path,
-        n_rejected_pre=n_rej_stage_a, rejected_per_cab_pre=rej_per_cab_stage_a)
+        n_rejected_pre=n_rej_stage_a, rejected_per_cab_pre=rej_per_cab_stage_a,
+        gauge_strategy="align_to_nominal")  # SL output lands in the nominal design frame

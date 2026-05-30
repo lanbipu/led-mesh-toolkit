@@ -71,6 +71,7 @@ from lmt_vba_sidecar.nominal import (
     nominal_cabinet_normals_model_frame,
 )
 from lmt_vba_sidecar.observability import ObservabilityError, check_observability
+from lmt_vba_sidecar.procrustes import procrustes_rigid
 from lmt_vba_sidecar.screen_mapping import ScreenMapping, ScreenMappingError
 
 
@@ -296,6 +297,27 @@ def _atomic_write_json(path: str, payload: str) -> None:
         raise
 
 
+def _nominal_world_corners(
+    cr: tuple[int, int],
+    corners_local: np.ndarray,
+    nominal_m: dict[tuple[int, int], tuple[float, float, float]],
+    nominal_normals_m: dict[tuple[int, int], tuple[float, float, float]],
+) -> np.ndarray:
+    """Nominal design-frame corners (mm) for cabinet `cr`:
+    `R_y(a) @ corners_local + center_mm`, where `a` is recovered from the nominal
+    normal `[sin a, 0, cos a]` (flat -> a=0 -> identity) and `center` is `nominal_m`
+    (meters -> mm). nominal_m / nominal_normals_m and the BA world corners share the
+    SAME recon-native axes (X=cols, Y=rows-up, Z=outward normal), so aligning BA
+    corners to these is a near-identity rotation — no Y/Z swap, no flip ambiguity.
+    """
+    center_mm = np.array(nominal_m[cr], dtype=float) * 1000.0
+    n = np.array(nominal_normals_m[cr], dtype=float)
+    a = float(np.arctan2(n[0], n[2]))
+    ca, sa = np.cos(a), np.sin(a)
+    r_nom = np.array([[ca, 0.0, sa], [0.0, 1.0, 0.0], [-sa, 0.0, ca]])
+    return (corners_local @ r_nom.T) + center_mm
+
+
 def run_reconstruct(cmd: ReconstructInput) -> int:
     write_event(ProgressEvent(event="progress", stage="load", percent=0.0, message="loading capture manifest"))
 
@@ -439,6 +461,7 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
         corners_local_provider=lambda cid: _active_surface_corners_mm(screen_mapping, cid),
         pose_report_path=cmd.pose_report_path,
         n_rejected_pre=n_rej_stage_a, rejected_per_cab_pre=rej_per_cab_stage_a,
+        gauge_strategy="fix_root_cabinet",  # charuco unchanged; output stays in BA-local frame
     )
 
 
@@ -459,11 +482,22 @@ def solve_and_emit(
     pose_report_path: str | None,
     n_rejected_pre: int = 0,
     rejected_per_cab_pre: dict[int, int] | None = None,
+    gauge_strategy: str = "fix_root_cabinet",
 ) -> int:
     """Shared init -> model_constrained_ba -> per-cabinet geometry -> report ->
     ResultEvent. Used by both run_reconstruct (charuco) and
     sl_reconstruct.run_reconstruct_structured_light. corners_local_provider maps
-    a cabinet_id string to its (4,3) active-surface corners in local mm."""
+    a cabinet_id string to its (4,3) active-surface corners in local mm.
+
+    gauge_strategy:
+      - "fix_root_cabinet" (default): world frame = root cabinet's frame (R=I,t=0).
+        Output geometry is left in that BA-local frame. Charuco path uses this;
+        its report/measured.yaml are byte-identical to before.
+      - "align_to_nominal": after BA, a SINGLE rigid transform (Procrustes over
+        ALL cabinet corners vs the nominal design grid) places the whole wall into
+        the nominal design frame, so downstream export lands drop-in without
+        guessing orientation. Recon-native axes match nominal, so this never flips.
+    """
     # --- 7. init ---
     write_event(ProgressEvent(event="progress", stage="bundle_adjustment", percent=0.5, message="initializing"))
     if ROOT_CABINET not in nominal_m:
@@ -568,9 +602,37 @@ def solve_and_emit(
                 fatal=True))
             return 1
     # Per-cabinet reprojection RMS from the solved poses (same projection as BA).
+    # NOTE: computed from the ORIGINAL BA poses, before any align_to_nominal rigid
+    # transform — reprojection is invariant under a world rigid motion, and the
+    # camera poses are not transformed, so this stays correct.
     per_cabinet_rms = _per_cabinet_reproj_rms(
         K, result.camera_poses, result.cabinet_poses, surviving_observations
     )
+
+    # --- 9a. align_to_nominal: one rigid transform (BA world -> nominal design
+    #         frame) fitted over ALL cabinet corners (√N robust). ---
+    align_r = np.eye(3)
+    align_t = np.zeros(3)
+    align_rms_mm = 0.0
+    if gauge_strategy == "align_to_nominal":
+        src_rows: list[np.ndarray] = []
+        dst_rows: list[np.ndarray] = []
+        for idx in range(n_cabinets):
+            cr = idx_to_cab[idx]
+            cid = _cabinet_id(*cr)
+            r_idx, t_idx = result.cabinet_poses[idx]
+            corners_local = corners_local_provider(cid)
+            _c, _n, _s, world_corners = reconstruct_cabinet_geometry(r_idx, t_idx, corners_local)
+            src_rows.append(world_corners)
+            dst_rows.append(_nominal_world_corners(cr, corners_local, nominal_m, nominal_normals_m))
+        try:
+            align_r, align_t, align_rms_mm = procrustes_rigid(np.vstack(src_rows), np.vstack(dst_rows))
+        except ValueError as e:
+            write_event(ErrorEvent(
+                event="error", code="procrustes_failed",
+                message=f"align_to_nominal alignment failed: {e}", fatal=True))
+            return 1
+
     cabinet_poses: list[CabinetPose] = []
     measured_points: list[MeasuredPoint] = []
     for idx in range(n_cabinets):
@@ -579,6 +641,11 @@ def solve_and_emit(
         R, t = result.cabinet_poses[idx]
         corners_local = corners_local_provider(cid)
         center, normal, _size, world_corners = reconstruct_cabinet_geometry(R, t, corners_local)
+        if gauge_strategy == "align_to_nominal":
+            center = align_r @ center + align_t
+            normal = align_r @ normal
+            world_corners = (world_corners @ align_r.T) + align_t
+            R = align_r @ R  # rotation_matrix expressed in the aligned (design) frame
         n_views = len(per_cabinet_views.get(idx, set()))
         n_points = per_cabinet_points.get(idx, 0)
         # Direct index (not .get): observability upstream guarantees every
@@ -636,7 +703,7 @@ def solve_and_emit(
     if pose_report_path:
         report = CabinetPoseReport(
             schema_version="visual_pose_report.v1",
-            frame=FrameSpec(root_cabinet=list(ROOT_CABINET)),
+            frame=FrameSpec(gauge_strategy=gauge_strategy, root_cabinet=list(ROOT_CABINET)),
             cabinet_poses=cabinet_poses,
         )
         _atomic_write_json(pose_report_path, report.model_dump_json(indent=2))
@@ -654,8 +721,8 @@ def solve_and_emit(
                 n_observations_used=n_used,
                 n_rejected=n_rej,
             ),
-            frame_strategy_used="nominal_anchoring",  # vestigial; no Procrustes runs
-            procrustes_align_rms_m=0.0,
+            frame_strategy_used="nominal_anchoring",  # vestigial label; see gauge_strategy
+            procrustes_align_rms_m=align_rms_mm / 1000.0,  # mm -> m (0.0 for fix_root_cabinet)
         ),
     ))
     return 0
