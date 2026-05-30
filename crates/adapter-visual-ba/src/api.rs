@@ -326,6 +326,63 @@ pub async fn calibrate(args: CalibrateArgs) -> VbaResult<CalibrateOut> {
 }
 
 // ---------------------------------------------------------------------------
+// calibrate_structured_light
+// ---------------------------------------------------------------------------
+
+pub struct CalibrateStructuredLightArgs {
+    pub project: ReconstructProject,
+    pub correspondence_paths: Vec<String>,
+    pub sl_meta_path: String,
+    pub output_path: String,
+    pub max_rms_px: f64,
+    pub progress_tx: Option<mpsc::Sender<Event>>,
+    pub cancel: Option<oneshot::Receiver<()>>,
+}
+
+pub async fn calibrate_structured_light(
+    args: CalibrateStructuredLightArgs,
+) -> VbaResult<CalibrateOut> {
+    validate_project_eagerly(&args.project)?;
+
+    let payload = json!({
+        "command": "calibrate_structured_light",
+        "version": 1,
+        "project": &args.project,
+        "correspondence_paths": &args.correspondence_paths,
+        "sl_meta_path": &args.sl_meta_path,
+        "output_path": &args.output_path,
+        "max_rms_px": args.max_rms_px,
+    });
+
+    let _value = run_sidecar(SidecarRequest {
+        subcommand: "calibrate_structured_light".into(),
+        payload,
+        progress_tx: args.progress_tx,
+        cancel: args.cancel,
+    })
+    .await?;
+
+    // Read authoritative reproj_error_px + frames_used from the intrinsics JSON
+    // the sidecar wrote (same pattern as `calibrate`).
+    #[derive(serde::Deserialize)]
+    struct IntrinsicsFile {
+        reproj_error_px: f64,
+        frames_used: u32,
+    }
+    let intr: IntrinsicsFile = serde_json::from_str(
+        &std::fs::read_to_string(&args.output_path)
+            .map_err(|e| VbaError::InvalidInput(format!("intrinsics file unreadable: {e}")))?,
+    )
+    .map_err(|e| VbaError::InvalidInput(format!("intrinsics file decode failed: {e}")))?;
+
+    Ok(CalibrateOut {
+        intrinsics_path: args.output_path,
+        reproj_error_px: intr.reproj_error_px,
+        frames_used: intr.frames_used,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // generate_pattern
 // ---------------------------------------------------------------------------
 
