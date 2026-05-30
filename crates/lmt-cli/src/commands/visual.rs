@@ -90,6 +90,18 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
         } => reconstruct_structured_light(
             mode, &project_path, &screen_id, &sl_meta, &intrinsics, &correspondences, yes, dry_run,
         ),
+        VisualCmd::CalibrateStructuredLight {
+            project_path,
+            screen_id,
+            sl_meta,
+            correspondences,
+            out,
+            force,
+            max_rms_px,
+        } => calibrate_structured_light(
+            mode, &project_path, &screen_id, &sl_meta, &correspondences,
+            out.as_deref(), force, max_rms_px, yes, dry_run,
+        ),
     }
 }
 
@@ -537,6 +549,89 @@ fn reconstruct_structured_light(
                         std::io::stdout(),
                         "reconstructed {} cabinets (ba_rms={:.3}px)\n  measured: {}\n  poses: {}",
                         p.cabinet_count, p.ba_rms_px, p.measured_yaml_path, p.pose_report_path
+                    );
+                }),
+                Err(e) => output::err(mode, ApiError::from(e)),
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// calibrate_structured_light
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+fn calibrate_structured_light(
+    mode: Mode,
+    project_path: &str,
+    screen_id: &str,
+    sl_meta: &str,
+    correspondences: &[String],
+    out: Option<&str>,
+    force: bool,
+    max_rms_px: f64,
+    yes: bool,
+    dry_run: bool,
+) -> i32 {
+    let out_path = out
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{project_path}/calibration/{screen_id}_sl_intrinsics.json"));
+
+    // Enforce the no-clobber contract BEFORE gate_destructive so --dry-run and
+    // execute agree: both refuse with invalid_input when the output file exists
+    // and --force is not passed (mirrors reconstruct_structured_light's pre-gate
+    // pattern for its >= 2 correspondences check).
+    if std::path::Path::new(&out_path).exists() && !force {
+        return output::err(
+            mode,
+            ApiError::new(
+                error_codes::INVALID_INPUT,
+                format!(
+                    "output file already exists: {out_path}; pass --force to overwrite or --out to use a different path"
+                ),
+            ),
+        );
+    }
+
+    let decision = match util::gate_destructive(yes, dry_run, "visual calibrate-structured-light") {
+        Ok(d) => d,
+        Err(e) => return output::err(mode, e),
+    };
+
+    match decision {
+        DestructiveDecision::DryRun => {
+            let payload = serde_json::json!({
+                "dry_run": true,
+                "would_write": out_path,
+                "sl_meta": sl_meta,
+                "correspondences": correspondences,
+                "force": force,
+                "max_rms_px": max_rms_px,
+            });
+            output::ok(mode, payload, |_| {
+                let _ = writeln!(
+                    std::io::stdout(),
+                    "[dry-run] would calibrate screen {screen_id} from {} poses → {out_path}",
+                    correspondences.len()
+                );
+            })
+        }
+        DestructiveDecision::Execute => {
+            match lmt_app::visual::run_calibrate_structured_light(
+                Path::new(project_path),
+                screen_id,
+                Path::new(sl_meta),
+                correspondences,
+                out.map(Path::new),
+                force,
+                max_rms_px,
+            ) {
+                Ok(r) => output::ok(mode, r, |p| {
+                    let _ = writeln!(
+                        std::io::stdout(),
+                        "calibrated (SL): reproj={:.3}px frames={} → {}",
+                        p.reproj_error_px, p.frames_used, p.intrinsics_path
                     );
                 }),
                 Err(e) => output::err(mode, ApiError::from(e)),
