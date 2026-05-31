@@ -250,22 +250,37 @@ for (var ci = 0; ci < sst.length; ci++) {
   rd.normalize();
   var tu = new THREE.Vector3().crossVectors(rd, aim).normalize();
   var hw = Math.tan(hfov/2)*dist, hh = Math.tan(vfov/2)*dist;
-  var fc = cPos.clone().add(aim.clone().multiplyScalar(dist));
-  function fcp(rh,rv){return fc.clone().add(rd.clone().multiplyScalar(rh*hw)).add(tu.clone().multiplyScalar(rv*hh))}
-  var corners = [fcp(-1,1),fcp(1,1),fcp(1,-1),fcp(-1,-1)];
+  var shortFrac = 0.3;
+  function mkFrustum(frac) {
+    var fd = dist * frac;
+    var fhw = Math.tan(hfov/2)*fd, fhh = Math.tan(vfov/2)*fd;
+    var ffc = cPos.clone().add(aim.clone().multiplyScalar(fd));
+    function ffcp(rh,rv){return ffc.clone().add(rd.clone().multiplyScalar(rh*fhw)).add(tu.clone().multiplyScalar(rv*fhh))}
+    return [ffcp(-1,1),ffcp(1,1),ffcp(1,-1),ffcp(-1,-1)];
+  }
+  var shortCorners = mkFrustum(shortFrac);
+  var fullCorners = mkFrustum(1.0);
   var flp = [];
-  for (var fi = 0; fi < 4; fi++) { flp.push(cPos.x, cPos.y, cPos.z, corners[fi].x, corners[fi].y, corners[fi].z); }
-  for (var fi = 0; fi < 4; fi++) { var a = corners[fi], b = corners[(fi + 1) % 4]; flp.push(a.x, a.y, a.z, b.x, b.y, b.z); }
+  for (var fi = 0; fi < 4; fi++) { flp.push(cPos.x, cPos.y, cPos.z, shortCorners[fi].x, shortCorners[fi].y, shortCorners[fi].z); }
+  for (var fi = 0; fi < 4; fi++) { var a = shortCorners[fi], b = shortCorners[(fi + 1) % 4]; flp.push(a.x, a.y, a.z, b.x, b.y, b.z); }
   var fLines = new THREE.LineSegments(
     new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(flp, 3)),
-    new THREE.LineBasicMaterial({color: stColor, opacity: 0.35, transparent: true})
+    new THREE.LineBasicMaterial({color: stColor, opacity: 0.15, transparent: true})
   );
   scene.add(fLines);
+  var flpFull = [];
+  for (var fi = 0; fi < 4; fi++) { flpFull.push(cPos.x, cPos.y, cPos.z, fullCorners[fi].x, fullCorners[fi].y, fullCorners[fi].z); }
+  for (var fi = 0; fi < 4; fi++) { var a = fullCorners[fi], b = fullCorners[(fi + 1) % 4]; flpFull.push(a.x, a.y, a.z, b.x, b.y, b.z); }
+  var fLinesFull = new THREE.LineSegments(
+    new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(flpFull, 3)),
+    new THREE.LineBasicMaterial({color: stColor, opacity: 0.5, transparent: true})
+  );
+  fLinesFull.visible = false; scene.add(fLinesFull);
   var qp = [];
-  [0,1,2,0,2,3].forEach(function(k){qp.push(corners[k].x,corners[k].y,corners[k].z)});
+  [0,1,2,0,2,3].forEach(function(k){qp.push(fullCorners[k].x,fullCorners[k].y,fullCorners[k].z)});
   var qg = new THREE.BufferGeometry(); qg.setAttribute('position', new THREE.Float32BufferAttribute(qp, 3)); qg.computeVertexNormals();
-  var fQuad = new THREE.Mesh(qg, new THREE.MeshBasicMaterial({color: stColor, opacity: 0.06, transparent: true, side: THREE.DoubleSide, depthWrite: false}));
-  scene.add(fQuad);
+  var fQuad = new THREE.Mesh(qg, new THREE.MeshBasicMaterial({color: stColor, opacity: 0.1, transparent: true, side: THREE.DoubleSide, depthWrite: false}));
+  fQuad.visible = false; scene.add(fQuad);
   var dlg = new THREE.BufferGeometry().setFromPoints([cPos, lookAt]);
   var dLine = new THREE.Line(dlg, new THREE.LineDashedMaterial({color: 0xffffff, dashSize: 0.6, gapSize: 0.3, opacity: 0, transparent: true}));
   dLine.computeLineDistances(); scene.add(dLine);
@@ -275,9 +290,9 @@ for (var ci = 0; ci < sst.length; ci++) {
   var yOff = (ci % 2 === 0) ? 0.7 : -0.6;
   var lb = mkL(st.id, 7, 'rgba(255,255,255,0.85)');
   lb.position.set(cPos.x, cPos.y + yOff * Math.max(ch, 0.5), cPos.z); scene.add(lb);
-  [sphere, fLines, fQuad, lb, dLine, dLabel].forEach(function(o) { o.layers.enable(1); });
+  [sphere, fLines, fLinesFull, fQuad, lb, dLine, dLabel].forEach(function(o) { o.layers.enable(1); });
   sts.push({
-    sphere: sphere, fLines: fLines, fQuad: fQuad, label: lb, dLine: dLine, dLabel: dLabel,
+    sphere: sphere, fLines: fLines, fLinesFull: fLinesFull, fQuad: fQuad, label: lb, dLine: dLine, dLabel: dLabel,
     data: {
       id: st.id, role: rL[st.role] || st.role,
       height: heightM, standoff: (st.standoff_mm / 1000).toFixed(1),
@@ -311,12 +326,15 @@ function sel(idx) {
   for (var i = 0; i < sts.length; i++) {
     var s = sts[i];
     var dim = (idx >= 0 && idx !== i);
+    var sel = (idx === i);
     s.sphere.material.opacity = dim ? 0.12 : 1;
-    s.fLines.material.opacity = dim ? 0.03 : (idx === i ? 0.8 : 0.35);
-    s.fQuad.material.opacity = dim ? 0.008 : (idx === i ? 0.18 : 0.06);
+    s.fLines.visible = !sel;
+    s.fLines.material.opacity = dim ? 0.03 : 0.15;
+    s.fLinesFull.visible = sel;
+    s.fQuad.visible = sel;
     s.label.visible = !dim;
-    s.dLine.material.opacity = (idx === i) ? 0.7 : 0;
-    s.dLabel.visible = (idx === i);
+    s.dLine.material.opacity = sel ? 0.7 : 0;
+    s.dLabel.visible = sel;
   }
   if (idx >= 0) {
     var d = sts[idx].data;
