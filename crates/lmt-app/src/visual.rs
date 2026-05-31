@@ -886,186 +886,51 @@ pub struct CardGeometry {
     pub rows: u32,
 }
 
-fn card_esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+pub struct CardIntrinsics {
+    pub image_size: [u32; 2],
+    pub hfov_deg: f64,
+    pub vfov_deg: f64,
 }
 
-/// Render a self-contained HTML capture-guidance card: a top-down plan SVG
-/// (screen footprint + station dots + aim arrows), a front-elevation coverage
-/// heatmap SVG (cabinet grid colored by reconstructability/residual), a station
-/// table, and unreachable-region warnings. No external dependencies.
+
+/// Render a self-contained interactive 3D HTML capture-guidance card (Three.js
+/// inlined, fully offline). Serializes plan + geometry + intrinsics as JSON,
+/// injects into the `capture_card_3d.html` template.
 pub fn render_capture_card(
     plan: &lmt_shared::dto::CapturePlan,
     geom: &CardGeometry,
+    intrinsics: &CardIntrinsics,
     project_name: &str,
     screen_id: &str,
 ) -> String {
-    use std::fmt::Write as _;
-    let cov = |c: u32, r: u32| plan.coverage.iter().find(|x| x.col == c && x.row == r);
-
-    // ---- top-down plan SVG (X horizontal, Z depth: 0 = wall, + toward cameras) ----
-    // Fan / side stations sit at x < 0 or x > total_width_mm, so the viewBox
-    // x-range must span every station position, not just the screen [0, width],
-    // or those dots/arrows get clipped off the SVG.
-    let mut x_lo = 0.0_f64;
-    let mut x_hi = geom.total_width_mm;
-    for s in &plan.stations {
-        x_lo = x_lo.min(s.position_mm[0]);
-        x_hi = x_hi.max(s.position_mm[0]);
-    }
-    let x_extent = (x_hi - x_lo).max(1.0);
-    let max_z = plan
-        .stations
-        .iter()
-        .map(|s| s.position_mm[2])
-        .fold(0.0_f64, f64::max)
-        .max(geom.total_width_mm * 0.3)
-        * 1.12;
-    let span = x_extent.max(max_z).max(1.0);
-    let pad = 36.0_f64;
-    let sc = 720.0_f64 / span;
-    let sx = |x: f64| pad + (x - x_lo) * sc;
-    let sz = |z: f64| pad + z * sc;
-    let svg_w = pad * 2.0 + x_extent * sc;
-    let svg_h = pad * 2.0 + max_z * sc;
-
-    let mut plan_svg = String::new();
-    write!(plan_svg, "<svg viewBox=\"0 0 {:.0} {:.0}\" width=\"100%\" style=\"max-width:760px;height:auto;background:#0f1722;border-radius:8px\">", svg_w, svg_h).ok();
-    if let Some(radius) = geom.radius_mm {
-        let w = geom.total_width_mm;
-        let mut pts = String::new();
-        for i in 0..=40 {
-            let x = w * (i as f64) / 40.0;
-            let a = (x - w / 2.0) / radius;
-            let z = radius * (1.0 - a.cos());
-            write!(pts, "{:.1},{:.1} ", sx(x), sz(z)).ok();
-        }
-        write!(plan_svg, "<polyline points=\"{}\" fill=\"none\" stroke=\"#38bdf8\" stroke-width=\"3\"/>", pts).ok();
-    } else {
-        write!(plan_svg, "<line x1=\"{:.1}\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\" stroke=\"#38bdf8\" stroke-width=\"3\"/>", sx(0.0), sz(0.0), sx(geom.total_width_mm), sz(0.0)).ok();
-    }
-    write!(plan_svg, "<text x=\"{:.1}\" y=\"{:.1}\" fill=\"#7dd3fc\" font-size=\"13\">屏幕 {:.1} m</text>", sx(0.0), sz(0.0) - 8.0, geom.total_width_mm / 1000.0).ok();
-    for s in &plan.stations {
-        let (px, pz) = (sx(s.position_mm[0]), sz(s.position_mm[2]));
-        let (ax, az) = (sx(s.look_at_mm[0]), sz(s.look_at_mm[2]));
-        let (dx, dz) = (ax - px, az - pz);
-        let len = (dx * dx + dz * dz).sqrt().max(1.0);
-        write!(plan_svg, "<line x1=\"{:.1}\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\" stroke=\"#fbbf24\" stroke-width=\"2\"/>", px, pz, px + dx / len * 26.0, pz + dz / len * 26.0).ok();
-        let color = match s.role.as_str() {
-            "top" => "#a78bfa",
-            "bottom" => "#34d399",
-            "added" => "#f472b6",
-            _ => "#fbbf24",
-        };
-        write!(plan_svg, "<circle cx=\"{:.1}\" cy=\"{:.1}\" r=\"5\" fill=\"{}\"/>", px, pz, color).ok();
-        write!(plan_svg, "<text x=\"{:.1}\" y=\"{:.1}\" fill=\"#e2e8f0\" font-size=\"12\">{}</text>", px + 7.0, pz + 4.0, card_esc(&s.id)).ok();
-    }
-    plan_svg.push_str("</svg>");
-
-    // ---- front elevation heatmap SVG (row 0 at bottom) ----
-    let (cell, gap) = (56.0_f64, 4.0_f64);
-    let ew = geom.cols as f64 * (cell + gap) + gap;
-    let eh = geom.rows as f64 * (cell + gap) + gap;
-    let mut elev_svg = String::new();
-    write!(elev_svg, "<svg viewBox=\"0 0 {:.0} {:.0}\" width=\"100%\" style=\"max-width:{:.0}px;height:auto\">", ew, eh, ew.min(760.0)).ok();
-    for r in 0..geom.rows {
-        for c in 0..geom.cols {
-            let x = gap + c as f64 * (cell + gap);
-            let y = gap + (geom.rows - 1 - r) as f64 * (cell + gap);
-            let (fill, label) = match cov(c, r) {
-                Some(cv) => {
-                    let color = if !cv.reconstructable || !cv.bridged {
-                        "#c62828"
-                    } else if !cv.pass {
-                        "#ef6c00"
-                    } else if cv.low_observation {
-                        "#f9a825"
-                    } else {
-                        "#2e7d32"
-                    };
-                    let lab = match cv.p95_residual_mm {
-                        Some(p) => format!("{:.1}", p),
-                        None => "✗".to_string(),
-                    };
-                    (color, lab)
-                }
-                None => ("#37474f", "—".to_string()),
-            };
-            write!(elev_svg, "<rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.0}\" height=\"{:.0}\" rx=\"4\" fill=\"{}\"/>", x, y, cell, cell, fill).ok();
-            write!(elev_svg, "<text x=\"{:.1}\" y=\"{:.1}\" fill=\"#fff\" font-size=\"13\" text-anchor=\"middle\">{}</text>", x + cell / 2.0, y + cell / 2.0 + 5.0, label).ok();
-        }
-    }
-    elev_svg.push_str("</svg>");
-
-    let banner = if plan.all_pass {
-        "<div class=\"banner ok\">全部箱体达标 ✓</div>".to_string()
-    } else {
-        let n: usize = plan.unreachable_regions.iter().map(|u| u.cabinets.len()).sum();
-        format!("<div class=\"banner bad\">{n} 个箱体未达标 ✗</div>")
-    };
-
-    let mut rows_html = String::new();
-    for s in &plan.stations {
-        write!(
-            rows_html,
-            "<tr><td>{}</td><td>{}</td><td>{:.2}</td><td>{:.2}</td><td>{:.0}</td><td>{}</td></tr>",
-            card_esc(&s.id), card_esc(&s.role), s.standoff_mm / 1000.0,
-            s.height_mm / 1000.0, s.look_at_mm[0], s.covers_cabinets.len()
-        ).ok();
-    }
-
-    let mut warn_html = String::new();
-    if !plan.unreachable_regions.is_empty() {
-        warn_html.push_str("<div class=\"warn\"><strong>不可重建 / 不可达区域</strong><ul>");
-        for u in &plan.unreachable_regions {
-            let cells: Vec<String> =
-                u.cabinets.iter().map(|c| format!("({},{})", c[0], c[1])).collect();
-            write!(warn_html, "<li>{} — {}</li>", card_esc(&u.reason), cells.join(", ")).ok();
-        }
-        warn_html.push_str("</ul></div>");
-    }
-
-    let shape = match geom.radius_mm {
-        Some(r) => format!(" &nbsp; 弧半径 {:.0} mm", r),
-        None => " &nbsp; 平面".to_string(),
-    };
-
-    format!(
-"<!DOCTYPE html>
-<html lang=\"zh\"><head><meta charset=\"utf-8\">
-<title>采集指导 - {proj} / {scr}</title>
-<style>
-body {{ font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; line-height: 1.6; max-width: 880px; margin: 2em auto; padding: 0 1em; color:#1f2937; }}
-h1 {{ border-bottom: 2px solid #333; padding-bottom: .3em; }}
-h2 {{ margin-top: 1.4em; }}
-table {{ border-collapse: collapse; margin: 1em 0; width: 100%; }}
-th, td {{ border: 1px solid #cbd5e1; padding: 6px 10px; text-align: left; }}
-th {{ background: #f1f5f9; }}
-.banner {{ padding: .6em 1em; border-radius: 6px; font-weight: 600; margin: .8em 0; }}
-.banner.ok {{ background:#dcfce7; color:#166534; }}
-.banner.bad {{ background:#fee2e2; color:#991b1b; }}
-.legend span {{ display:inline-block; padding:2px 8px; border-radius:4px; color:#fff; margin-right:6px; font-size:13px; }}
-.warn {{ background:#fff7ed; border:1px solid #fed7aa; border-radius:6px; padding:.6em 1em; margin:1em 0; }}
-.note {{ color:#64748b; font-size:13px; }}
-</style></head><body>
-<h1>LED 屏采集指导卡</h1>
-<p>项目：<strong>{proj}</strong> &nbsp; 屏体：<strong>{scr}</strong> &nbsp; 箱体阵列：{cols} × {rows}{shape}</p>
-{banner}
-<h2>俯视机位图（屏幕在上，相机在下方）</h2>
-{plan_svg}
-<h2>正视覆盖热力图（按箱体重建残差着色）</h2>
-<p class=\"legend\"><span style=\"background:#2e7d32\">达标</span><span style=\"background:#f9a825\">低观测</span><span style=\"background:#ef6c00\">超目标</span><span style=\"background:#c62828\">不可重建/断链</span></p>
-{elev_svg}
-<h2>推荐机位清单</h2>
-<table><tr><th>机位</th><th>类型</th><th>后退(m)</th><th>架高(m)</th><th>对准 X(mm)</th><th>覆盖箱体数</th></tr>{rows_html}</table>
-{warn_html}
-<p class=\"note\">残差为指导性预测（视野感知三角化可行性，非完整 BA）；目标 p95 ≤ {target:.1} mm。坐标为相对屏幕的模型系。</p>
-</body></html>",
-        proj = card_esc(project_name), scr = card_esc(screen_id),
-        cols = geom.cols, rows = geom.rows, shape = shape, banner = banner,
-        plan_svg = plan_svg, elev_svg = elev_svg, rows_html = rows_html,
-        warn_html = warn_html, target = plan.target_p95_residual_mm,
-    )
+    let data = serde_json::json!({
+        "project_name": project_name,
+        "screen_id": screen_id,
+        "screen": {
+            "cols": geom.cols,
+            "rows": geom.rows,
+            "cabinet_size_mm": [
+                geom.total_width_mm / geom.cols as f64,
+                geom.total_height_mm / geom.rows as f64,
+            ],
+            "radius_mm": geom.radius_mm,
+        },
+        "intrinsics": {
+            "image_size": intrinsics.image_size,
+            "hfov_deg": intrinsics.hfov_deg,
+            "vfov_deg": intrinsics.vfov_deg,
+        },
+        "plan": plan,
+    });
+    let three_bundle = include_str!("templates/three-bundle.min.js");
+    let template = include_str!("templates/capture_card_3d.html");
+    let safe_data = data.to_string()
+        .replace("</", "<\\/")
+        .replace("\u{2028}", "\\u2028")
+        .replace("\u{2029}", "\\u2029");
+    template
+        .replacen("/*__THREE_BUNDLE__*/", three_bundle, 1)
+        .replacen("/*__DATA__*/", &safe_data, 1)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1100,7 +965,20 @@ pub fn run_capture_card(
         cols,
         rows,
     };
-    let html = render_capture_card(&plan, &geom, &cfg.project.name, screen_id);
+    let img_sz = parse_wxh(image_size)?;
+    let (hfov, vfov) = match (hfov_deg, vfov_deg) {
+        (Some(h), None) => {
+            let v = 2.0 * ((h / 2.0_f64).to_radians().tan() * img_sz[1] as f64 / img_sz[0] as f64).atan().to_degrees();
+            (h, v)
+        }
+        (None, Some(v)) => {
+            let h = 2.0 * ((v / 2.0_f64).to_radians().tan() * img_sz[0] as f64 / img_sz[1] as f64).atan().to_degrees();
+            (h, v)
+        }
+        _ => unreachable!(),
+    };
+    let intrinsics = CardIntrinsics { image_size: img_sz, hfov_deg: hfov, vfov_deg: vfov };
+    let html = render_capture_card(&plan, &geom, &intrinsics, &cfg.project.name, screen_id);
     Ok(lmt_shared::dto::CaptureCardResult { html_content: html })
 }
 
@@ -1110,7 +988,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn render_capture_card_contains_plan_svg_and_table() {
+    fn render_capture_card_contains_3d_interactive_html() {
         use lmt_shared::dto::{CabinetCoverage, CapturePlan, CaptureStation, UnreachableRegion};
         let plan = CapturePlan {
             stations: vec![
@@ -1161,18 +1039,22 @@ mod tests {
             cols: 2,
             rows: 1,
         };
-        let html = render_capture_card(&plan, &geom, "Demo", "MAIN");
+        let intrinsics = CardIntrinsics {
+            image_size: [1920, 1080],
+            hfov_deg: 54.0,
+            vfov_deg: 32.0,
+        };
+        let html = render_capture_card(&plan, &geom, &intrinsics, "Demo", "MAIN");
         assert!(html.starts_with("<!DOCTYPE html>"));
-        assert!(html.contains("<svg"));
-        assert!(html.contains("S01"));
+        assert!(html.contains("S01"), "station ID S01 in injected DATA");
         assert!(html.contains("PingFang SC"));
-        assert!(html.contains("1.2"));
-        assert!(html.contains("不可重建") || html.contains("✗"));
-        assert!(html.matches("<svg").count() >= 2);
-        assert!(!html.contains("http://") && !html.contains("https://") && !html.contains("cdn"));
-        // the x<0 station must not be clipped: no negative SVG coordinates.
-        assert!(!html.contains("cx=\"-"), "station clipped off the plan viewBox");
-        assert!(!html.contains("x1=\"-") && !html.contains("x2=\"-"));
+        assert!(html.contains("window.THREE"), "Three.js bundle inlined");
+        assert!(html.contains("OrbitControls"), "OrbitControls inlined");
+        assert!(html.contains("\"hfov_deg\":54"), "intrinsics injected");
+        assert!(html.contains("\"cols\":2"), "screen geometry injected");
+        assert!(!html.contains("/*__DATA__*/"), "DATA placeholder replaced");
+        assert!(!html.contains("/*__THREE_BUNDLE__*/"), "THREE_BUNDLE placeholder replaced");
+        assert!(!html.contains("https://"), "no CDN references — fully offline");
     }
 
     // ── sidecar wrapper plumbing (mirrors adapter's simulate_eval_test) ────────

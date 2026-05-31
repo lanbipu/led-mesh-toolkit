@@ -2441,10 +2441,12 @@ fn visual_capture_card_emits_self_contained_html() {
         .success();
     let html = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     assert!(html.starts_with("<!DOCTYPE html>"));
-    assert!(html.matches("<svg").count() >= 2);
+    assert!(html.contains("window.THREE"), "Three.js bundle inlined");
+    assert!(html.contains("OrbitControls"), "OrbitControls inlined");
     assert!(html.contains("PingFang SC"));
-    // self-contained — no external resources
-    assert!(!html.contains("https://") && !html.contains("http://") && !html.contains("cdn"));
+    assert!(!html.contains("/*__DATA__*/"), "DATA placeholder replaced");
+    assert!(!html.contains("/*__THREE_BUNDLE__*/"), "THREE_BUNDLE placeholder replaced");
+    assert!(!html.contains("unpkg.com") && !html.contains("cdn."), "no CDN references");
 }
 // ---------------------------------------------------------------------------
 // calibrate-structured-light E2E (Task 8)
