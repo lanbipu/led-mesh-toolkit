@@ -291,3 +291,14 @@ def test_sl_meta_subset_of_project_cells_refused(tmp_path, capsys):
     assert errs[0]["code"] == "invalid_input"
     msg = errs[0]["message"].lower()
     assert "cabinet set" in msg and "present cells" in msg, errs[0]["message"]
+
+
+def test_output_records_distortion_model(tmp_path):
+    meta, proj, cab, shape = _well_meta()
+    world = nominal_dot_positions_world(meta, cab, shape)
+    poses = _well_poses(_wall_center(meta, cab, shape))
+    paths = _write_corr(tmp_path, meta, world, poses, noise=0.0)
+    rc, out = _run(tmp_path, meta, proj, paths)
+    assert rc == 0
+    intr = json.loads(out.read_text())
+    assert intr["distortion_model"] in ("radial2", "full")

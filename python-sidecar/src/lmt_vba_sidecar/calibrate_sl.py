@@ -128,6 +128,7 @@ def run_calibrate_structured_light(cmd: CalibrateStructuredLightInput) -> int:
         "reproj_error_px": float(rms),
         "frames_used": len(object_points),
         "calibration_method": "structured_light_nominal",
+        "distortion_model": res.distortion_model,
         "pp_stddev_px": list(pp_std),
         "focal_stddev_px": list(foc_std),
         "n_poses": len(object_points),
