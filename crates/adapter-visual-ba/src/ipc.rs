@@ -169,19 +169,10 @@ pub struct ResultData {
     /// "file" | "auto_self_calibrated"; older sidecars omit it -> default "file".
     #[serde(default = "default_intrinsics_source")]
     pub intrinsics_source: String,
-    /// False only when `--intrinsics auto` self-calibrated without an anchor on a
-    /// non-coplanar target (anisotropic pitch/1:1 unguarded). Older sidecars omit it
-    /// -> default true (file/anchored paths are trivially guarded).
-    #[serde(default = "default_true")]
-    pub intrinsics_anchor_guarded: bool,
 }
 
 fn default_intrinsics_source() -> String {
     "file".to_string()
-}
-
-fn default_true() -> bool {
-    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

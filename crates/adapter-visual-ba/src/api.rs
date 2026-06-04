@@ -16,7 +16,7 @@ use crate::error::{VbaError, VbaResult};
 use crate::ipc::{
     CabinetArray as IpcCabinetArray, CabinetSummary, CompareKnownResultData,
     CoordinateFrame as IpcCoordinateFrame, EvalResultData, Event, PlanCaptureResultData,
-    ReconstructProject, ResultData, ShapePrior as IpcShapePrior, SimulateResultData,
+    ReconstructProject, ResultData, ShapePrior as IpcShapePrior, SimulateResultData, WarningEvent,
 };
 use crate::sidecar::{run_sidecar, SidecarRequest};
 
@@ -52,9 +52,9 @@ pub struct ReconstructOut {
     pub procrustes_align_rms_m: f64,
     /// "file" | "auto_self_calibrated" (--intrinsics auto).
     pub intrinsics_source: String,
-    /// False only when `--intrinsics auto` self-calibrated without an anchor on a
-    /// non-coplanar target (anisotropic pitch/1:1 unguarded).
-    pub intrinsics_anchor_guarded: bool,
+    /// Non-fatal warnings collected off the sidecar event stream (e.g.
+    /// `no_intrinsics_anchor`, `high_rejection`, `cabinet_quality`, `missing_covariance`).
+    pub warnings: Vec<WarningEvent>,
     pub cabinet_summaries: Vec<CabinetSummary>,
 }
 
@@ -148,17 +148,18 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
         payload["screen_mapping_path"] = json!(p);
     }
 
-    let value = run_sidecar(SidecarRequest {
+    let out = run_sidecar(SidecarRequest {
         subcommand: "reconstruct".into(),
         payload,
         progress_tx: args.progress_tx,
         cancel: args.cancel,
     })
     .await?;
+    let warnings = out.warnings;
 
     // A result we can't decode is a sidecar protocol violation, not caller
     // error → BadEventJson, not InvalidInput.
-    let result: ResultData = serde_json::from_value(value).map_err(VbaError::BadEventJson)?;
+    let result: ResultData = serde_json::from_value(out.data).map_err(VbaError::BadEventJson)?;
 
     let ba_rms_px = result.ba_stats.rms_reprojection_px;
     let ba_observations_total = result.ba_stats.n_observations_total;
@@ -166,7 +167,6 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
     let ba_rejected = result.ba_stats.n_rejected;
     let procrustes_align_rms_m = result.procrustes_align_rms_m;
     let intrinsics_source = result.intrinsics_source.clone();
-    let intrinsics_anchor_guarded = result.intrinsics_anchor_guarded;
     let points: Vec<lmt_core::point::MeasuredPoint> = result
         .measured_points
         .into_iter()
@@ -193,7 +193,7 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
         ba_rejected,
         procrustes_align_rms_m,
         intrinsics_source,
-        intrinsics_anchor_guarded,
+        warnings,
         cabinet_summaries,
     })
 }
@@ -236,15 +236,16 @@ pub async fn reconstruct_structured_light(
         "pose_report_path": &args.pose_report_path,
     });
 
-    let value = run_sidecar(SidecarRequest {
+    let out = run_sidecar(SidecarRequest {
         subcommand: "reconstruct_structured_light".into(),
         payload,
         progress_tx: args.progress_tx,
         cancel: args.cancel,
     })
     .await?;
+    let warnings = out.warnings;
 
-    let result: ResultData = serde_json::from_value(value).map_err(VbaError::BadEventJson)?;
+    let result: ResultData = serde_json::from_value(out.data).map_err(VbaError::BadEventJson)?;
 
     let ba_rms_px = result.ba_stats.rms_reprojection_px;
     let ba_observations_total = result.ba_stats.n_observations_total;
@@ -252,7 +253,6 @@ pub async fn reconstruct_structured_light(
     let ba_rejected = result.ba_stats.n_rejected;
     let procrustes_align_rms_m = result.procrustes_align_rms_m;
     let intrinsics_source = result.intrinsics_source.clone();
-    let intrinsics_anchor_guarded = result.intrinsics_anchor_guarded;
     let points: Vec<lmt_core::point::MeasuredPoint> = result
         .measured_points
         .into_iter()
@@ -279,7 +279,7 @@ pub async fn reconstruct_structured_light(
         ba_rejected,
         procrustes_align_rms_m,
         intrinsics_source,
-        intrinsics_anchor_guarded,
+        warnings,
         cabinet_summaries,
     })
 }
@@ -307,6 +307,9 @@ pub struct CalibrateOut {
     pub distortion_model: String,
     pub focal_stddev_px: Option<[f64; 2]>,
     pub pp_stddev_px: Option<[f64; 2]>,
+    /// Non-fatal warnings collected off the sidecar event stream (e.g.
+    /// `no_intrinsics_anchor` when `--intrinsics-crosscheck` was omitted on a curved wall).
+    pub warnings: Vec<WarningEvent>,
 }
 
 pub async fn calibrate(args: CalibrateArgs) -> VbaResult<CalibrateOut> {
@@ -326,7 +329,7 @@ pub async fn calibrate(args: CalibrateArgs) -> VbaResult<CalibrateOut> {
     // the sidecar writes to `output_path` (it carries both `reproj_error_px`
     // and `frames_used = len(obj_points)`), mirroring how `generate_pattern`
     // reads pattern_meta.json.
-    let _value = run_sidecar(SidecarRequest {
+    let out = run_sidecar(SidecarRequest {
         subcommand: "calibrate".into(),
         payload,
         progress_tx: args.progress_tx,
@@ -355,6 +358,7 @@ pub async fn calibrate(args: CalibrateArgs) -> VbaResult<CalibrateOut> {
         distortion_model: "full".to_string(),
         focal_stddev_px: None,
         pp_stddev_px: None,
+        warnings: out.warnings,
     })
 }
 
@@ -390,7 +394,7 @@ pub async fn calibrate_structured_light(
         "crosscheck_intrinsics_path": &args.crosscheck_intrinsics_path,
     });
 
-    let _value = run_sidecar(SidecarRequest {
+    let out = run_sidecar(SidecarRequest {
         subcommand: "calibrate_structured_light".into(),
         payload,
         progress_tx: args.progress_tx,
@@ -428,6 +432,7 @@ pub async fn calibrate_structured_light(
         },
         focal_stddev_px: intr.focal_stddev_px,
         pp_stddev_px: intr.pp_stddev_px,
+        warnings: out.warnings,
     })
 }
 
@@ -707,7 +712,7 @@ pub async fn simulate(args: SimulateArgs) -> VbaResult<SimulateResultData> {
     .await?;
 
     // Undecodable result = sidecar protocol violation → BadEventJson.
-    serde_json::from_value(value).map_err(VbaError::BadEventJson)
+    serde_json::from_value(value.data).map_err(VbaError::BadEventJson)
 }
 
 // ---------------------------------------------------------------------------
@@ -740,7 +745,7 @@ pub async fn eval(args: EvalArgs) -> VbaResult<EvalResultData> {
     .await?;
 
     // Undecodable result = sidecar protocol violation → BadEventJson.
-    serde_json::from_value(value).map_err(VbaError::BadEventJson)
+    serde_json::from_value(value.data).map_err(VbaError::BadEventJson)
 }
 
 // ---------------------------------------------------------------------------
@@ -771,7 +776,7 @@ pub async fn compare_known(args: CompareKnownArgs) -> VbaResult<CompareKnownResu
     .await?;
 
     // Undecodable result = sidecar protocol violation → BadEventJson.
-    serde_json::from_value(value).map_err(VbaError::BadEventJson)
+    serde_json::from_value(value.data).map_err(VbaError::BadEventJson)
 }
 
 // ---------------------------------------------------------------------------
@@ -823,5 +828,5 @@ pub async fn plan_capture(args: PlanCaptureArgs) -> VbaResult<PlanCaptureResultD
     })
     .await?;
 
-    serde_json::from_value(value).map_err(VbaError::BadEventJson)
+    serde_json::from_value(value.data).map_err(VbaError::BadEventJson)
 }

@@ -286,10 +286,12 @@ def test_intrinsics_auto_self_calibrates(tmp_path, capsys):
         "intrinsics_path": "auto", "crosscheck_intrinsics_path": str(anchor),
         "pose_report_path": str(report)})
     assert run_reconstruct_structured_light(cmd) == 0
-    result = [json.loads(l) for l in capsys.readouterr().out.splitlines()
-              if l.strip() and json.loads(l).get("event") == "result"][-1]
+    events = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
+    result = [e for e in events if e.get("event") == "result"][-1]
     assert result["data"]["intrinsics_source"] == "auto_self_calibrated"
-    assert result["data"]["intrinsics_anchor_guarded"] is True   # solved WITH an anchor
+    # Solved WITH an anchor -> no no_intrinsics_anchor warning in the event stream.
+    assert not any(e.get("event") == "warning" and e.get("code") == "no_intrinsics_anchor"
+                   for e in events)
     by_id = {c["cabinet_id"]: c for c in json.loads(report.read_text())["cabinet_poses"]}
     rel = np.array(by_id["V001_R000"]["position_mm"]) - np.array(by_id["V000_R000"]["position_mm"])
     assert np.linalg.norm(rel - np.array([500.0, 0.0, 0.0])) < 8.0  # self-cal noisier than given K
@@ -385,12 +387,12 @@ def test_pitch_absorption_guard(tmp_path, kind):
     assert run_reconstruct_structured_light(cmd_ctl) == 0
 
 
-def test_self_calibrate_inline_curved_no_anchor_is_unguarded(capsys):
+def test_self_calibrate_inline_curved_no_anchor_emits_warning(capsys):
     # Codex P2: --intrinsics auto on a NON-coplanar (curved) target WITHOUT an anchor is
-    # admitted but UNGUARDED. The status must be returned (the WarningEvent alone is dropped
-    # on the headless CLI path). Uses the curved 3x3 well geometry directly so it exercises
-    # the guarded=False branch without the full reconstruct pipeline (flat-wall + no anchor
-    # would instead be REFUSED, so it can't reach this branch).
+    # admitted but UNGUARDED, and must emit a no_intrinsics_anchor WarningEvent (which the
+    # adapter collects onto the result for the headless CLI). Uses the curved 3x3 well
+    # geometry directly so it exercises this branch without the full reconstruct pipeline
+    # (flat-wall + no anchor would instead be REFUSED, so it can't reach this branch).
     from types import SimpleNamespace
 
     import lmt_vba_sidecar.sl_reconstruct as slr
@@ -410,8 +412,7 @@ def test_self_calibrate_inline_curved_no_anchor_is_unguarded(capsys):
     cmd = SimpleNamespace(project=SimpleNamespace(cabinet_array=cab, shape_prior=shape),
                           crosscheck_intrinsics_path=None)
 
-    _K, _dist, _size, guarded = slr._self_calibrate_inline(meta, corr_files, cmd)
-    assert guarded is False                                  # no anchor -> unguarded
+    _K, _dist, _size = slr._self_calibrate_inline(meta, corr_files, cmd)
     events = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
     assert any(e.get("event") == "warning" and e.get("code") == "no_intrinsics_anchor"
                for e in events)

@@ -63,6 +63,7 @@ pub fn dump_all() -> Value {
     add!("InstructionCardResult", dto::InstructionCardResult);
 
     // Visual reconstruction (camera-branch)
+    add!("WarningDto", dto::WarningDto);
     add!("CabinetPoseSummary", dto::CabinetPoseSummary);
     add!("VisualReconstructResult", dto::VisualReconstructResult);
     add!("SimulateResult", dto::SimulateResult);
@@ -170,7 +171,7 @@ mod tests {
             .as_object()
             .unwrap();
         assert!(props.contains_key("intrinsics_source"));
-        assert!(props.contains_key("intrinsics_anchor_guarded"));
+        assert!(props.contains_key("warnings"));
     }
 
     #[test]

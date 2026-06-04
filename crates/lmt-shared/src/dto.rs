@@ -243,8 +243,17 @@ fn default_intrinsics_source() -> String {
     "file".to_string()
 }
 
-fn default_true() -> bool {
-    true
+/// One non-fatal warning surfaced by a sidecar-backed command. The sidecar emits these
+/// as streaming `WarningEvent`s; the adapter collects them off the event stream and rides
+/// them on the result so they survive the headless CLI path (where no progress consumer is
+/// attached and the live events would otherwise be dropped). Codes today: `no_intrinsics_anchor`,
+/// `high_rejection`, `cabinet_quality`, `missing_covariance`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct WarningDto {
+    pub code: String,
+    pub message: String,
+    #[serde(default)]
+    pub cabinet: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -265,10 +274,11 @@ pub struct VisualReconstructResult {
     /// "file" (provided intrinsics) | "auto_self_calibrated" (--intrinsics auto).
     #[serde(default = "default_intrinsics_source")]
     pub intrinsics_source: String,
-    /// False 仅当 `--intrinsics auto` 在非共面靶上无 `--intrinsics-crosscheck` anchor 自标定：
-    /// 解被接受但各向异性 pitch/1:1 未受 anchor 保护。file / anchored 路径恒为 true。
-    #[serde(default = "default_true")]
-    pub intrinsics_anchor_guarded: bool,
+    /// Non-fatal warnings collected from the sidecar run (e.g. `no_intrinsics_anchor` when
+    /// `--intrinsics auto` self-calibrated without an anchor, `high_rejection`/`cabinet_quality`/
+    /// `missing_covariance` per cabinet). Empty = clean run. See [`WarningDto`].
+    #[serde(default)]
+    pub warnings: Vec<WarningDto>,
     pub cabinets: Vec<CabinetPoseSummary>,
 }
 
@@ -332,6 +342,10 @@ pub struct CalibrateResult {
     pub focal_stddev_px: Option<[f64; 2]>,
     #[serde(default)]
     pub pp_stddev_px: Option<[f64; 2]>,
+    /// Non-fatal warnings collected from the sidecar run (e.g. `no_intrinsics_anchor` when
+    /// `--intrinsics-crosscheck` was omitted on a curved wall). Empty = clean run.
+    #[serde(default)]
+    pub warnings: Vec<WarningDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -456,7 +470,11 @@ mod tests {
             ba_rejected: 2,
             procrustes_align_rms_m: 0.0017,
             intrinsics_source: "file".into(),
-            intrinsics_anchor_guarded: true,
+            warnings: vec![WarningDto {
+                code: "no_intrinsics_anchor".into(),
+                message: "auto intrinsics solved without an independent anchor".into(),
+                cabinet: None,
+            }],
             cabinets: vec![cabinet],
         };
         let json = serde_json::to_string(&vr).unwrap();
@@ -498,6 +516,7 @@ mod tests {
             distortion_model: "radial2".into(),
             focal_stddev_px: Some([0.4, 0.4]),
             pp_stddev_px: Some([1.1, 1.2]),
+            warnings: vec![],
         };
         let cal_json = serde_json::to_string(&cal).unwrap();
         let cal_back: CalibrateResult = serde_json::from_str(&cal_json).unwrap();

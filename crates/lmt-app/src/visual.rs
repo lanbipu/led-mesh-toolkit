@@ -22,7 +22,7 @@ use lmt_adapter_visual_ba::ipc;
 use lmt_shared::dto::{
     CabinetPoseSummary, CabinetSizeCheck, CalibrateResult, CompareKnownResult,
     DecodeStructuredLightResult, EvalResult, GeneratePatternResult, GenerateStructuredLightResult,
-    PairCheck, SimulateResult, VisualReconstructResult,
+    PairCheck, SimulateResult, VisualReconstructResult, WarningDto,
 };
 use lmt_shared::error::{LmtError, LmtResult};
 
@@ -32,6 +32,20 @@ use crate::projects::load_project_yaml_from_path;
 /// `rt` + `process` features (the adapter spawns the sidecar via tokio process).
 fn rt() -> LmtResult<tokio::runtime::Runtime> {
     tokio::runtime::Runtime::new().map_err(|e| LmtError::Other(format!("tokio runtime: {e}")))
+}
+
+/// Map the adapter's sidecar-stream warnings to the public `WarningDto`. These ride the
+/// result so they survive the headless path (the sidecar's live WarningEvents are dropped
+/// when no progress consumer is attached).
+fn map_warnings(warnings: Vec<ipc::WarningEvent>) -> Vec<WarningDto> {
+    warnings
+        .into_iter()
+        .map(|w| WarningDto {
+            code: w.code,
+            message: w.message,
+            cabinet: w.cabinet,
+        })
+        .collect()
 }
 
 /// Map adapter `VbaError` → `LmtError`, preserving the sidecar's error code so
@@ -215,7 +229,7 @@ fn persist_reconstruct_result(
         ba_rejected: out.ba_rejected,
         procrustes_align_rms_m: out.procrustes_align_rms_m,
         intrinsics_source: out.intrinsics_source,
-        intrinsics_anchor_guarded: out.intrinsics_anchor_guarded,
+        warnings: map_warnings(out.warnings),
         cabinets: out
             .cabinet_summaries
             .iter()
@@ -333,6 +347,7 @@ pub fn run_calibrate_structured_light(
         distortion_model: out.distortion_model,
         focal_stddev_px: out.focal_stddev_px,
         pp_stddev_px: out.pp_stddev_px,
+        warnings: map_warnings(out.warnings),
     })
 }
 
@@ -424,6 +439,7 @@ pub fn run_calibrate(
         distortion_model: out.distortion_model,
         focal_stddev_px: out.focal_stddev_px,
         pp_stddev_px: out.pp_stddev_px,
+        warnings: map_warnings(out.warnings),
     })
 }
 

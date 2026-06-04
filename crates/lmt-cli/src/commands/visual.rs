@@ -8,6 +8,21 @@ use lmt_shared::envelope::{error_codes, ApiError};
 use std::io::Write as _;
 use std::path::Path;
 
+/// Print any non-fatal warnings a sidecar-backed command collected onto its result.
+/// The sidecar's live WarningEvents are dropped on this headless path (no progress
+/// consumer), so the durable `warnings` field is the only place they surface in human mode;
+/// `--json` carries the same list in the envelope. No-op when the run was clean.
+fn print_warnings(warnings: &[lmt_shared::dto::WarningDto]) {
+    for w in warnings {
+        let loc = w
+            .cabinet
+            .as_deref()
+            .map(|c| format!(" ({c})"))
+            .unwrap_or_default();
+        let _ = writeln!(std::io::stdout(), "  warning [{}]{} {}", w.code, loc, w.message);
+    }
+}
+
 pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
     match cmd {
         VisualCmd::Reconstruct {
@@ -246,6 +261,7 @@ fn reconstruct(
                         p.measured_yaml_path,
                         p.pose_report_path
                     );
+                    print_warnings(&p.warnings);
                 }),
                 Err(e) => output::err(mode, ApiError::from(e)),
             }
@@ -305,6 +321,7 @@ fn calibrate(
                         p.frames_used,
                         p.intrinsics_path
                     );
+                    print_warnings(&p.warnings);
                 }),
                 Err(e) => output::err(mode, ApiError::from(e)),
             }
@@ -603,15 +620,7 @@ fn reconstruct_structured_light(
                         "reconstructed {} cabinets (ba_rms={:.3}px)\n  measured: {}\n  poses: {}",
                         p.cabinet_count, p.ba_rms_px, p.measured_yaml_path, p.pose_report_path
                     );
-                    // The sidecar's no_intrinsics_anchor WarningEvent is dropped on this
-                    // headless path (progress_tx=None), so surface the durable status here.
-                    if !p.intrinsics_anchor_guarded {
-                        let _ = writeln!(
-                            std::io::stdout(),
-                            "  warning: auto intrinsics solved without an independent anchor; \
-                             anisotropic pitch/1:1 unguarded — pass --intrinsics-crosscheck <K.json>"
-                        );
-                    }
+                    print_warnings(&p.warnings);
                 }),
                 Err(e) => output::err(mode, ApiError::from(e)),
             }
@@ -697,6 +706,7 @@ fn calibrate_structured_light(
                         "calibrated (SL): reproj={:.3}px frames={} → {}",
                         p.reproj_error_px, p.frames_used, p.intrinsics_path
                     );
+                    print_warnings(&p.warnings);
                 }),
                 Err(e) => output::err(mode, ApiError::from(e)),
             }

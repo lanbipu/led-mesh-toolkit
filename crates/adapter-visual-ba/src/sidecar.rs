@@ -10,7 +10,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::error::{VbaError, VbaResult};
-use crate::ipc::Event;
+use crate::ipc::{Event, WarningEvent};
 use crate::locate::locate_sidecar;
 
 pub struct SidecarRequest {
@@ -18,6 +18,14 @@ pub struct SidecarRequest {
     pub payload: Value,
     pub progress_tx: Option<mpsc::Sender<Event>>,
     pub cancel: Option<oneshot::Receiver<()>>,
+}
+
+/// Result of a sidecar run: the last `result` event's raw `data` plus every
+/// `WarningEvent` collected off the stream (durable even with no progress consumer).
+#[derive(Debug, Clone)]
+pub struct SidecarOutput {
+    pub data: Value,
+    pub warnings: Vec<WarningEvent>,
 }
 
 async fn write_payload(child: &mut Child, payload: &Value) -> VbaResult<()> {
@@ -37,7 +45,7 @@ async fn write_payload(child: &mut Child, payload: &Value) -> VbaResult<()> {
 async fn read_events(
     child: &mut Child,
     progress_tx: Option<mpsc::Sender<Event>>,
-) -> VbaResult<Option<Value>> {
+) -> VbaResult<(Option<Value>, Vec<WarningEvent>)> {
     let stdout = child
         .stdout
         .take()
@@ -46,6 +54,10 @@ async fn read_events(
     // Keep the raw `data` payload of the last `result` event. Each subcommand
     // emits a different `data` shape, so callers deserialize it themselves.
     let mut last_result: Option<Value> = None;
+    // Collect every WarningEvent so it survives even when no progress consumer is
+    // attached (the headless CLI/app path passes progress_tx=None). The live
+    // forwarding below is best-effort; this list is the durable carrier.
+    let mut warnings: Vec<WarningEvent> = Vec::new();
     while let Some(line) = lines.next_line().await? {
         if line.trim().is_empty() {
             continue;
@@ -53,6 +65,7 @@ async fn read_events(
         let event: Event = serde_json::from_str(&line)?;
         match &event {
             Event::Result(r) => last_result = Some(r.data.clone()),
+            Event::Warning(w) => warnings.push(w.clone()),
             Event::Error(e) => {
                 return Err(VbaError::Protocol {
                     code: e.code.clone(),
@@ -68,7 +81,7 @@ async fn read_events(
             let _ = tx.try_send(event);
         }
     }
-    Ok(last_result)
+    Ok((last_result, warnings))
 }
 
 const STDERR_TAIL_LIMIT: usize = 4096;
@@ -114,7 +127,7 @@ fn stderr_tail(buf: &Option<Arc<Mutex<Vec<u8>>>>) -> String {
 /// Run the sidecar and return the raw `data` of its `result` event. Each
 /// subcommand emits a different result shape, so the caller deserializes the
 /// returned [`Value`] into the concrete type it expects.
-pub async fn run_sidecar(req: SidecarRequest) -> VbaResult<Value> {
+pub async fn run_sidecar(req: SidecarRequest) -> VbaResult<SidecarOutput> {
     let exe: PathBuf = locate_sidecar()?;
     let mut cmd = Command::new(&exe);
     cmd.arg(&req.subcommand)
@@ -149,7 +162,7 @@ pub async fn run_sidecar(req: SidecarRequest) -> VbaResult<Value> {
             unreachable!();
         }
         result = read_fut => {
-            let result = result?;
+            let (data, warnings) = result?;
             let status = child.wait().await?;
             if !status.success() {
                 let code = status.code();
@@ -163,7 +176,8 @@ pub async fn run_sidecar(req: SidecarRequest) -> VbaResult<Value> {
                     ),
                 });
             }
-            result.ok_or(VbaError::NoResultEvent)
+            let data = data.ok_or(VbaError::NoResultEvent)?;
+            Ok(SidecarOutput { data, warnings })
         }
     }
 }

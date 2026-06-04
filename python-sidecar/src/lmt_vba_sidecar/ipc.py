@@ -331,11 +331,6 @@ class ResultData(BaseModel):
     procrustes_align_rms_m: float = Field(default=0.0, ge=0.0)
     # "file" (provided intrinsics) | "auto_self_calibrated" (--intrinsics auto).
     intrinsics_source: str = "file"
-    # False ONLY when --intrinsics auto self-calibrated on a non-coplanar target WITHOUT an
-    # independent --intrinsics-crosscheck anchor: the solve is admitted but anisotropic
-    # pitch/1:1 is unguarded. The WarningEvent for this is dropped on the headless CLI path
-    # (progress_tx=None), so the durable status rides the result instead (Codex P2).
-    intrinsics_anchor_guarded: bool = True
 
 
 class ProgressEvent(BaseModel):
