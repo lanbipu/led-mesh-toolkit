@@ -183,10 +183,12 @@ def _seed_dots(anchor: np.ndarray, *, roi: tuple[int, int, int, int],
     x, y, w, h = roi
     crop = anchor[y:y + h, x:x + w]
     _t, bw = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    n, _lbl, stats, cent = cv2.connectedComponentsWithStats(bw, connectivity=8)
+    n, lbl, stats, cent = cv2.connectedComponentsWithStats(bw, connectivity=8)
     r = float(dot_radius_px)
     area_lo, area_hi = 0.25 * np.pi * r * r, 9.0 * np.pi * r * r
     side_hi = 6.0 * r
+    cropf = crop.astype(np.float64)
+    floor = float(_t)                           # Otsu threshold = background floor
     out: list[tuple[float, float]] = []
     for i in range(1, n):
         cw, ch, area = int(stats[i][2]), int(stats[i][3]), int(stats[i][4])
@@ -194,8 +196,24 @@ def _seed_dots(anchor: np.ndarray, *, roi: tuple[int, int, int, int],
             continue
         if cw > side_hi or ch > side_hi:        # reject big/elongated blobs
             continue
-        out.append((float(cent[i][0]) + x, float(cent[i][1]) + y))
+        cx, cy = _weighted_centroid(cropf, lbl, i, floor, fallback=(cent[i][0], cent[i][1]))
+        out.append((cx + x, cy + y))
     return out
+
+
+def _weighted_centroid(cropf: np.ndarray, lbl: np.ndarray, i: int, floor: float,
+                       *, fallback: tuple[float, float]) -> tuple[float, float]:
+    """Intensity-weighted centroid over component i's pixels (weight = intensity
+    above the Otsu floor) — sub-pixel localization that the binary centroid can't
+    reach. Falls back to the binary centroid when weights vanish (a zero-weight
+    region degenerates)."""
+    ys, xs = np.nonzero(lbl == i)
+    wgt = cropf[ys, xs] - floor
+    wgt[wgt < 0] = 0.0
+    s = wgt.sum()
+    if s <= 1e-6:
+        return float(fallback[0]), float(fallback[1])
+    return float((wgt * xs).sum() / s), float((wgt * ys).sum() / s)
 
 
 def _read_bits_relative(code_frames: list[np.ndarray], x: float, y: float,
