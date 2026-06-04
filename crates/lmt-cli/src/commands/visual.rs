@@ -603,6 +603,15 @@ fn reconstruct_structured_light(
                         "reconstructed {} cabinets (ba_rms={:.3}px)\n  measured: {}\n  poses: {}",
                         p.cabinet_count, p.ba_rms_px, p.measured_yaml_path, p.pose_report_path
                     );
+                    // The sidecar's no_intrinsics_anchor WarningEvent is dropped on this
+                    // headless path (progress_tx=None), so surface the durable status here.
+                    if !p.intrinsics_anchor_guarded {
+                        let _ = writeln!(
+                            std::io::stdout(),
+                            "  warning: auto intrinsics solved without an independent anchor; \
+                             anisotropic pitch/1:1 unguarded — pass --intrinsics-crosscheck <K.json>"
+                        );
+                    }
                 }),
                 Err(e) => output::err(mode, ApiError::from(e)),
             }

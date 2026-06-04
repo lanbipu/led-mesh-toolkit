@@ -52,6 +52,9 @@ pub struct ReconstructOut {
     pub procrustes_align_rms_m: f64,
     /// "file" | "auto_self_calibrated" (--intrinsics auto).
     pub intrinsics_source: String,
+    /// False only when `--intrinsics auto` self-calibrated without an anchor on a
+    /// non-coplanar target (anisotropic pitch/1:1 unguarded).
+    pub intrinsics_anchor_guarded: bool,
     pub cabinet_summaries: Vec<CabinetSummary>,
 }
 
@@ -163,6 +166,7 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
     let ba_rejected = result.ba_stats.n_rejected;
     let procrustes_align_rms_m = result.procrustes_align_rms_m;
     let intrinsics_source = result.intrinsics_source.clone();
+    let intrinsics_anchor_guarded = result.intrinsics_anchor_guarded;
     let points: Vec<lmt_core::point::MeasuredPoint> = result
         .measured_points
         .into_iter()
@@ -189,6 +193,7 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
         ba_rejected,
         procrustes_align_rms_m,
         intrinsics_source,
+        intrinsics_anchor_guarded,
         cabinet_summaries,
     })
 }
@@ -247,6 +252,7 @@ pub async fn reconstruct_structured_light(
     let ba_rejected = result.ba_stats.n_rejected;
     let procrustes_align_rms_m = result.procrustes_align_rms_m;
     let intrinsics_source = result.intrinsics_source.clone();
+    let intrinsics_anchor_guarded = result.intrinsics_anchor_guarded;
     let points: Vec<lmt_core::point::MeasuredPoint> = result
         .measured_points
         .into_iter()
@@ -273,6 +279,7 @@ pub async fn reconstruct_structured_light(
         ba_rejected,
         procrustes_align_rms_m,
         intrinsics_source,
+        intrinsics_anchor_guarded,
         cabinet_summaries,
     })
 }

@@ -243,6 +243,10 @@ fn default_intrinsics_source() -> String {
     "file".to_string()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct VisualReconstructResult {
     pub screen_id: String,
@@ -261,6 +265,10 @@ pub struct VisualReconstructResult {
     /// "file" (provided intrinsics) | "auto_self_calibrated" (--intrinsics auto).
     #[serde(default = "default_intrinsics_source")]
     pub intrinsics_source: String,
+    /// False 仅当 `--intrinsics auto` 在非共面靶上无 `--intrinsics-crosscheck` anchor 自标定：
+    /// 解被接受但各向异性 pitch/1:1 未受 anchor 保护。file / anchored 路径恒为 true。
+    #[serde(default = "default_true")]
+    pub intrinsics_anchor_guarded: bool,
     pub cabinets: Vec<CabinetPoseSummary>,
 }
 
@@ -448,6 +456,7 @@ mod tests {
             ba_rejected: 2,
             procrustes_align_rms_m: 0.0017,
             intrinsics_source: "file".into(),
+            intrinsics_anchor_guarded: true,
             cabinets: vec![cabinet],
         };
         let json = serde_json::to_string(&vr).unwrap();

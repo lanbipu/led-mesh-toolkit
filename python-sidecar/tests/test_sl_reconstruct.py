@@ -289,6 +289,7 @@ def test_intrinsics_auto_self_calibrates(tmp_path, capsys):
     result = [json.loads(l) for l in capsys.readouterr().out.splitlines()
               if l.strip() and json.loads(l).get("event") == "result"][-1]
     assert result["data"]["intrinsics_source"] == "auto_self_calibrated"
+    assert result["data"]["intrinsics_anchor_guarded"] is True   # solved WITH an anchor
     by_id = {c["cabinet_id"]: c for c in json.loads(report.read_text())["cabinet_poses"]}
     rel = np.array(by_id["V001_R000"]["position_mm"]) - np.array(by_id["V000_R000"]["position_mm"])
     assert np.linalg.norm(rel - np.array([500.0, 0.0, 0.0])) < 8.0  # self-cal noisier than given K
@@ -382,3 +383,35 @@ def test_pitch_absorption_guard(tmp_path, kind):
     cmd_ctl = ReconstructStructuredLightInput.model_validate(
         {**base, "correspondence_paths": _corr(inject=False), "pose_report_path": str(rep_ctl)})
     assert run_reconstruct_structured_light(cmd_ctl) == 0
+
+
+def test_self_calibrate_inline_curved_no_anchor_is_unguarded(capsys):
+    # Codex P2: --intrinsics auto on a NON-coplanar (curved) target WITHOUT an anchor is
+    # admitted but UNGUARDED. The status must be returned (the WarningEvent alone is dropped
+    # on the headless CLI path). Uses the curved 3x3 well geometry directly so it exercises
+    # the guarded=False branch without the full reconstruct pipeline (flat-wall + no anchor
+    # would instead be REFUSED, so it can't reach this branch).
+    from types import SimpleNamespace
+
+    import lmt_vba_sidecar.sl_reconstruct as slr
+    from lmt_vba_sidecar.sl_feasibility import project_point
+    from lmt_vba_sidecar.nominal import nominal_dot_positions_world
+    from test_calibrate_sl import _well_meta, _wall_center, _well_poses, K_TRUE, IMG
+
+    meta, _proj, cab, shape = _well_meta()
+    world = nominal_dot_positions_world(meta, cab, shape)
+    poses = _well_poses(_wall_center(meta, cab, shape))
+    ids = sorted(world.keys())
+    corr_files = []
+    for (R, t) in poses:
+        pts = [SimpleNamespace(id=i, **dict(zip(("x", "y"),
+               (float(v) for v in project_point(K_TRUE, R, t, world[i]))))) for i in ids]
+        corr_files.append(SimpleNamespace(camera_image_size=list(IMG), points=pts))
+    cmd = SimpleNamespace(project=SimpleNamespace(cabinet_array=cab, shape_prior=shape),
+                          crosscheck_intrinsics_path=None)
+
+    _K, _dist, _size, guarded = slr._self_calibrate_inline(meta, corr_files, cmd)
+    assert guarded is False                                  # no anchor -> unguarded
+    events = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
+    assert any(e.get("event") == "warning" and e.get("code") == "no_intrinsics_anchor"
+               for e in events)

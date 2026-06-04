@@ -215,6 +215,7 @@ fn persist_reconstruct_result(
         ba_rejected: out.ba_rejected,
         procrustes_align_rms_m: out.procrustes_align_rms_m,
         intrinsics_source: out.intrinsics_source,
+        intrinsics_anchor_guarded: out.intrinsics_anchor_guarded,
         cabinets: out
             .cabinet_summaries
             .iter()

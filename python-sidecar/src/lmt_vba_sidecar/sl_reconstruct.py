@@ -112,10 +112,16 @@ def _self_calibrate_inline(meta, corr_files, cmd):
     refusal = crosscheck_intrinsics(res, anchor_K=anchor_K, anchor_dist=anchor_dist)
     if refusal is not None:
         raise refusal
-    if anchor_K is None and res.coplanar_ratio >= COPLANAR_RATIO_MIN:
+    # Guarded == the auto-K was validated against an independent anchor. Without one on a
+    # non-coplanar target the solve is admitted but anisotropic pitch/1:1 is UNGUARDED; the
+    # flat-wall-no-anchor case was already refused above, so reaching here anchorless means
+    # curved-wall. The WarningEvent only reaches live (progress_tx) consumers, so the status
+    # is ALSO returned and carried in the result for the headless CLI path (Codex P2).
+    anchor_guarded = anchor_K is not None
+    if not anchor_guarded:
         write_event(WarningEvent(event="warning", code="no_intrinsics_anchor",
             message="auto intrinsics solved without an independent anchor; anisotropic pitch/1:1 unguarded"))
-    return res.K, res.dist, image_size
+    return res.K, res.dist, image_size, anchor_guarded
 
 
 def run_reconstruct_structured_light(cmd: ReconstructStructuredLightInput) -> int:
@@ -159,9 +165,11 @@ def run_reconstruct_structured_light(cmd: ReconstructStructuredLightInput) -> in
         return 1
 
     # --- 3. intrinsics (file path OR inline self-cal via the "auto" sentinel) ---
+    # File intrinsics are trusted (no self-cal absorption risk), so trivially "guarded".
+    intrinsics_anchor_guarded = True
     if cmd.intrinsics_path == "auto":
         try:
-            K, dist, image_size = _self_calibrate_inline(meta, corr_files, cmd)
+            K, dist, image_size, intrinsics_anchor_guarded = _self_calibrate_inline(meta, corr_files, cmd)
             intrinsics_source = "auto_self_calibrated"
         except IntrinsicsRefused as e:
             write_event(ErrorEvent(event="error", code=e.code, message=e.message, fatal=True))
@@ -261,4 +269,5 @@ def run_reconstruct_structured_light(cmd: ReconstructStructuredLightInput) -> in
         corners_local_provider=corners_provider, pose_report_path=cmd.pose_report_path,
         n_rejected_pre=n_rej_stage_a, rejected_per_cab_pre=rej_per_cab_stage_a,
         gauge_strategy="align_to_nominal",  # SL output lands in the nominal design frame
-        intrinsics_source=intrinsics_source)
+        intrinsics_source=intrinsics_source,
+        intrinsics_anchor_guarded=intrinsics_anchor_guarded)

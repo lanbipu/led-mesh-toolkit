@@ -170,6 +170,7 @@ mod tests {
             .as_object()
             .unwrap();
         assert!(props.contains_key("intrinsics_source"));
+        assert!(props.contains_key("intrinsics_anchor_guarded"));
     }
 
     #[test]
