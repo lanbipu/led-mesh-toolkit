@@ -166,6 +166,9 @@ pub struct ResultData {
     // so Rust adapter doesn't reject otherwise-valid responses.
     #[serde(default)]
     pub procrustes_align_rms_m: f64,
+    /// "file" | "auto_self_calibrated"; older sidecars omit it -> default "file".
+    #[serde(default)]
+    pub intrinsics_source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -135,8 +135,10 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             sl_meta,
             intrinsics,
             correspondences,
+            intrinsics_crosscheck,
         } => reconstruct_structured_light(
-            mode, &project_path, &screen_id, &sl_meta, &intrinsics, &correspondences, yes, dry_run,
+            mode, &project_path, &screen_id, &sl_meta, &intrinsics,
+            intrinsics_crosscheck.as_deref(), &correspondences, yes, dry_run,
         ),
         VisualCmd::CalibrateStructuredLight {
             project_path,
@@ -146,9 +148,10 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             out,
             force,
             max_rms_px,
+            intrinsics_crosscheck,
         } => calibrate_structured_light(
             mode, &project_path, &screen_id, &sl_meta, &correspondences,
-            out.as_deref(), force, max_rms_px, yes, dry_run,
+            out.as_deref(), force, max_rms_px, intrinsics_crosscheck.as_deref(), yes, dry_run,
         ),
     }
 }
@@ -541,6 +544,7 @@ fn reconstruct_structured_light(
     screen_id: &str,
     sl_meta: &str,
     intrinsics: &str,
+    intrinsics_crosscheck: Option<&str>,
     correspondences: &[String],
     yes: bool,
     dry_run: bool,
@@ -589,7 +593,8 @@ fn reconstruct_structured_light(
                 Path::new(project_path),
                 screen_id,
                 Path::new(sl_meta),
-                Path::new(intrinsics),
+                intrinsics,
+                intrinsics_crosscheck,
                 correspondences,
             ) {
                 Ok(r) => output::ok(mode, r, |p| {
@@ -619,6 +624,7 @@ fn calibrate_structured_light(
     out: Option<&str>,
     force: bool,
     max_rms_px: f64,
+    intrinsics_crosscheck: Option<&str>,
     yes: bool,
     dry_run: bool,
 ) -> i32 {
@@ -674,6 +680,7 @@ fn calibrate_structured_light(
                 out.map(Path::new),
                 force,
                 max_rms_px,
+                intrinsics_crosscheck,
             ) {
                 Ok(r) => output::ok(mode, r, |p| {
                     let _ = writeln!(

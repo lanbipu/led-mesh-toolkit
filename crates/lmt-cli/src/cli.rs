@@ -379,12 +379,15 @@ pub enum VisualCmd {
         /// sl_meta.json 路径(generate-structured-light 产出)。
         #[arg(long)]
         sl_meta: String,
-        /// intrinsics.json 路径(visual calibrate 产出)。
+        /// intrinsics.json 路径(visual calibrate 产出);保留字 `auto` = 用同一组 corr 内联自标定。
         #[arg(long)]
         intrinsics: String,
         /// 每个机位一个 corr.json(decode-structured-light 产出);重复传入 >=2 个。
         #[arg(long = "corr", required = true, num_args = 1.., action = clap::ArgAction::Append)]
         correspondences: Vec<String>,
+        /// 内参 anchor JSON 路径(独立棋盘格标定),仅 --intrinsics auto 时用于防吸收交叉校验。
+        #[arg(long = "intrinsics-crosscheck")]
+        intrinsics_crosscheck: Option<String>,
     },
     /// 结构光白点 + nominal 设计墙(3D 靶) → <screen_id>_sl_intrinsics.json
     /// (cv2.calibrateCamera,病态拒标)。side_effect: destructive
@@ -409,6 +412,9 @@ pub enum VisualCmd {
         /// reproj RMS 门槛(px)。
         #[arg(long = "max-rms-px", default_value_t = 1.5)]
         max_rms_px: f64,
+        /// 内参 anchor JSON 路径,启用防吸收交叉校验(平面墙无 anchor 将被拒)。
+        #[arg(long = "intrinsics-crosscheck")]
+        intrinsics_crosscheck: Option<String>,
     },
     /// 多视角照片 → measured.yaml + cabinet_pose_report.json。side_effect: destructive
     Reconstruct {

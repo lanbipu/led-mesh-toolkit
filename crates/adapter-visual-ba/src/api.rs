@@ -50,6 +50,8 @@ pub struct ReconstructOut {
     pub ba_rejected: usize,
     /// align_to_nominal Procrustes 残差（米）；fix_root_cabinet 路径为 0。
     pub procrustes_align_rms_m: f64,
+    /// "file" | "auto_self_calibrated" (--intrinsics auto).
+    pub intrinsics_source: String,
     pub cabinet_summaries: Vec<CabinetSummary>,
 }
 
@@ -160,6 +162,7 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
     let ba_observations_used = result.ba_stats.n_observations_used;
     let ba_rejected = result.ba_stats.n_rejected;
     let procrustes_align_rms_m = result.procrustes_align_rms_m;
+    let intrinsics_source = result.intrinsics_source.clone();
     let points: Vec<lmt_core::point::MeasuredPoint> = result
         .measured_points
         .into_iter()
@@ -185,6 +188,7 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
         ba_observations_used,
         ba_rejected,
         procrustes_align_rms_m,
+        intrinsics_source,
         cabinet_summaries,
     })
 }
@@ -198,7 +202,10 @@ pub struct ReconstructStructuredLightArgs {
     /// One CorrespondenceFile path per camera pose (decode_structured_light out).
     pub correspondence_paths: Vec<String>,
     pub sl_meta_path: String,
+    /// File path, or the reserved string "auto" for inline self-calibration.
     pub intrinsics_path: String,
+    /// Optional independent intrinsics anchor for the --intrinsics auto cross-check.
+    pub crosscheck_intrinsics_path: Option<String>,
     /// Where the sidecar writes `cabinet_pose_report.json`; read back for summaries.
     pub pose_report_path: String,
     pub progress_tx: Option<mpsc::Sender<Event>>,
@@ -220,6 +227,7 @@ pub async fn reconstruct_structured_light(
         "correspondence_paths": &args.correspondence_paths,
         "sl_meta_path": &args.sl_meta_path,
         "intrinsics_path": &args.intrinsics_path,
+        "crosscheck_intrinsics_path": &args.crosscheck_intrinsics_path,
         "pose_report_path": &args.pose_report_path,
     });
 
@@ -238,6 +246,7 @@ pub async fn reconstruct_structured_light(
     let ba_observations_used = result.ba_stats.n_observations_used;
     let ba_rejected = result.ba_stats.n_rejected;
     let procrustes_align_rms_m = result.procrustes_align_rms_m;
+    let intrinsics_source = result.intrinsics_source.clone();
     let points: Vec<lmt_core::point::MeasuredPoint> = result
         .measured_points
         .into_iter()
@@ -263,6 +272,7 @@ pub async fn reconstruct_structured_light(
         ba_observations_used,
         ba_rejected,
         procrustes_align_rms_m,
+        intrinsics_source,
         cabinet_summaries,
     })
 }
@@ -285,6 +295,10 @@ pub struct CalibrateOut {
     pub intrinsics_path: String,
     pub reproj_error_px: f64,
     pub frames_used: u32,
+    /// "radial2" | "full" (SL adaptive); checkerboard calibrate is always "radial2".
+    pub distortion_model: String,
+    pub focal_stddev_px: Option<[f64; 2]>,
+    pub pp_stddev_px: Option<[f64; 2]>,
 }
 
 pub async fn calibrate(args: CalibrateArgs) -> VbaResult<CalibrateOut> {
@@ -328,6 +342,9 @@ pub async fn calibrate(args: CalibrateArgs) -> VbaResult<CalibrateOut> {
         intrinsics_path: args.output_path,
         reproj_error_px: intr.reproj_error_px,
         frames_used: intr.frames_used,
+        distortion_model: "radial2".to_string(),   // checkerboard calibrate is radial k1,k2
+        focal_stddev_px: None,
+        pp_stddev_px: None,
     })
 }
 
@@ -341,6 +358,8 @@ pub struct CalibrateStructuredLightArgs {
     pub sl_meta_path: String,
     pub output_path: String,
     pub max_rms_px: f64,
+    /// Optional independent intrinsics anchor for the anti-absorption cross-check.
+    pub crosscheck_intrinsics_path: Option<String>,
     pub progress_tx: Option<mpsc::Sender<Event>>,
     pub cancel: Option<oneshot::Receiver<()>>,
 }
@@ -358,6 +377,7 @@ pub async fn calibrate_structured_light(
         "sl_meta_path": &args.sl_meta_path,
         "output_path": &args.output_path,
         "max_rms_px": args.max_rms_px,
+        "crosscheck_intrinsics_path": &args.crosscheck_intrinsics_path,
     });
 
     let _value = run_sidecar(SidecarRequest {
@@ -368,12 +388,18 @@ pub async fn calibrate_structured_light(
     })
     .await?;
 
-    // Read authoritative reproj_error_px + frames_used from the intrinsics JSON
-    // the sidecar wrote (same pattern as `calibrate`).
+    // Read authoritative reproj_error_px + frames_used (+ precision provenance) from
+    // the intrinsics JSON the sidecar wrote (same pattern as `calibrate`).
     #[derive(serde::Deserialize)]
     struct IntrinsicsFile {
         reproj_error_px: f64,
         frames_used: u32,
+        #[serde(default)]
+        distortion_model: String,
+        #[serde(default)]
+        focal_stddev_px: Option<[f64; 2]>,
+        #[serde(default)]
+        pp_stddev_px: Option<[f64; 2]>,
     }
     let intr: IntrinsicsFile = serde_json::from_str(
         &std::fs::read_to_string(&args.output_path)
@@ -385,6 +411,13 @@ pub async fn calibrate_structured_light(
         intrinsics_path: args.output_path,
         reproj_error_px: intr.reproj_error_px,
         frames_used: intr.frames_used,
+        distortion_model: if intr.distortion_model.is_empty() {
+            "radial2".to_string()
+        } else {
+            intr.distortion_model
+        },
+        focal_stddev_px: intr.focal_stddev_px,
+        pp_stddev_px: intr.pp_stddev_px,
     })
 }
 

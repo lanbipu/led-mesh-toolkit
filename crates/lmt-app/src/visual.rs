@@ -214,6 +214,7 @@ fn persist_reconstruct_result(
         ba_observations_used: out.ba_observations_used,
         ba_rejected: out.ba_rejected,
         procrustes_align_rms_m: out.procrustes_align_rms_m,
+        intrinsics_source: out.intrinsics_source,
         cabinets: out
             .cabinet_summaries
             .iter()
@@ -236,7 +237,8 @@ pub fn run_reconstruct_structured_light(
     project_path: &Path,
     screen_id: &str,
     sl_meta: &Path,
-    intrinsics: &Path,
+    intrinsics: &str,
+    intrinsics_crosscheck: Option<&str>,
     correspondences: &[String],
 ) -> LmtResult<VisualReconstructResult> {
     let cfg = load_project_yaml_from_path(project_path)?;
@@ -255,7 +257,8 @@ pub fn run_reconstruct_structured_light(
         project,
         correspondence_paths: correspondences.to_vec(),
         sl_meta_path: sl_meta.display().to_string(),
-        intrinsics_path: intrinsics.display().to_string(),
+        intrinsics_path: intrinsics.to_string(),
+        crosscheck_intrinsics_path: intrinsics_crosscheck.map(str::to_string),
         pose_report_path: pose_report_path.display().to_string(),
         progress_tx: None,
         cancel: None,
@@ -284,6 +287,7 @@ pub fn run_calibrate_structured_light(
     out: Option<&Path>,
     force: bool,
     max_rms_px: f64,
+    intrinsics_crosscheck: Option<&str>,
 ) -> LmtResult<CalibrateResult> {
     let cfg = load_project_yaml_from_path(project_path)?;
     let screen_cfg = load_screen(&cfg, screen_id)?;
@@ -312,6 +316,7 @@ pub fn run_calibrate_structured_light(
         sl_meta_path: sl_meta.display().to_string(),
         output_path: output_path.display().to_string(),
         max_rms_px,
+        crosscheck_intrinsics_path: intrinsics_crosscheck.map(str::to_string),
         progress_tx: None,
         cancel: None,
     };
@@ -324,6 +329,9 @@ pub fn run_calibrate_structured_light(
         intrinsics_path: out.intrinsics_path,
         reproj_error_px: out.reproj_error_px,
         frames_used: out.frames_used,
+        distortion_model: out.distortion_model,
+        focal_stddev_px: out.focal_stddev_px,
+        pp_stddev_px: out.pp_stddev_px,
     })
 }
 
@@ -412,6 +420,9 @@ pub fn run_calibrate(
         intrinsics_path: out.intrinsics_path,
         reproj_error_px: out.reproj_error_px,
         frames_used: out.frames_used,
+        distortion_model: out.distortion_model,
+        focal_stddev_px: out.focal_stddev_px,
+        pp_stddev_px: out.pp_stddev_px,
     })
 }
 

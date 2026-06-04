@@ -254,6 +254,9 @@ pub struct VisualReconstructResult {
     /// charuco/fix_root_cabinet 路径恒为 0（不做配准）。
     #[serde(default)]
     pub procrustes_align_rms_m: f64,
+    /// "file" (provided intrinsics) | "auto_self_calibrated" (--intrinsics auto).
+    #[serde(default)]
+    pub intrinsics_source: String,
     pub cabinets: Vec<CabinetPoseSummary>,
 }
 
@@ -309,6 +312,13 @@ pub struct CalibrateResult {
     pub intrinsics_path: String,
     pub reproj_error_px: f64,
     pub frames_used: u32,
+    /// "radial2" (k1,k2) | "full" (k1,k2,k3+tangential). Checkerboard calibrate = "radial2".
+    #[serde(default)]
+    pub distortion_model: String,
+    #[serde(default)]
+    pub focal_stddev_px: Option<[f64; 2]>,
+    #[serde(default)]
+    pub pp_stddev_px: Option<[f64; 2]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -432,6 +442,7 @@ mod tests {
             ba_observations_used: 94,
             ba_rejected: 2,
             procrustes_align_rms_m: 0.0017,
+            intrinsics_source: "file".into(),
             cabinets: vec![cabinet],
         };
         let json = serde_json::to_string(&vr).unwrap();
@@ -470,6 +481,9 @@ mod tests {
             intrinsics_path: "intrinsics.yaml".into(),
             reproj_error_px: 0.25,
             frames_used: 30,
+            distortion_model: "radial2".into(),
+            focal_stddev_px: Some([0.4, 0.4]),
+            pp_stddev_px: Some([1.1, 1.2]),
         };
         let cal_json = serde_json::to_string(&cal).unwrap();
         let cal_back: CalibrateResult = serde_json::from_str(&cal_json).unwrap();
