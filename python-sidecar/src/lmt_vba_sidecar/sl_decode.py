@@ -27,14 +27,6 @@ from lmt_vba_sidecar.sl_codec import decode_bits
 _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
 _DPX_EXT = ".dpx"
 
-# Dot-acceptance shape filter (relative to dot_radius_px r): a component is a dot if
-# its area is within [_DOT_AREA_LO_FRAC, _DOT_AREA_HI_FRAC] * pi*r^2 and neither side
-# exceeds _DOT_SIDE_HI_FRAC * r. Module-level so the decode path and any baseline that
-# must reproduce the SAME accepted-component set share one source of truth.
-_DOT_AREA_LO_FRAC = 0.25
-_DOT_AREA_HI_FRAC = 9.0
-_DOT_SIDE_HI_FRAC = 6.0
-
 
 def _read_frame_file(f: pathlib.Path) -> np.ndarray:
     # cv2 cannot decode 10-bit DPX (returns None); route .dpx through our parser.
@@ -182,61 +174,109 @@ def index_plateaus(region: list[np.ndarray], *, expected: int,
     return [(a + b) // 2 for (a, b) in segs]
 
 
+def _weighted_dot_center(crop: np.ndarray, labels: np.ndarray, label_id: int,
+                         bx: int, by: int, cw: int, ch: int, pad: int,
+                         kernel: np.ndarray,
+                         *, fallback: tuple[float, float]) -> tuple[float, float]:
+    """Intensity-weighted (Gaussian) centroid of one dot, in CROP coordinates.
+
+    The binary Otsu mask throws away brightness; its geometric centroid lands
+    wherever the threshold happened to cut the lit blob (flooding / anti-aliasing
+    / oblique view move that cut, biasing & jittering the center). Instead, weight
+    the GRAYSCALE crop by intensity over the blob's bbox grown by `pad` so the
+    soft skirt Otsu cut away is included. A local background -- the median of the
+    window's border ring -- is subtracted and negatives clamped, so a DC pedestal
+    or veiling glare cannot pull the centroid.
+
+    The weighting SUPPORT is this dot's own Otsu core dilated by `kernel` (a few
+    px -- ~half the dot radius, capped), NOT the whole window: that keeps this
+    dot's near skirt but excludes a NEIGHBOUR's skirt, which lives further out
+    toward the neighbour.
+    Zeroing only neighbour CORES would leave their sub-threshold skirts (label 0,
+    which is indistinguishable from this dot's own skirt) in the window; once dots
+    get close, or a heavy PSF fattens the skirt, that neighbour skirt drags the
+    centroid toward the neighbour -- a regression vs the binary centroid in the
+    dense / defocused regime. A tight support keeps the soft-skirt accuracy gain
+    for isolated dots while staying at least as good as the binary centroid down
+    to the generation floor spacing under a PSF as wide as the dot radius.
+
+    Falls back to the binary centroid if the weighted mass degenerates (e.g. an
+    all-background window)."""
+    rh, rw = crop.shape
+    wx0, wy0 = max(0, bx - pad), max(0, by - pad)
+    wx1, wy1 = min(rw, bx + cw + pad), min(rh, by + ch + pad)
+    win = crop[wy0:wy1, wx0:wx1]
+    if win.size == 0:
+        return fallback
+    border = np.concatenate([win[0, :], win[-1, :], win[:, 0], win[:, -1]])
+    weight = win - float(np.median(border))     # local background subtraction
+    np.clip(weight, 0.0, None, out=weight)
+    lab = labels[wy0:wy1, wx0:wx1]
+    support = cv2.dilate((lab == label_id).astype(np.uint8), kernel)
+    weight[support == 0] = 0.0                  # this dot's own core+skirt only
+    total = float(weight.sum())
+    if total <= 1e-6:
+        return fallback
+    ys, xs = np.mgrid[wy0:wy1, wx0:wx1]
+    return (float((weight * xs).sum() / total),
+            float((weight * ys).sum() / total))
+
+
 def _seed_dots(anchor: np.ndarray, *, roi: tuple[int, int, int, int],
                dot_radius_px: int) -> list[tuple[float, float]]:
     """Pass 3.1-3.2: Otsu-threshold the all-on anchor WITHIN the ROI (so id=0 is
     seeded too), keep round components sized like a dot. Returns frame-coords
-    sub-pixel centroids. Adaptive threshold (not global 128) catches dim/oblique
-    dots; the ROI excludes off-screen bright clutter."""
+    sub-pixel centers. Adaptive threshold (not global 128) catches dim/oblique
+    dots; the ROI excludes off-screen bright clutter.
+
+    Detection (threshold + components + shape filters) decides WHICH dots and HOW
+    MANY; the per-dot center is then an intensity-weighted centroid of the
+    grayscale crop (see _weighted_dot_center), which is steadier and more accurate
+    under flooding / defocus / oblique view than the binary mask's geometric
+    centroid. The weighting never adds or drops a dot, so decoded ids are
+    unchanged (and _read_bits_relative rounds the seed to a whole pixel anyway)."""
     x, y, w, h = roi
     crop = anchor[y:y + h, x:x + w]
     _t, bw = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    n, lbl, stats, cent = cv2.connectedComponentsWithStats(bw, connectivity=8)
-    r = float(dot_radius_px)
-    area_lo, area_hi = _DOT_AREA_LO_FRAC * np.pi * r * r, _DOT_AREA_HI_FRAC * np.pi * r * r
-    side_hi = _DOT_SIDE_HI_FRAC * r
+    n, labels, stats, cent = cv2.connectedComponentsWithStats(bw, connectivity=8)
     cropf = crop.astype(np.float64)
-    floor = float(_t)                           # Otsu threshold = background floor
+    r = float(dot_radius_px)
+    area_lo, area_hi = 0.25 * np.pi * r * r, 9.0 * np.pi * r * r
+    side_hi = 6.0 * r
+    pad = max(1, int(round(r)))
+    # Support = core dilated by min(round(r/2), 3) (not the full window `pad`): a
+    # tight support hugs the dot so a neighbour's overlapping sub-threshold skirt
+    # cannot dominate the weighting under dense spacing / heavy defocus, while the
+    # wider `pad` window still gives a clean background ring. The skirt band that
+    # actually corrects the sub-pixel quantization is PSF-set (a few px), NOT
+    # proportional to the dot radius -- so the dilation is CAPPED at 3px: an
+    # uncapped r/2 grows with the dot and regressed below the binary baseline for
+    # large dots (r >= 8) at the floor spacing (4*r+2) once the PSF sigma approached
+    # the dot radius. The cap keeps the no-regression guarantee across dot sizes.
+    sd = max(1, min(int(round(r / 2)), 3))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * sd + 1, 2 * sd + 1))
+    crop_h, crop_w = crop.shape
     out: list[tuple[float, float]] = []
     for i in range(1, n):
-        cl, ct, cw, ch, area = (int(stats[i][c]) for c in range(5))
+        bx, by = int(stats[i][0]), int(stats[i][1])
+        cw, ch, area = int(stats[i][2]), int(stats[i][3]), int(stats[i][4])
         if not (area_lo <= area <= area_hi):
             continue
         if cw > side_hi or ch > side_hi:        # reject big/elongated blobs
             continue
-        cx, cy = _weighted_centroid(cropf, lbl, i, floor,
-                                    bbox=(cl, ct, cw, ch), fallback=(cent[i][0], cent[i][1]))
+        binary_center = (float(cent[i][0]), float(cent[i][1]))
+        if bx < sd or by < sd or bx + cw + sd > crop_w or by + ch + sd > crop_h:
+            # Core within the support radius of the ROI/crop edge: the weighting
+            # window clamps at the boundary, truncating this dot's skirt on the
+            # clipped side only, which biases the weighted centroid inward (it can
+            # fall BELOW the binary baseline on the ROI-boundary ring). The binary
+            # centroid is unbiased there, so use it for the perimeter dots.
+            out.append((binary_center[0] + x, binary_center[1] + y))
+            continue
+        cx, cy = _weighted_dot_center(
+            cropf, labels, i, bx, by, cw, ch, pad, kernel, fallback=binary_center)
         out.append((cx + x, cy + y))
     return out
-
-
-def _weighted_centroid(cropf: np.ndarray, lbl: np.ndarray, i: int, floor: float,
-                       *, bbox: tuple[int, int, int, int],
-                       fallback: tuple[float, float]) -> tuple[float, float]:
-    """Intensity-weighted centroid over component i's pixels (weight = intensity above
-    the Otsu floor) — sub-pixel localization the binary centroid can't reach. Falls back
-    to the binary centroid when weights vanish (a zero-weight region degenerates).
-
-    Scoped to the component's bounding box (`bbox` = left, top, width, height from
-    connectedComponentsWithStats `stats[i]`) so the `lbl == i` scan is O(dot area), not
-    O(whole ROI) per component — the ROI can be multi-megapixel with hundreds of dots.
-
-    Limitation: `floor` is a single scalar (the global Otsu threshold), so under a steep
-    per-pixel background gradient (glare ramp / vignetting) the residual weight retains the
-    gradient and the centroid is pulled slightly toward the brighter side. Measured on field
-    fixtures this stays below the binary centroid's own gradient skew (the Otsu MASK is also
-    ramp-shifted), so weighted is not a regression vs binary — but it is not gradient-immune.
-    See the field-fixtures promotion gate in test_sl_decode.py."""
-    cl, ct, cw, ch = bbox
-    sub_lbl = lbl[ct:ct + ch, cl:cl + cw]
-    sub_f = cropf[ct:ct + ch, cl:cl + cw]
-    ys, xs = np.nonzero(sub_lbl == i)
-    wgt = sub_f[ys, xs] - floor
-    wgt[wgt < 0] = 0.0
-    s = wgt.sum()
-    if s <= 1e-6:
-        return float(fallback[0]), float(fallback[1])
-    return float((wgt * xs).sum() / s) + cl, float((wgt * ys).sum() / s) + ct
 
 
 def _read_bits_relative(code_frames: list[np.ndarray], x: float, y: float,

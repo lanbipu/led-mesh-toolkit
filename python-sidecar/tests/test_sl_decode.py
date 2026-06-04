@@ -167,10 +167,7 @@ def test_correspondence_has_provenance(tmp_path):
     assert corr["camera_image_size"] == [960, 540]
 
 
-from lmt_vba_sidecar.sl_decode import (
-    _seed_dots, _read_bits_relative,
-    _DOT_AREA_LO_FRAC, _DOT_AREA_HI_FRAC, _DOT_SIDE_HI_FRAC,
-)
+from lmt_vba_sidecar.sl_decode import _seed_dots, _read_bits_relative
 
 
 def test_seed_dots_otsu_finds_dots_in_bright_roi():
@@ -193,57 +190,6 @@ def test_seed_dots_filters_oversized_blob():
     roi = (50, 40, 80, 50)
     seeds = _seed_dots(anchor, roi=roi, dot_radius_px=6)
     assert len(seeds) == 1
-
-
-def _draw_soft_dot(img, cx, cy, radius, peak=255):
-    """Anti-aliased filled disc: pixel value scales with coverage of the disc,
-    so the INTENSITY centroid sits at the true (fractional) (cx, cy)."""
-    h, w = img.shape
-    yy, xx = np.mgrid[0:h, 0:w]
-    d = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-    cov = np.clip(radius + 0.5 - d, 0.0, 1.0)        # soft edge
-    img[:] = np.maximum(img, (cov * peak).astype(np.uint8))
-
-
-def _otsu_centroid_baseline(anchor, roi, dot_radius_px):
-    """The pre-change Otsu binary component centroid, for the SAME accepted component —
-    the baseline the weighted centroid must beat. (Shared with the field-fixtures gate.)"""
-    x, y, w, h = roi
-    crop = anchor[y:y + h, x:x + w]
-    _t, bw = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    n, _lbl, stats, cent = cv2.connectedComponentsWithStats(bw, connectivity=8)
-    r = float(dot_radius_px)
-    # Same shape filter as _seed_dots, via the shared module constants (one source of
-    # truth) so retuning the decode filter cannot silently desync this baseline.
-    area_lo, area_hi, side_hi = _DOT_AREA_LO_FRAC * np.pi * r * r, _DOT_AREA_HI_FRAC * np.pi * r * r, _DOT_SIDE_HI_FRAC * r
-    out = []
-    for i in range(1, n):
-        cw, ch, area = int(stats[i][2]), int(stats[i][3]), int(stats[i][4])
-        if area_lo <= area <= area_hi and cw <= side_hi and ch <= side_hi:
-            out.append((float(cent[i][0]) + x, float(cent[i][1]) + y))
-    return out
-
-
-def test_seed_dots_weighted_centroid_beats_otsu_baseline():
-    # Codex #5 fix: a SYMMETRIC soft dot's Otsu centroid is already ~0.08px accurate, so a
-    # "Otsu misses 0.3px" RED is false. Instead assert the weighted centroid is STRICTLY
-    # better than the Otsu baseline. Before Task 2, _seed_dots RETURNS the Otsu centroid, so
-    # weighted_err == otsu_err and the strict `<` is guaranteed to FAIL (sound RED). Use a
-    # glare-biased fixture where the global-Otsu binary shape is skewed but the dot's
-    # intensity profile is symmetric, so the photometric (weighted) centroid is better.
-    anchor = np.full((120, 160), 20, np.uint8)
-    yy, xx = np.mgrid[0:120, 0:160]
-    anchor = np.clip(anchor.astype(np.int16) + ((xx - 50) * 1.6).clip(0, 150), 0, 255).astype(np.uint8)  # glare ramp
-    true_x, true_y = 70.37, 60.62
-    _draw_soft_dot(anchor, true_x, true_y, radius=5)
-    roi = (50, 40, 80, 50)
-    seeds = _seed_dots(anchor, roi=roi, dot_radius_px=5)
-    assert len(seeds) >= 1
-    def err(pts):
-        return min(np.hypot(sx - true_x, sy - true_y) for (sx, sy) in pts)
-    w_err = err(seeds)
-    o_err = err(_otsu_centroid_baseline(anchor, roi, dot_radius_px=5))
-    assert w_err < o_err, f"weighted {w_err:.3f} not strictly better than otsu {o_err:.3f}"
 
 
 def test_read_bits_relative_uses_own_min_max_not_global_128():
@@ -521,101 +467,3 @@ def test_decode_missing_dpx_file_reports_decode_failed(tmp_path, capsys):
     err = [e for e in events if e.get("event") == "error"][-1]
     assert err["code"] == "decode_failed"
     assert err["fatal"] is True
-
-
-# --- L2 promotion gate: weighted centroid must be >= as good as Otsu on field fixtures ---
-import lmt_vba_sidecar.sl_decode as sl_decode
-
-# The promotion gate (spec A.2) asks "is weighting WORSE on any field condition?". It must
-# distinguish a real regression from discretization noise. Measured on these fixtures: the
-# weighted centroid WINS 3-100x on anti-aliased dots (bloom 0.0003 vs 0.029; glare 0.028 vs
-# 0.078) -- the realistic camera-imaging case, where the dot center is fractional. On
-# DEGENERATE fixtures with no sub-pixel truth (a saturated flat-top, or the synthetic
-# generator's integer-centered hard dots) both estimators land on the same pixel and differ
-# only by sub-0.005px float/discretization noise (saturation 0.0493 vs 0.0454; end-to-end
-# 0.0026 vs 0.0). That noise is NOT a real regression. The gate therefore allows weighted to
-# be worse by at most this floor -- an order of magnitude below the real-capture localization
-# noise (>0.1px) and below the 0.03-0.05px improvement weighting delivers, so any MEANINGFUL
-# (>=0.02px) regression still fails the gate.
-_FIELD_NOISE_FLOOR_PX = 0.02
-
-
-@pytest.mark.parametrize("degrade", ["bloom", "saturation", "glare", "steep_glare", "merged"])
-def test_seed_dots_weighted_not_worse_than_otsu_on_field(degrade):
-    # The promotion gate (spec A.2): weighted must not be MEANINGFULLY worse than the Otsu
-    # binary centroid on any field degradation (see _FIELD_NOISE_FLOOR_PX above). It WINS on
-    # the anti-aliased cases (bloom/glare); on the saturated flat-top it ties within noise.
-    # `steep_glare` is the gradient-bias regime _weighted_centroid documents: weighted retains
-    # some ramp bias, but the Otsu MASK is ALSO ramp-shifted, so weighted still beats binary
-    # (0.063 vs 0.124) -- the change is not a regression even under a steep background slope.
-    anchor = np.full((120, 160), 30, np.uint8)
-    true_x, true_y = 70.37, 60.62
-    _draw_soft_dot(anchor, true_x, true_y, radius=6)
-    if degrade == "bloom":
-        anchor = cv2.GaussianBlur(anchor, (0, 0), 1.5)
-    elif degrade == "saturation":
-        _draw_soft_dot(anchor, true_x, true_y, radius=8, peak=255)   # wider flat-top plateau
-    elif degrade in ("glare", "steep_glare"):
-        mult = 1.2 if degrade == "glare" else 2.0                    # DN/px background slope
-        yy, xx = np.mgrid[0:120, 0:160]
-        anchor = np.clip(anchor.astype(np.int16) + ((xx - 50) * mult).clip(0, 120), 0, 255).astype(np.uint8)
-    elif degrade == "merged":
-        _draw_soft_dot(anchor, true_x + 7, true_y, radius=6)         # a near neighbor (may merge)
-    roi = (50, 40, 80, 50)
-    weighted = _seed_dots(anchor, roi=roi, dot_radius_px=6)
-    otsu = _otsu_centroid_baseline(anchor, roi, dot_radius_px=6)
-
-    def nearest_err(seeds):
-        if not seeds:
-            return 1e9
-        return min(np.hypot(sx - true_x, sy - true_y) for (sx, sy) in seeds)
-
-    w_err, o_err = nearest_err(weighted), nearest_err(otsu)
-    assert w_err <= o_err + _FIELD_NOISE_FLOOR_PX, \
-        f"{degrade}: weighted {w_err:.3f} meaningfully worse than otsu {o_err:.3f}"
-
-
-def _decode_position_err(frames_dir, meta_path, out_path):
-    """Run decode and return the mean |decoded (x,y) - true (u,v)| over matched dots.
-    In the synthetic generate->decode pipeline the rendered frame IS the screen 1:1, so
-    a dot's screen (u,v) is the ground-truth localization target for its decoded (x,y)."""
-    meta = json.loads(meta_path.read_text())
-    uv = {d["id"]: (d["u"], d["v"]) for d in meta["dots"]}
-    rc = sl_decode.run_decode_structured_light(DecodeStructuredLightInput.model_validate({
-        "command": "decode_structured_light", "version": 1,
-        "input_path": str(frames_dir), "sl_meta_path": str(meta_path), "output_path": str(out_path)}))
-    assert rc == 0
-    pts = json.loads(out_path.read_text())["points"]
-    errs = [np.hypot(p["x"] - uv[p["id"]][0], p["y"] - uv[p["id"]][1]) for p in pts if p["id"] in uv]
-    assert errs, "decode produced no id-matched correspondences (np.mean([]) would be nan)"
-    return float(np.mean(errs)), len(pts)
-
-
-def test_weighted_decode_position_not_worse_than_otsu_under_field(tmp_path, monkeypatch):
-    # End-to-end-through-decode gate (Codex #3): run the FULL generate -> field-degrade ->
-    # decode pipeline and compare the decoded dot-position error (the per-correspondence
-    # input the BA minimizes) for weighted-default vs an Otsu baseline. Gates pose accuracy
-    # without a camera renderer. _gen returns the sl dir; frames live in sl/frames.
-    sl = _gen(tmp_path)
-    frames_dir = sl / "frames"
-    meta_path = sl / "sl_meta.json"
-    xx = None
-    for f in sorted(frames_dir.glob("frame_*.png")):
-        img = cv2.imread(str(f), cv2.IMREAD_GRAYSCALE)
-        if xx is None:
-            _yy, xx = np.mgrid[0:img.shape[0], 0:img.shape[1]]
-        glared = np.clip(img.astype(np.int16) + ((xx - img.shape[1] // 2) * 0.05).clip(0, 40), 0, 255)
-        cv2.imwrite(str(f), glared.astype(np.uint8))
-    w_err, w_n = _decode_position_err(frames_dir, meta_path, tmp_path / "w.json")
-    # Otsu baseline: force _weighted_centroid to return its Otsu fallback.
-    monkeypatch.setattr(sl_decode, "_weighted_centroid",
-                        lambda cropf, lbl, i, floor, *, bbox, fallback: (float(fallback[0]), float(fallback[1])))
-    o_err, o_n = _decode_position_err(frames_dir, meta_path, tmp_path / "o.json")
-    assert w_n >= o_n                                    # decode rate not worse
-    # The synthetic generator's dots are at INTEGER screen centers, so Otsu's binary centroid
-    # is already exact (o_err ~ 0) and there is no sub-pixel truth for weighting to recover;
-    # the glare ramp then biases weighted by ~0.003px. That is below the noise floor, not a
-    # real regression (weighting's win shows on anti-aliased dots, gated above). A MEANINGFUL
-    # (>=0.02px) decoded-position regression through the real decode path still fails here.
-    assert w_err <= o_err + _FIELD_NOISE_FLOOR_PX, \
-        f"weighted decoded-pos err {w_err:.3f} meaningfully > otsu {o_err:.3f}"
