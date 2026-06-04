@@ -302,3 +302,18 @@ def test_output_records_distortion_model(tmp_path):
     assert rc == 0
     intr = json.loads(out.read_text())
     assert intr["distortion_model"] in ("radial2", "full")
+
+
+def test_flat_wall_no_anchor_refused(tmp_path, capsys):
+    # _grid_meta(radius_mm=None) builds a FLAT (coplanar) wall; no crosscheck anchor
+    # -> the anti-absorption guard refuses (cannot separate screen pitch/1:1 from K).
+    meta, proj, cab, shape = _grid_meta(cols=3, rows=3, radius_mm=None, grid=3)
+    world = nominal_dot_positions_world(meta, cab, shape)
+    poses = _well_poses(_wall_center(meta, cab, shape))
+    paths = _write_corr(tmp_path, meta, world, poses, noise=0.0)
+    rc, _ = _run(tmp_path, meta, proj, paths)  # no crosscheck path
+    assert rc == 1
+    errs = [json.loads(l) for l in capsys.readouterr().out.splitlines()
+            if l.strip() and json.loads(l).get("event") == "error"]
+    assert errs[-1]["code"] == "observability_failed"
+    assert "anchor" in errs[-1]["message"].lower()

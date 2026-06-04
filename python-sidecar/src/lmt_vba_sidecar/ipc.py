@@ -143,6 +143,9 @@ class CalibrateStructuredLightInput(BaseModel):
     # reproj RMS gate (px). Looser than checkerboard's 0.5 — SL centroids are noisier.
     # Upper cap: beyond 5 px the fit is garbage and the quality gate is effectively disabled.
     max_rms_px: float = Field(default=1.5, gt=0.0, le=5.0)
+    # Optional independent intrinsics anchor (checkerboard intrinsics.json) for the
+    # anti-absorption cross-check. Without it, a coplanar (flat) wall is refused.
+    crosscheck_intrinsics_path: str | None = None
 
 
 class CalibrateInput(BaseModel):

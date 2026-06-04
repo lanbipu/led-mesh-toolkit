@@ -20,6 +20,7 @@ from lmt_vba_sidecar.ipc import (
     ResultData,
     ResultEvent,
     StructuredLightMeta,
+    WarningEvent,
 )
 from lmt_vba_sidecar.nominal import (
     nominal_cabinet_centers_model_frame,
@@ -28,8 +29,10 @@ from lmt_vba_sidecar.nominal import (
 from lmt_vba_sidecar.sl_reconstruct import validate_sl_provenance
 from lmt_vba_sidecar.calibrate import _atomic_write
 from lmt_vba_sidecar.intrinsics_solve import (
+    COPLANAR_RATIO_MIN,
     IntrinsicsRefused,
     MIN_DOTS_PER_POSE,
+    crosscheck_intrinsics,
     solve_sl_intrinsics,
 )
 
@@ -113,10 +116,26 @@ def run_calibrate_structured_light(cmd: CalibrateStructuredLightInput) -> int:
     # 6-10. coplanarity/coverage/diversity gates + K-solve + covariance gates, all
     #       in the shared pure helper (also used by reconstruct --intrinsics auto).
     write_event(ProgressEvent(event="progress", stage="bundle_adjustment", percent=0.7, message="solving intrinsics"))
+    anchor_K = anchor_dist = None
+    if cmd.crosscheck_intrinsics_path:
+        try:
+            anchor = json.loads(pathlib.Path(cmd.crosscheck_intrinsics_path).read_text())
+            anchor_K = np.array(anchor["K"], float)
+            anchor_dist = np.array(anchor.get("dist_coeffs", [0, 0, 0, 0, 0]), float)
+        except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+            return _err("invalid_input", f"crosscheck intrinsics load failed: {e}")
     try:
-        res = solve_sl_intrinsics(object_points, image_points, image_size, max_rms_px=cmd.max_rms_px)
+        res = solve_sl_intrinsics(object_points, image_points, image_size,
+                                  max_rms_px=cmd.max_rms_px,
+                                  allow_full_distortion=anchor_K is not None)
     except IntrinsicsRefused as e:
         return _err(e.code, e.message)
+    refusal = crosscheck_intrinsics(res, anchor_K=anchor_K, anchor_dist=anchor_dist)
+    if refusal is not None:
+        return _err(refusal.code, refusal.message)
+    if anchor_K is None and res.coplanar_ratio >= COPLANAR_RATIO_MIN:
+        write_event(WarningEvent(event="warning", code="no_intrinsics_anchor",
+            message="no independent intrinsics anchor; anisotropic pitch/1:1 absorption is unguarded"))
     K, dist, rms = res.K, res.dist, res.rms
     pp_std, foc_std = res.pp_stddev_px, res.focal_stddev_px
 
