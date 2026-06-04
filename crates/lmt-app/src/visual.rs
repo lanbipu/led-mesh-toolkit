@@ -891,6 +891,7 @@ pub fn run_plan_capture(
                 low_observation: c.low_observation,
                 bridged: c.bridged,
                 pass: c.pass,
+                fail_reason: c.fail_reason,
             })
             .collect(),
         unreachable_regions: out
@@ -1048,12 +1049,12 @@ mod tests {
                 CabinetCoverage {
                     col: 0, row: 0, p95_residual_mm: Some(1.2), n_views: 4,
                     total_observations: 64, reconstructable: true, low_observation: false,
-                    bridged: true, pass: true,
+                    bridged: true, pass: true, fail_reason: None,
                 },
                 CabinetCoverage {
                     col: 1, row: 0, p95_residual_mm: None, n_views: 1,
                     total_observations: 16, reconstructable: false, low_observation: false,
-                    bridged: false, pass: false,
+                    bridged: false, pass: false, fail_reason: Some("low_coverage".into()),
                 },
             ],
             unreachable_regions: vec![UnreachableRegion {

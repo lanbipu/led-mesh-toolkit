@@ -589,6 +589,10 @@ class CabinetCoverageData(BaseModel):
     low_observation: bool
     bridged: bool
     pass_: bool = Field(alias="pass")
+    # WHY a cabinet fails (observability diagnostic, not a gate): "low_coverage"
+    # (too few views/points or unbridged) vs "low_parallax" (count-reconstructable
+    # but p95 over target = degenerate baseline). None when the cabinet passes.
+    fail_reason: str | None = None
 
     model_config = {"populate_by_name": True, "serialize_by_alias": True}
 

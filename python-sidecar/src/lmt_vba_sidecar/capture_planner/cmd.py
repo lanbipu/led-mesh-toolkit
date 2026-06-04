@@ -91,7 +91,7 @@ def run_plan_capture(cmd: PlanCaptureInput) -> int:
             p95_residual_mm=(None if (p95 is None or math.isnan(p95)) else float(p95)),
             n_views=v["n_views"], total_observations=v["total_observations"],
             reconstructable=v["reconstructable"], low_observation=v["low_observation"],
-            bridged=v["bridged"], pass_=v["pass"],
+            bridged=v["bridged"], pass_=v["pass"], fail_reason=v["fail_reason"],
         ))
 
     unreachable = []

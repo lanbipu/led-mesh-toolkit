@@ -116,6 +116,18 @@ def score_screen(geom: ScreenGeometry, cams: list[Camera], *, pixel_sigma=0.3,
         else:
             p95 = float("nan")
             median = float("nan")
+        passed = bool(cov.reconstructable and bridged
+                      and (p95 <= target_p95_residual_mm))
+        # Observability diagnostic (no new gate): WHY did it fail?
+        #  - low_coverage: not enough views/points (or unbridged) to even attempt.
+        #  - low_parallax: count-reconstructable + bridged, but p95 over target —
+        #    degenerate (near-duplicate / fronto-parallel) baseline, not coverage.
+        if passed:
+            fail_reason = None
+        elif not (cov.reconstructable and bridged):
+            fail_reason = "low_coverage"
+        else:
+            fail_reason = "low_parallax"
         report[key] = {
             "p95_mm": p95,
             "median_mm": median,
@@ -124,7 +136,7 @@ def score_screen(geom: ScreenGeometry, cams: list[Camera], *, pixel_sigma=0.3,
             "reconstructable": cov.reconstructable,
             "low_observation": cov.low_observation,
             "bridged": bridged,
-            "pass": bool(cov.reconstructable and bridged
-                         and (p95 <= target_p95_residual_mm)),
+            "pass": passed,
+            "fail_reason": fail_reason,
         }
     return report

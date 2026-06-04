@@ -433,6 +433,8 @@ pub struct CabinetCoverageData {
     // across the `pydantic>=2.0,<3.0` pin range.
     #[serde(alias = "pass_")]
     pub pass: bool,
+    #[serde(default)]
+    pub fail_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

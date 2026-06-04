@@ -692,6 +692,11 @@ pub struct CabinetCoverage {
     pub low_observation: bool,
     pub bridged: bool,
     pub pass: bool,
+    /// WHY a cabinet fails (observability diagnostic, not a gate): "low_coverage"
+    /// (too few views/points or unbridged) vs "low_parallax" (count-reconstructable but
+    /// p95 over target = degenerate baseline). None when the cabinet passes.
+    #[serde(default)]
+    pub fail_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
