@@ -499,9 +499,10 @@ pub enum VisualCmd {
         /// RNG 种子。
         #[arg(long, default_value_t = 0)]
         seed: u32,
-        /// 每箱体最少覆盖视角数(精准档传 3);默认 2,与 reconstruct 观测门一致。
-        #[arg(long = "min-views", default_value_t = 2)]
-        min_views: u32,
+        /// 每箱体最少覆盖视角数(精准档传 3)。省略 = 用 sidecar 默认(gates.MIN_VIEWS,
+        /// 与 reconstruct 观测门同源)——不在 CLI 侧硬编码默认值,避免与 gate 漂移。
+        #[arg(long = "min-views")]
+        min_views: Option<u32>,
     },
     /// 采集指导可视化:渲染自包含 HTML 指导卡(俯视机位图 + 正视覆盖热力图 + 机位清单)。
     /// human 模式 stdout 出 HTML(`... > card.html`);--json 包 `{html_content}`。side_effect: read_only

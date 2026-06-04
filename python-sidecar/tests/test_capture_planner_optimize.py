@@ -43,8 +43,12 @@ def test_score_deficit_scales_with_min_views():
     # `pass` already respects min_views via coverage_report's reconstructable gate (Task 2),
     # so only the deficit is parameterized here. (Include "pass" so failing is computable.)
     report = {(0, 0): {"n_views": 2, "pass": True}, (1, 0): {"n_views": 4, "pass": True}}
-    _f2, deficit2 = _score(report, 2, min_views=2)
-    _f3, deficit3 = _score(report, 2, min_views=3)
+    fails2, deficit2 = _score(report, 2, min_views=2)
+    fails3, deficit3 = _score(report, 2, min_views=3)
+    # `failing` is PASS-based and must NOT change with min_views (both cabinets pass=True),
+    # else the optimizer would stop chasing p95 once view-counts are met (the forbidden
+    # view-count-based `failing`). Only the deficit tie-break scales.
+    assert fails2 == 0 and fails3 == 0
     assert deficit2 == 0            # both cabinets meet 2 views
     assert deficit3 == 1            # cabinet (0,0) is 1 view short of 3
 

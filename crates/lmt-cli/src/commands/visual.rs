@@ -817,7 +817,7 @@ fn plan_capture(
     target_mm: f64,
     trials: u32,
     seed: u32,
-    min_views: u32,
+    min_views: Option<u32>,
 ) -> i32 {
     // plan-capture is write_safe (computes a plan, writes nothing) — no gate.
     match lmt_app::visual::run_plan_capture(

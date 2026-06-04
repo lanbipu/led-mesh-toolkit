@@ -99,11 +99,15 @@ def optimize(geom: ScreenGeometry, K, image_size, shell: Shell, *, seed_cams=Non
         report, cur = best_report, best
 
     if report is None:
+        # The no-camera fallback report MUST carry the same key schema score_screen
+        # produces (cmd.py reads every field unconditionally, incl. fail_reason) — a
+        # zero-view cabinet is low_coverage.
         report = score_screen(geom, cams, **score_kwargs) if cams else {
             (c.col, c.row): {"pass": False, "reconstructable": False,
                              "low_observation": False, "bridged": False,
                              "p95_mm": float("nan"), "median_mm": float("nan"),
-                             "n_views": 0, "total_observations": 0}
+                             "n_views": 0, "total_observations": 0,
+                             "fail_reason": "low_coverage"}
             for c in geom.cabinets
         }
     # Final per-(cam, cabinet) visibility for the chosen cameras, so callers can

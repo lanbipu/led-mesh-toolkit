@@ -556,9 +556,10 @@ class PlanCaptureInput(BaseModel):
     nominal_deviation_mm: float = 2.0
     focal_err_frac: float = 0.0
     incidence_max_deg: float = 60.0
-    # Precision capture profile can demand >=3 covering views/cabinet to be
-    # reconstructable (default mirrors gates.MIN_VIEWS so the gate-mirror test stays green).
-    min_views: int = 2
+    # Precision capture profile can demand >=3 covering views/cabinet to be reconstructable.
+    # Floor is 2 (reconstruct's observation gate — a single view can never triangulate). The
+    # default literal 2 is pinned to gates.MIN_VIEWS by a mirror test in test_capture_planner_gates.
+    min_views: int = Field(default=2, ge=2)
     sample_grid: tuple[int, int] = (4, 4)
     n_fan: int = 5
     max_stations: int = 24
@@ -591,8 +592,9 @@ class CabinetCoverageData(BaseModel):
     pass_: bool = Field(alias="pass")
     # WHY a cabinet fails (observability diagnostic, not a gate): "low_coverage"
     # (too few views/points or unbridged) vs "low_parallax" (count-reconstructable
-    # but p95 over target = degenerate baseline). None when the cabinet passes.
-    fail_reason: str | None = None
+    # but p95 over target = degenerate baseline). None when the cabinet passes. A
+    # Literal so a producer typo is a validation error, not a silent wrong reason.
+    fail_reason: Literal["low_coverage", "low_parallax"] | None = None
 
     model_config = {"populate_by_name": True, "serialize_by_alias": True}
 

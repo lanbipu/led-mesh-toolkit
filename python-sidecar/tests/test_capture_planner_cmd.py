@@ -43,6 +43,19 @@ def test_run_plan_capture_emits_result_event(capsys):
     assert isinstance(cov["p95_residual_mm"], (int, float))
 
 
+def test_run_plan_capture_zero_budget_is_all_unreachable_not_crash(capsys):
+    # Regression: max_stations=0 -> optimize() empty-cams fallback report. cmd.py reads
+    # fail_reason from every cabinet, so the fallback dict MUST carry it (was a KeyError crash).
+    inp = _flat_input().model_copy(update={"max_stations": 0})
+    rc = run_plan_capture(inp)
+    assert rc == 0
+    ev = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert ev["event"] == "result"
+    cov = ev["data"]["coverage"]
+    assert len(cov) == 4
+    assert all((not c["pass"]) and c["fail_reason"] == "low_coverage" for c in cov)
+
+
 def test_run_plan_capture_curved_radius_too_small_is_invalid_input(capsys):
     inp = _flat_input()
     inp = inp.model_copy(update={

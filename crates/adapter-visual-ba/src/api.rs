@@ -809,13 +809,14 @@ pub struct PlanCaptureArgs {
     pub target_p95_residual_mm: f64,
     pub trials: u32,
     pub seed: u32,
-    pub min_views: u32,
+    /// None = let the sidecar use its default (gates.MIN_VIEWS); Some = the precision override.
+    pub min_views: Option<u32>,
     pub progress_tx: Option<mpsc::Sender<Event>>,
     pub cancel: Option<oneshot::Receiver<()>>,
 }
 
 pub async fn plan_capture(args: PlanCaptureArgs) -> VbaResult<PlanCaptureResultData> {
-    let payload = json!({
+    let mut payload = json!({
         "command": "plan_capture",
         "version": 1,
         "project": &args.project,
@@ -833,8 +834,12 @@ pub async fn plan_capture(args: PlanCaptureArgs) -> VbaResult<PlanCaptureResultD
         "target_p95_residual_mm": args.target_p95_residual_mm,
         "trials": args.trials,
         "seed": args.seed,
-        "min_views": args.min_views,
     });
+    // Send min_views only when overridden — omitting the key (not sending null, which would
+    // fail PlanCaptureInput's int validator) lets the sidecar fill gates.MIN_VIEWS.
+    if let Some(mv) = args.min_views {
+        payload["min_views"] = mv.into();
+    }
 
     let value = run_sidecar(SidecarRequest {
         subcommand: "plan_capture".into(),
