@@ -825,6 +825,7 @@ pub fn run_plan_capture(
     target_p95_residual_mm: f64,
     trials: u32,
     seed: u32,
+    min_views: u32,
 ) -> LmtResult<lmt_shared::dto::CapturePlan> {
     use lmt_shared::dto::{CabinetCoverage, CapturePlan, CaptureStation, UnreachableRegion};
 
@@ -857,6 +858,7 @@ pub fn run_plan_capture(
         target_p95_residual_mm,
         trials,
         seed,
+        min_views,
         progress_tx: None,
         cancel: None,
     };
@@ -977,6 +979,7 @@ pub fn run_capture_card(
     let plan = run_plan_capture(
         project_path, screen_id, image_size, hfov_deg, vfov_deg, standoff, height,
         target_p95_residual_mm, trials, seed,
+        2, // capture-card uses the default min_views (gates.MIN_VIEWS); --min-views is plan-capture-only
     )?;
     let cfg = load_project_yaml_from_path(project_path)?;
     let screen_cfg = load_screen(&cfg, screen_id)?;

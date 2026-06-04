@@ -1460,6 +1460,50 @@ fn gp_stderr_env(out: &std::process::Output) -> Value {
         .expect("stderr must be a JSON envelope")
 }
 
+/// L3: the --min-views flag is registered + documented on plan-capture (no sidecar needed).
+#[test]
+fn plan_capture_help_lists_min_views() {
+    let assert = lmt().args(["visual", "plan-capture", "--help"]).assert().success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(
+        stdout.contains("--min-views"),
+        "plan-capture --help must list --min-views:\n{stdout}"
+    );
+}
+
+/// L3 end-to-end (real sidecar): `--min-views 3` is accepted and threads to the planner;
+/// every reconstructable cabinet in the returned plan honors the raised view requirement.
+#[test]
+#[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary/wrapper"]
+fn plan_capture_min_views_threads_end_to_end() {
+    let sidecar = match gp_sidecar() {
+        Some(s) => s,
+        None => { eprintln!("skip: LMT_VBA_SIDECAR_PATH unset"); return; }
+    };
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 2, 2);
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &sidecar)
+        .args([
+            "--json", "visual", "plan-capture", proj.to_str().unwrap(), "MAIN",
+            "--image-size", "1920x1080", "--hfov-deg", "60", "--standoff", "2000..4000",
+            "--height", "400..2200", "--trials", "6", "--min-views", "3",
+        ])
+        .assert()
+        .success();
+    let env = gp_stdout_env(assert.get_output());
+    assert_eq!(env["ok"], true);
+    for c in env["data"]["coverage"].as_array().unwrap() {
+        if c["reconstructable"] == true {
+            assert!(
+                c["n_views"].as_u64().unwrap() >= 3,
+                "min_views=3 not honored for a reconstructable cabinet: {c}"
+            );
+        }
+    }
+}
+
 /// Happy uniform path: pattern_meta.json is schema v2 with per-cabinet geometry;
 /// a 540px square cabinet reproduces the legacy 9x9 board.
 #[test]

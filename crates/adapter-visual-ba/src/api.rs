@@ -795,6 +795,7 @@ pub struct PlanCaptureArgs {
     pub target_p95_residual_mm: f64,
     pub trials: u32,
     pub seed: u32,
+    pub min_views: u32,
     pub progress_tx: Option<mpsc::Sender<Event>>,
     pub cancel: Option<oneshot::Receiver<()>>,
 }
@@ -818,6 +819,7 @@ pub async fn plan_capture(args: PlanCaptureArgs) -> VbaResult<PlanCaptureResultD
         "target_p95_residual_mm": args.target_p95_residual_mm,
         "trials": args.trials,
         "seed": args.seed,
+        "min_views": args.min_views,
     });
 
     let value = run_sidecar(SidecarRequest {

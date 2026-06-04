@@ -61,6 +61,7 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             target_mm,
             trials,
             seed,
+            min_views,
         } => plan_capture(
             mode,
             &project_path,
@@ -73,6 +74,7 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             target_mm,
             trials,
             seed,
+            min_views,
         ),
         VisualCmd::CaptureCard {
             project_path,
@@ -811,6 +813,7 @@ fn plan_capture(
     target_mm: f64,
     trials: u32,
     seed: u32,
+    min_views: u32,
 ) -> i32 {
     // plan-capture is write_safe (computes a plan, writes nothing) — no gate.
     match lmt_app::visual::run_plan_capture(
@@ -824,6 +827,7 @@ fn plan_capture(
         target_mm,
         trials,
         seed,
+        min_views,
     ) {
         Ok(p) => output::ok(mode, p, |plan| {
             let _ = writeln!(
