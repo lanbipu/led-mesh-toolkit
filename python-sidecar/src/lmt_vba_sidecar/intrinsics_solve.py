@@ -18,6 +18,13 @@ PP_STDDEV_MAX_PX = 3.0
 FOCAL_STDDEV_MAX_FRAC = 0.005
 MIN_DOTS_PER_POSE = 4
 
+# Anti-absorption cross-check tolerances (spec A.1.3 / P6). Compare auto-K to an
+# independent anchor on THREE axes so each screen pitch/1:1 error class is caught:
+FOCAL_CROSSCHECK_MAX_FRAC = 0.02      # |fx - anchor_fx| / anchor_fx  (class a: isotropic scale)
+ASPECT_CROSSCHECK_MAX = 0.01          # |fx/fy - anchor_fx/anchor_fy| (class b: anisotropic)
+DISTORTION_CROSSCHECK_MAX_PX = 1.5    # radial-displacement gap at the corner (class c: smooth remap)
+_CORNER_R_NORM = 0.6                  # representative normalized radius (wide-lens corner-ish)
+
 
 class IntrinsicsRefused(Exception):
     def __init__(self, code: str, message: str):
@@ -134,3 +141,43 @@ def solve_sl_intrinsics(object_points, image_points, image_size, *, max_rms_px: 
     return IntrinsicsResult(K=K, dist=dist, rms=float(rms), focal_stddev_px=foc_std,
                             pp_stddev_px=pp_std, distortion_model=model,
                             coplanar_ratio=ratio, rvecs=list(rvecs))
+
+
+def _radial_disp_px(dist, fx) -> float:
+    """Radial distortion displacement (px) at the representative corner radius. The
+    smooth-remap class lands in k1,k2,k3 and does NOT move fx/aspect, so this term is
+    what catches it (spec A.1.3 '畸变量级' / Codex critical #1)."""
+    d = np.asarray(dist, float).flatten()
+    k1 = d[0] if len(d) > 0 else 0.0
+    k2 = d[1] if len(d) > 1 else 0.0
+    k3 = d[4] if len(d) > 4 else 0.0
+    r = _CORNER_R_NORM
+    return abs(fx) * abs(r * (k1 * r**2 + k2 * r**4 + k3 * r**6))
+
+
+def crosscheck_intrinsics(res: IntrinsicsResult, *, anchor_K, anchor_dist=None) -> IntrinsicsRefused | None:
+    """Anti-absorption guard (spec P6/A.1.3). Compares THREE things vs an independent
+    anchor — focal (class a), fx/fy aspect (class b), and distortion magnitude (class c).
+    Returns IntrinsicsRefused to REFUSE, or None to proceed. A None with no anchor on a
+    non-coplanar target means the caller SHOULD emit WarningEvent(code='no_intrinsics_anchor')."""
+    fx, fy = float(res.K[0, 0]), float(res.K[1, 1])
+    if anchor_K is not None:
+        afx, afy = float(anchor_K[0, 0]), float(anchor_K[1, 1])
+        focal_dev = abs(fx - afx) / afx if afx else 1.0
+        aspect_dev = abs((fx / fy) - (afx / afy)) if (fy and afy) else 1.0
+        a_dist = np.zeros(5) if anchor_dist is None else np.asarray(anchor_dist, float)
+        disp_dev_px = abs(_radial_disp_px(res.dist, fx) - _radial_disp_px(a_dist, afx))
+        if focal_dev > FOCAL_CROSSCHECK_MAX_FRAC or aspect_dev > ASPECT_CROSSCHECK_MAX \
+                or disp_dev_px > DISTORTION_CROSSCHECK_MAX_PX:
+            return IntrinsicsRefused(
+                "observability_failed",
+                f"auto intrinsics deviate from anchor (focal {focal_dev*100:.1f}%, "
+                f"aspect {aspect_dev:.3f}, distortion {disp_dev_px:.2f}px) — "
+                "suspected screen pitch/1:1 absorbed into K")
+        return None
+    if res.coplanar_ratio < COPLANAR_RATIO_MIN:
+        return IntrinsicsRefused(
+            "observability_failed",
+            "flat wall + no independent intrinsics anchor; cannot separate screen "
+            "pitch/1:1 from intrinsics — pass an anchor via --intrinsics-crosscheck")
+    return None

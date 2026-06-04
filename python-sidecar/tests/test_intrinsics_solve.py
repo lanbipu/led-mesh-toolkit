@@ -77,3 +77,51 @@ def test_solver_falls_back_to_radial2_on_distortion_free_data():
     obj, img = _well_object_image_points(noise=0.0)
     res = solve_sl_intrinsics(obj, img, IMG, max_rms_px=1.5, allow_full_distortion=True)
     assert res.distortion_model == "radial2"
+
+
+# --- Task 3: anti-absorption cross-check ---
+from lmt_vba_sidecar.intrinsics_solve import crosscheck_intrinsics, IntrinsicsResult
+
+
+def _res(K, dist=None, coplanar=0.3):
+    return IntrinsicsResult(K=np.asarray(K, float),
+                            dist=np.zeros(5) if dist is None else np.asarray(dist, float),
+                            rms=0.2, focal_stddev_px=(1.0, 1.0), pp_stddev_px=(0.5, 0.5),
+                            distortion_model="radial2", coplanar_ratio=coplanar, rvecs=[])
+
+
+ANCHOR_K = np.array([[3000.0, 0, 2000.0], [0, 3000.0, 1500.0], [0, 0, 1.0]])
+
+
+def test_crosscheck_refuses_when_anchor_disagrees_on_aspect():
+    # Anisotropic absorption (class b): fx/fy ratio drifted ~2% vs a square-pixel anchor.
+    res = _res([[3060.0, 0, 2000.0], [0, 3000.0, 1500.0], [0, 0, 1]])
+    refusal = crosscheck_intrinsics(res, anchor_K=ANCHOR_K, anchor_dist=np.zeros(5))
+    assert refusal is not None and refusal.code == "observability_failed"
+    assert "aspect" in refusal.message.lower() or "anchor" in refusal.message.lower()
+
+
+def test_crosscheck_refuses_when_anchor_disagrees_on_distortion():
+    # Smooth nonlinear remap (class c): focal & aspect UNCHANGED, but distortion drifted.
+    # A focal+aspect-only check would MISS this; the distortion-magnitude term catches it.
+    res = _res(ANCHOR_K, dist=[-0.15, 0.05, 0.0, 0.0, 0.03])   # nonzero k1,k2,k3 vs anchor 0
+    refusal = crosscheck_intrinsics(res, anchor_K=ANCHOR_K, anchor_dist=np.zeros(5))
+    assert refusal is not None and refusal.code == "observability_failed"
+    assert "distortion" in refusal.message.lower()
+
+
+def test_crosscheck_passes_when_anchor_agrees():
+    res = _res([[3005.0, 0, 2000.0], [0, 3004.0, 1500.0], [0, 0, 1]], dist=[-0.12, 0.04, 0, 0, 0.02])
+    assert crosscheck_intrinsics(res, anchor_K=ANCHOR_K, anchor_dist=[-0.12, 0.04, 0, 0, 0.02]) is None
+
+
+def test_crosscheck_refuses_flat_wall_without_anchor():
+    res = _res(np.eye(3), coplanar=1e-5)  # coplanar (flat wall), no anchor
+    refusal = crosscheck_intrinsics(res, anchor_K=None, anchor_dist=None)
+    assert refusal is not None and refusal.code == "observability_failed"
+    assert "flat wall" in refusal.message.lower() or "anchor" in refusal.message.lower()
+
+
+def test_crosscheck_warns_curved_wall_without_anchor():
+    res = _res(np.eye(3), coplanar=0.3)   # non-coplanar (curved), no anchor
+    assert crosscheck_intrinsics(res, anchor_K=None, anchor_dist=None) is None  # caller warns
