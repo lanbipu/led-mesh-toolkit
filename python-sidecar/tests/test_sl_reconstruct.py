@@ -43,6 +43,7 @@ def test_provenance_rejects_screen_id_not_matching_project():
 
 import json, hashlib, pathlib
 import numpy as np
+import pytest
 from lmt_vba_sidecar.ipc import GenerateStructuredLightInput, ReconstructStructuredLightInput
 from lmt_vba_sidecar.structured_light import run_generate_structured_light
 from lmt_vba_sidecar.sl_geometry import sl_local_mm
@@ -291,3 +292,71 @@ def test_intrinsics_auto_self_calibrates(tmp_path, capsys):
     by_id = {c["cabinet_id"]: c for c in json.loads(report.read_text())["cabinet_poses"]}
     rel = np.array(by_id["V001_R000"]["position_mm"]) - np.array(by_id["V000_R000"]["position_mm"])
     assert np.linalg.norm(rel - np.array([500.0, 0.0, 0.0])) < 8.0  # self-cal noisier than given K
+
+
+def _warp_local(pl, kind):
+    """Inject a screen-side pitch/1:1 error into a centered-origin local-mm point."""
+    if kind == "anisotropic":
+        return pl * np.array([1.03, 1.0, 1.0])              # 3% x-stretch -> aspect drift > 1%
+    if kind == "remap":                                     # smooth radial barrel: +2% at the edge
+        r = float(np.hypot(pl[0], pl[1]))
+        r_max = 353.0                                        # ~half-diagonal of a 500mm cabinet
+        s = 1.0 + 0.02 * (r / r_max) ** 2
+        return pl * np.array([s, s, 1.0])
+    raise ValueError(kind)
+
+
+@pytest.mark.parametrize("kind", ["anisotropic", "remap"])
+def test_pitch_absorption_guard(tmp_path, kind):
+    """P6 red line: a K-absorbable screen-pitch error projected into a FLAT-wall capture is
+    caught by the cross-check when an anchor is supplied (REFUSE, no file). A control run
+    (no injection, same anchor) passes — proving the refusal is caused by the error, not the
+    anchor. (Isotropic scale -> nominal_misfit guard, tested in Plan 3.)"""
+    meta_path = _gen_two_cabinet_meta(tmp_path)             # FLAT wall
+    meta = json.loads(meta_path.read_text())
+    _, K = _write_intrinsics(tmp_path)
+    anchor = _write_anchor(tmp_path, K)                     # K_TRUE, dist=0
+    rect_by_cr = {(c["col"], c["row"]): c["input_rect_px"] for c in meta["cabinets"]}
+    pitch_by_cr = {(c["col"], c["row"]): c["pixel_pitch_mm"] for c in meta["cabinets"]}
+    cab_by_id = {d["id"]: tuple(d["cabinet"]) for d in meta["dots"]}
+    cab_world_t = {(0, 0): np.zeros(3), (1, 0): np.array([500.0, 0.0, 0.0])}
+    poses = [look_at_pose(np.array([px, py, -1800.0]), np.array([250.0, 0.0, 0.0]))
+             for (px, py) in [(-700, -300), (-300, 300), (300, -300), (700, 300), (0, 500), (0, -500)]]
+
+    def _corr(inject):
+        paths = []
+        sha = hashlib.sha256(meta_path.read_bytes()).hexdigest()
+        for vi, (R, t) in enumerate(poses):
+            pts = []
+            for d in meta["dots"]:
+                cr = cab_by_id[d["id"]]
+                pl = sl_local_mm(tuple(rect_by_cr[cr]), d["u"], d["v"], pitch_by_cr[cr][0], pitch_by_cr[cr][1])
+                if inject:
+                    pl = _warp_local(pl, kind)
+                p = project_point(K, R, t, pl + cab_world_t[cr])     # noise-free
+                pts.append({"id": d["id"], "u": d["u"], "v": d["v"], "x": float(p[0]), "y": float(p[1])})
+            cp = tmp_path / f"corr_{inject}_{vi}.json"
+            cp.write_text(json.dumps({"schema_version": 1, "screen_id": "MAIN", "sl_meta_sha256": sha,
+                "screen_resolution": meta["screen_resolution"], "camera_image_size": [4000, 3000],
+                "source_input": f"/cap/{inject}{vi}.mp4", "points": pts}))
+            paths.append(str(cp))
+        return paths
+
+    base = {"command": "reconstruct_structured_light", "version": 1,
+            "project": {"screen_id": "MAIN", "cabinet_array": {"cols": 2, "rows": 1,
+                        "absent_cells": [], "cabinet_size_mm": [500, 500]}},   # default flat
+            "sl_meta_path": str(meta_path), "intrinsics_path": "auto",
+            "crosscheck_intrinsics_path": str(anchor)}
+
+    # GUARD ON, error injected -> the absorbed deviation trips the cross-check -> refuse, no file.
+    rep_on = tmp_path / "on.json"
+    cmd_on = ReconstructStructuredLightInput.model_validate(
+        {**base, "correspondence_paths": _corr(inject=True), "pose_report_path": str(rep_on)})
+    assert run_reconstruct_structured_light(cmd_on) == 1
+    assert not rep_on.exists()                              # no silent wrong file
+
+    # CONTROL, no injection, same anchor -> self-cal ~ anchor -> passes (refusal was error-caused).
+    rep_ctl = tmp_path / "ctl.json"
+    cmd_ctl = ReconstructStructuredLightInput.model_validate(
+        {**base, "correspondence_paths": _corr(inject=False), "pose_report_path": str(rep_ctl)})
+    assert run_reconstruct_structured_light(cmd_ctl) == 0
