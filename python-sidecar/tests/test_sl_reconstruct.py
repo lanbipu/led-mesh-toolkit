@@ -416,3 +416,61 @@ def test_self_calibrate_inline_curved_no_anchor_emits_warning(capsys):
     events = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
     assert any(e.get("event") == "warning" and e.get("code") == "no_intrinsics_anchor"
                for e in events)
+
+
+def _reconstruct_two_cabinet_at_scale(tmp_path, scale):
+    """Reconstruct the flat 2-cabinet wall with all p_local scaled by `scale` — a GLOBAL
+    isotropic pitch error that rigid Procrustes to nominal cannot absorb (P5 class)."""
+    meta_path = _gen_two_cabinet_meta(tmp_path)
+    meta = json.loads(meta_path.read_text())
+    intr_path, K = _write_intrinsics(tmp_path)
+    rect_by_cr = {(c["col"], c["row"]): c["input_rect_px"] for c in meta["cabinets"]}
+    pitch_by_cr = {(c["col"], c["row"]): c["pixel_pitch_mm"] for c in meta["cabinets"]}
+    cab_by_id = {d["id"]: tuple(d["cabinet"]) for d in meta["dots"]}
+    cab_world_t = {(0, 0): np.zeros(3), (1, 0): np.array([500.0, 0.0, 0.0])}
+    truth = {}
+    for d in meta["dots"]:
+        cr = cab_by_id[d["id"]]
+        pl = sl_local_mm(tuple(rect_by_cr[cr]), d["u"], d["v"], pitch_by_cr[cr][0], pitch_by_cr[cr][1])
+        truth[d["id"]] = pl * scale + cab_world_t[cr]
+    sha = hashlib.sha256(meta_path.read_bytes()).hexdigest()
+    poses = [look_at_pose(np.array([px, 0.0, -3500.0]), np.array([250.0, 0.0, 0.0]))
+             for px in (-1200.0, -400.0, 400.0, 1200.0)]
+    rng = np.random.default_rng(0)
+    corr_paths = []
+    for vi, (R, t) in enumerate(poses):
+        pts = [{"id": d["id"], "u": d["u"], "v": d["v"],
+                **dict(zip(("x", "y"), (project_point(K, R, t, truth[d["id"]]) + rng.normal(0, 0.1, 2)).tolist()))}
+               for d in meta["dots"]]
+        cp = tmp_path / f"corr_{vi}.json"
+        cp.write_text(json.dumps({"schema_version": 1, "screen_id": "MAIN", "sl_meta_sha256": sha,
+            "screen_resolution": meta["screen_resolution"], "camera_image_size": [4000, 3000],
+            "source_input": f"/cap/p{vi}.mp4", "points": pts}))
+        corr_paths.append(str(cp))
+    cmd = ReconstructStructuredLightInput.model_validate({
+        "command": "reconstruct_structured_light", "version": 1,
+        "project": {"screen_id": "MAIN", "cabinet_array": {"cols": 2, "rows": 1,
+                    "absent_cells": [], "cabinet_size_mm": [500, 500]}},
+        "correspondence_paths": corr_paths, "sl_meta_path": str(meta_path),
+        "intrinsics_path": str(intr_path), "pose_report_path": str(tmp_path / "rep.json")})
+    assert run_reconstruct_structured_light(cmd) == 0
+
+
+def _warn_codes(capsys):
+    return [json.loads(l)["code"] for l in capsys.readouterr().out.splitlines()
+            if l.strip() and json.loads(l).get("event") == "warning"]
+
+
+def test_nominal_misfit_warns_on_global_scale(tmp_path, capsys):
+    # A GLOBAL ISOTROPIC pitch scale (the non-absorbable class, P5): rigid Procrustes to
+    # nominal cannot absorb it, so the align residual is large -> nominal_misfit warning.
+    # Reconstruction still completes (it is a warning, not a refusal). 2% scale ~ 4.9mm > 3.0.
+    _reconstruct_two_cabinet_at_scale(tmp_path, scale=1.02)
+    assert "nominal_misfit" in _warn_codes(capsys)
+
+
+def test_no_nominal_misfit_on_clean_reconstruction(tmp_path, capsys):
+    # Negative control: a faithful (scale=1.0) reconstruction aligns to nominal at sub-mm
+    # (~0.18mm), so it must NOT spuriously emit nominal_misfit.
+    _reconstruct_two_cabinet_at_scale(tmp_path, scale=1.0)
+    assert "nominal_misfit" not in _warn_codes(capsys)
