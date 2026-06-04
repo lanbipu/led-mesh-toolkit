@@ -49,7 +49,9 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             method,
             seed_matrix,
         } => eval(mode, &dataset, &method, seed_matrix),
-        VisualCmd::CompareKnown { report, known } => compare_known(mode, &report, &known),
+        VisualCmd::CompareKnown { report, known, max_size_mm, max_dist_mm, max_angle_deg } => {
+            compare_known(mode, &report, &known, max_size_mm, max_dist_mm, max_angle_deg)
+        }
         VisualCmd::PlanCapture {
             project_path,
             screen_id,
@@ -784,9 +786,11 @@ fn eval(mode: Mode, dataset: &str, method: &str, seed_matrix: Vec<i64>) -> i32 {
 // compare_known
 // ---------------------------------------------------------------------------
 
-fn compare_known(mode: Mode, report: &str, known: &str) -> i32 {
+fn compare_known(mode: Mode, report: &str, known: &str, max_size_mm: Option<f64>,
+                 max_dist_mm: Option<f64>, max_angle_deg: Option<f64>) -> i32 {
     // compare-known is write_safe (reads two JSON files, writes nothing) — no gate.
-    match lmt_app::visual::run_compare_known(Path::new(report), Path::new(known)) {
+    match lmt_app::visual::run_compare_known(Path::new(report), Path::new(known),
+                                             max_size_mm, max_dist_mm, max_angle_deg) {
         Ok(r) => output::ok(mode, r, |p| {
             let _ = writeln!(
                 std::io::stdout(),

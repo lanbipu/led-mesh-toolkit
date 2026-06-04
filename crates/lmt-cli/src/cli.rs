@@ -458,6 +458,15 @@ pub enum VisualCmd {
         report: String,
         /// known_geometry.json 路径(用户填的真值)。
         known: String,
+        /// size 误差阈值(mm),覆盖默认 2.0。
+        #[arg(long = "max-size-mm")]
+        max_size_mm: Option<f64>,
+        /// 间距误差阈值(mm),覆盖默认 3.0。
+        #[arg(long = "max-dist-mm")]
+        max_dist_mm: Option<f64>,
+        /// 夹角误差阈值(deg),覆盖默认 0.3。
+        #[arg(long = "max-angle-deg")]
+        max_angle_deg: Option<f64>,
     },
     /// 采集指导:几何 + 内参 → 推荐机位 plan(逐箱体覆盖/残差)。side_effect: write_safe
     #[command(name = "plan-capture")]

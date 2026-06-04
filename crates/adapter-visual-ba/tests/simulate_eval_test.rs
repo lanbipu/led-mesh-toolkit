@@ -198,6 +198,9 @@ async fn compare_known_roundtrip() {
     let res = compare_known(CompareKnownArgs {
         report_path: report_path.to_str().unwrap().to_string(),
         known_path: known_path.to_str().unwrap().to_string(),
+        max_size_mm: None,
+        max_dist_mm: None,
+        max_angle_deg: None,
         progress_tx: None,
         cancel: None,
     })

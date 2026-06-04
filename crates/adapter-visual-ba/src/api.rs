@@ -755,16 +755,30 @@ pub async fn eval(args: EvalArgs) -> VbaResult<EvalResultData> {
 pub struct CompareKnownArgs {
     pub report_path: String,
     pub known_path: String,
+    /// Optional acceptance-threshold overrides. Mapped to the sidecar's
+    /// DEFAULT_THRESHOLDS keys (size_mm / distance_mm / angle_deg); only the
+    /// provided ones are sent, so omitted ones keep the Python defaults.
+    pub max_size_mm: Option<f64>,
+    pub max_dist_mm: Option<f64>,
+    pub max_angle_deg: Option<f64>,
     pub progress_tx: Option<mpsc::Sender<Event>>,
     pub cancel: Option<oneshot::Receiver<()>>,
 }
 
 pub async fn compare_known(args: CompareKnownArgs) -> VbaResult<CompareKnownResultData> {
+    // Build the optional thresholds map: CLI --max-* flags -> sidecar threshold keys.
+    // Empty -> null = "use DEFAULT_THRESHOLDS" (the existing Python contract).
+    let mut thresholds = serde_json::Map::new();
+    if let Some(v) = args.max_size_mm { thresholds.insert("size_mm".into(), v.into()); }
+    if let Some(v) = args.max_dist_mm { thresholds.insert("distance_mm".into(), v.into()); }
+    if let Some(v) = args.max_angle_deg { thresholds.insert("angle_deg".into(), v.into()); }
     let payload = json!({
         "command": "compare_known",
         "version": 1,
         "report_path": &args.report_path,
         "known_path": &args.known_path,
+        "thresholds": if thresholds.is_empty() { serde_json::Value::Null }
+                      else { serde_json::Value::Object(thresholds) },
     });
 
     let value = run_sidecar(SidecarRequest {

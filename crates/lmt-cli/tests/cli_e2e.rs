@@ -1460,6 +1460,16 @@ fn gp_stderr_env(out: &std::process::Output) -> Value {
         .expect("stderr must be a JSON envelope")
 }
 
+/// L4: the compare-known tolerance flags are registered + documented (no sidecar needed).
+#[test]
+fn compare_known_help_lists_tolerance_flags() {
+    let assert = lmt().args(["visual", "compare-known", "--help"]).assert().success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    for flag in ["--max-size-mm", "--max-dist-mm", "--max-angle-deg"] {
+        assert!(stdout.contains(flag), "compare-known --help must list {flag}:\n{stdout}");
+    }
+}
+
 /// L3: the --min-views flag is registered + documented on plan-capture (no sidecar needed).
 #[test]
 fn plan_capture_help_lists_min_views() {
