@@ -167,7 +167,10 @@ def test_correspondence_has_provenance(tmp_path):
     assert corr["camera_image_size"] == [960, 540]
 
 
-from lmt_vba_sidecar.sl_decode import _seed_dots, _read_bits_relative
+from lmt_vba_sidecar.sl_decode import (
+    _seed_dots, _read_bits_relative,
+    _DOT_AREA_LO_FRAC, _DOT_AREA_HI_FRAC, _DOT_SIDE_HI_FRAC,
+)
 
 
 def test_seed_dots_otsu_finds_dots_in_bright_roi():
@@ -210,10 +213,13 @@ def _otsu_centroid_baseline(anchor, roi, dot_radius_px):
     _t, bw = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     n, _lbl, stats, cent = cv2.connectedComponentsWithStats(bw, connectivity=8)
     r = float(dot_radius_px)
+    # Same shape filter as _seed_dots, via the shared module constants (one source of
+    # truth) so retuning the decode filter cannot silently desync this baseline.
+    area_lo, area_hi, side_hi = _DOT_AREA_LO_FRAC * np.pi * r * r, _DOT_AREA_HI_FRAC * np.pi * r * r, _DOT_SIDE_HI_FRAC * r
     out = []
     for i in range(1, n):
         cw, ch, area = int(stats[i][2]), int(stats[i][3]), int(stats[i][4])
-        if 0.25 * np.pi * r * r <= area <= 9.0 * np.pi * r * r and cw <= 6 * r and ch <= 6 * r:
+        if area_lo <= area <= area_hi and cw <= side_hi and ch <= side_hi:
             out.append((float(cent[i][0]) + x, float(cent[i][1]) + y))
     return out
 
@@ -534,11 +540,14 @@ import lmt_vba_sidecar.sl_decode as sl_decode
 _FIELD_NOISE_FLOOR_PX = 0.02
 
 
-@pytest.mark.parametrize("degrade", ["bloom", "saturation", "glare", "merged"])
+@pytest.mark.parametrize("degrade", ["bloom", "saturation", "glare", "steep_glare", "merged"])
 def test_seed_dots_weighted_not_worse_than_otsu_on_field(degrade):
     # The promotion gate (spec A.2): weighted must not be MEANINGFULLY worse than the Otsu
     # binary centroid on any field degradation (see _FIELD_NOISE_FLOOR_PX above). It WINS on
     # the anti-aliased cases (bloom/glare); on the saturated flat-top it ties within noise.
+    # `steep_glare` is the gradient-bias regime _weighted_centroid documents: weighted retains
+    # some ramp bias, but the Otsu MASK is ALSO ramp-shifted, so weighted still beats binary
+    # (0.063 vs 0.124) -- the change is not a regression even under a steep background slope.
     anchor = np.full((120, 160), 30, np.uint8)
     true_x, true_y = 70.37, 60.62
     _draw_soft_dot(anchor, true_x, true_y, radius=6)
@@ -546,9 +555,10 @@ def test_seed_dots_weighted_not_worse_than_otsu_on_field(degrade):
         anchor = cv2.GaussianBlur(anchor, (0, 0), 1.5)
     elif degrade == "saturation":
         _draw_soft_dot(anchor, true_x, true_y, radius=8, peak=255)   # wider flat-top plateau
-    elif degrade == "glare":
+    elif degrade in ("glare", "steep_glare"):
+        mult = 1.2 if degrade == "glare" else 2.0                    # DN/px background slope
         yy, xx = np.mgrid[0:120, 0:160]
-        anchor = np.clip(anchor.astype(np.int16) + ((xx - 50) * 1.2).clip(0, 120), 0, 255).astype(np.uint8)
+        anchor = np.clip(anchor.astype(np.int16) + ((xx - 50) * mult).clip(0, 120), 0, 255).astype(np.uint8)
     elif degrade == "merged":
         _draw_soft_dot(anchor, true_x + 7, true_y, radius=6)         # a near neighbor (may merge)
     roi = (50, 40, 80, 50)
@@ -577,6 +587,7 @@ def _decode_position_err(frames_dir, meta_path, out_path):
     assert rc == 0
     pts = json.loads(out_path.read_text())["points"]
     errs = [np.hypot(p["x"] - uv[p["id"]][0], p["y"] - uv[p["id"]][1]) for p in pts if p["id"] in uv]
+    assert errs, "decode produced no id-matched correspondences (np.mean([]) would be nan)"
     return float(np.mean(errs)), len(pts)
 
 
@@ -598,7 +609,7 @@ def test_weighted_decode_position_not_worse_than_otsu_under_field(tmp_path, monk
     w_err, w_n = _decode_position_err(frames_dir, meta_path, tmp_path / "w.json")
     # Otsu baseline: force _weighted_centroid to return its Otsu fallback.
     monkeypatch.setattr(sl_decode, "_weighted_centroid",
-                        lambda cropf, lbl, i, floor, *, fallback: (float(fallback[0]), float(fallback[1])))
+                        lambda cropf, lbl, i, floor, *, bbox, fallback: (float(fallback[0]), float(fallback[1])))
     o_err, o_n = _decode_position_err(frames_dir, meta_path, tmp_path / "o.json")
     assert w_n >= o_n                                    # decode rate not worse
     # The synthetic generator's dots are at INTEGER screen centers, so Otsu's binary centroid

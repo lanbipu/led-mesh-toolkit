@@ -204,6 +204,10 @@ def crosscheck_intrinsics(res: IntrinsicsResult, *, anchor_K, anchor_dist=None) 
         focal_dev = abs(fx - afx) / afx if afx else 1.0
         aspect_dev = abs((fx / fy) - (afx / afy)) if (fy and afy) else 1.0
         disp_dev_px = abs(_radial_disp_px(res.dist, fx) - _radial_disp_px(a_dist, afx))
+        # Tangential is the noisiest distortion term: a RADIAL-ONLY anchor (p1=p2=0) cannot
+        # validate a lens that genuinely has tangential, so this term can refuse an otherwise
+        # good self-cal there. That conservative refusal is intentional (spec P6: refuse rather
+        # than ship a possibly-absorbed K — provide a full anchor to clear it), not a bug.
         tan_res, tan_anc = _tangential_disp_px(res.dist, fx), _tangential_disp_px(a_dist, afx)
         tan_dev_px = float(np.hypot(tan_res[0] - tan_anc[0], tan_res[1] - tan_anc[1]))
         if focal_dev > FOCAL_CROSSCHECK_MAX_FRAC or aspect_dev > ASPECT_CROSSCHECK_MAX \

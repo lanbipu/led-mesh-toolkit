@@ -52,7 +52,6 @@ import numpy as np
 
 from lmt_vba_sidecar.io_utils import write_event
 from lmt_vba_sidecar.intrinsics_solve import (
-    COPLANAR_RATIO_MIN,
     IntrinsicsRefused,
     crosscheck_intrinsics,
     solve_sl_intrinsics,
@@ -74,8 +73,9 @@ from lmt_vba_sidecar.sl_geometry import sl_cabinet_corners_mm, sl_local_mm
 def _self_calibrate_inline(meta, corr_files, cmd):
     """Inline self-cal for --intrinsics auto: assemble per-pose object/image points
     from the reconstruct's own corr (each cabinet a nominal planar target), solve K,
-    and run the anti-absorption cross-check. Returns (K, dist, image_size) or raises
-    IntrinsicsRefused. Frame-matched (same shots as the reconstruction)."""
+    and run the anti-absorption cross-check. Returns (K, dist, image_size,
+    anchor_guarded) or raises IntrinsicsRefused; anchor_guarded is False when solved
+    without an anchor on a curved wall. Frame-matched (same shots as the reconstruction)."""
     # Stale sl_meta / edited layout / unsupported shape_prior surface as a ValueError
     # from nominal_dot_positions_world; map it to invalid_input (the file-intrinsics
     # branch classifies the identical condition at step 4), not an internal_error.

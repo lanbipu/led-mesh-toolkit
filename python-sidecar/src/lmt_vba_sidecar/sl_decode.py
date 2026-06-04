@@ -27,6 +27,14 @@ from lmt_vba_sidecar.sl_codec import decode_bits
 _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
 _DPX_EXT = ".dpx"
 
+# Dot-acceptance shape filter (relative to dot_radius_px r): a component is a dot if
+# its area is within [_DOT_AREA_LO_FRAC, _DOT_AREA_HI_FRAC] * pi*r^2 and neither side
+# exceeds _DOT_SIDE_HI_FRAC * r. Module-level so the decode path and any baseline that
+# must reproduce the SAME accepted-component set share one source of truth.
+_DOT_AREA_LO_FRAC = 0.25
+_DOT_AREA_HI_FRAC = 9.0
+_DOT_SIDE_HI_FRAC = 6.0
+
 
 def _read_frame_file(f: pathlib.Path) -> np.ndarray:
     # cv2 cannot decode 10-bit DPX (returns None); route .dpx through our parser.
@@ -185,35 +193,50 @@ def _seed_dots(anchor: np.ndarray, *, roi: tuple[int, int, int, int],
     _t, bw = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     n, lbl, stats, cent = cv2.connectedComponentsWithStats(bw, connectivity=8)
     r = float(dot_radius_px)
-    area_lo, area_hi = 0.25 * np.pi * r * r, 9.0 * np.pi * r * r
-    side_hi = 6.0 * r
+    area_lo, area_hi = _DOT_AREA_LO_FRAC * np.pi * r * r, _DOT_AREA_HI_FRAC * np.pi * r * r
+    side_hi = _DOT_SIDE_HI_FRAC * r
     cropf = crop.astype(np.float64)
     floor = float(_t)                           # Otsu threshold = background floor
     out: list[tuple[float, float]] = []
     for i in range(1, n):
-        cw, ch, area = int(stats[i][2]), int(stats[i][3]), int(stats[i][4])
+        cl, ct, cw, ch, area = (int(stats[i][c]) for c in range(5))
         if not (area_lo <= area <= area_hi):
             continue
         if cw > side_hi or ch > side_hi:        # reject big/elongated blobs
             continue
-        cx, cy = _weighted_centroid(cropf, lbl, i, floor, fallback=(cent[i][0], cent[i][1]))
+        cx, cy = _weighted_centroid(cropf, lbl, i, floor,
+                                    bbox=(cl, ct, cw, ch), fallback=(cent[i][0], cent[i][1]))
         out.append((cx + x, cy + y))
     return out
 
 
 def _weighted_centroid(cropf: np.ndarray, lbl: np.ndarray, i: int, floor: float,
-                       *, fallback: tuple[float, float]) -> tuple[float, float]:
-    """Intensity-weighted centroid over component i's pixels (weight = intensity
-    above the Otsu floor) — sub-pixel localization that the binary centroid can't
-    reach. Falls back to the binary centroid when weights vanish (a zero-weight
-    region degenerates)."""
-    ys, xs = np.nonzero(lbl == i)
-    wgt = cropf[ys, xs] - floor
+                       *, bbox: tuple[int, int, int, int],
+                       fallback: tuple[float, float]) -> tuple[float, float]:
+    """Intensity-weighted centroid over component i's pixels (weight = intensity above
+    the Otsu floor) — sub-pixel localization the binary centroid can't reach. Falls back
+    to the binary centroid when weights vanish (a zero-weight region degenerates).
+
+    Scoped to the component's bounding box (`bbox` = left, top, width, height from
+    connectedComponentsWithStats `stats[i]`) so the `lbl == i` scan is O(dot area), not
+    O(whole ROI) per component — the ROI can be multi-megapixel with hundreds of dots.
+
+    Limitation: `floor` is a single scalar (the global Otsu threshold), so under a steep
+    per-pixel background gradient (glare ramp / vignetting) the residual weight retains the
+    gradient and the centroid is pulled slightly toward the brighter side. Measured on field
+    fixtures this stays below the binary centroid's own gradient skew (the Otsu MASK is also
+    ramp-shifted), so weighted is not a regression vs binary — but it is not gradient-immune.
+    See the field-fixtures promotion gate in test_sl_decode.py."""
+    cl, ct, cw, ch = bbox
+    sub_lbl = lbl[ct:ct + ch, cl:cl + cw]
+    sub_f = cropf[ct:ct + ch, cl:cl + cw]
+    ys, xs = np.nonzero(sub_lbl == i)
+    wgt = sub_f[ys, xs] - floor
     wgt[wgt < 0] = 0.0
     s = wgt.sum()
     if s <= 1e-6:
         return float(fallback[0]), float(fallback[1])
-    return float((wgt * xs).sum() / s), float((wgt * ys).sum() / s)
+    return float((wgt * xs).sum() / s) + cl, float((wgt * ys).sum() / s) + ct
 
 
 def _read_bits_relative(code_frames: list[np.ndarray], x: float, y: float,
