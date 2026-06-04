@@ -295,7 +295,8 @@ pub struct CalibrateOut {
     pub intrinsics_path: String,
     pub reproj_error_px: f64,
     pub frames_used: u32,
-    /// "radial2" | "full" (SL adaptive); checkerboard calibrate is always "radial2".
+    /// "radial2" | "full" (SL adaptive); the checkerboard calibrate path is "full"
+    /// (cv2.calibrateCamera with no CALIB_FIX flags estimates k1,k2,p1,p2,k3).
     pub distortion_model: String,
     pub focal_stddev_px: Option<[f64; 2]>,
     pub pp_stddev_px: Option<[f64; 2]>,

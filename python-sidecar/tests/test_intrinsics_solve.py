@@ -71,6 +71,16 @@ def test_solver_solves_full_distortion_when_well_conditioned():
     assert abs(res.dist.flatten()[4] - DIST_TRUE[4]) < 0.01   # k3 recovered
 
 
+def test_solver_keeps_full_for_k3_only_centered_sensor():
+    # Review finding: a lens with observable k3 but a CENTERED sensor (p1=p2=0, the
+    # common case) must NOT fall back to radial2 and drop k3. k3_ok is True, tan_ok is
+    # False -> accept full via the OR gate, recovering k3.
+    obj, img = _well_object_image_points_distorted(np.array([-0.12, 0.04, 0.0, 0.0, 0.02]))
+    res = solve_sl_intrinsics(obj, img, IMG, max_rms_px=1.5, allow_full_distortion=True)
+    assert res.distortion_model == "full"
+    assert abs(res.dist.flatten()[4] - 0.02) < 0.01   # k3 recovered, not discarded
+
+
 def test_solver_falls_back_to_radial2_on_distortion_free_data():
     # Distortion-free truth: k3/tangential are unobservable (~0 < stddev) -> radial2,
     # even with allow_full_distortion=True. (This is the correct fallback, not a bug.)
@@ -118,6 +128,16 @@ def test_crosscheck_refuses_when_anchor_disagrees_on_distortion():
     # A focal+aspect-only check would MISS this; the distortion-magnitude term catches it.
     res = _res(ANCHOR_K, dist=[-0.15, 0.05, 0.0, 0.0, 0.03])   # nonzero k1,k2,k3 vs anchor 0
     refusal = crosscheck_intrinsics(res, anchor_K=ANCHOR_K, anchor_dist=np.zeros(5))
+    assert refusal is not None and refusal.code == "observability_failed"
+    assert "distortion" in refusal.message.lower()
+
+
+def test_crosscheck_refuses_opposite_sign_distortion():
+    # Review finding: barrel (k1<0) vs pincushion (k1>0) of EQUAL magnitude must not
+    # difference to zero — the signed radial displacement catches the sign flip.
+    res = _res(ANCHOR_K, dist=[-0.12, 0.0, 0.0, 0.0, 0.0])     # barrel
+    refusal = crosscheck_intrinsics(res, anchor_K=ANCHOR_K,
+                                    anchor_dist=[0.12, 0.0, 0.0, 0.0, 0.0])  # pincushion, |k1| equal
     assert refusal is not None and refusal.code == "observability_failed"
     assert "distortion" in refusal.message.lower()
 

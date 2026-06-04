@@ -239,6 +239,10 @@ pub struct CabinetPoseSummary {
     pub quality: String,
 }
 
+fn default_intrinsics_source() -> String {
+    "file".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct VisualReconstructResult {
     pub screen_id: String,
@@ -255,7 +259,7 @@ pub struct VisualReconstructResult {
     #[serde(default)]
     pub procrustes_align_rms_m: f64,
     /// "file" (provided intrinsics) | "auto_self_calibrated" (--intrinsics auto).
-    #[serde(default)]
+    #[serde(default = "default_intrinsics_source")]
     pub intrinsics_source: String,
     pub cabinets: Vec<CabinetPoseSummary>,
 }
@@ -312,7 +316,8 @@ pub struct CalibrateResult {
     pub intrinsics_path: String,
     pub reproj_error_px: f64,
     pub frames_used: u32,
-    /// "radial2" (k1,k2) | "full" (k1,k2,k3+tangential). Checkerboard calibrate = "radial2".
+    /// "radial2" (k1,k2) | "full" (k1,k2,k3+tangential). The checkerboard `visual
+    /// calibrate` path calls cv2.calibrateCamera with no CALIB_FIX flags, so it is "full".
     #[serde(default)]
     pub distortion_model: String,
     #[serde(default)]

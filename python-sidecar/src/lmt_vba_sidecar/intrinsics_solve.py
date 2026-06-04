@@ -110,12 +110,15 @@ def solve_sl_intrinsics(object_points, image_points, image_size, *, max_rms_px: 
         if allow_full_distortion:
             r2, K2, d2, rv2, _t2, si2, _se2, _pv2 = _solve(full=True)
             s2 = np.asarray(si2).flatten()
-            # Accept full only if it did not worsen RMS and the extra coeffs are
-            # observable (stddev < |coeff|, guarding against runaway distortion DOF).
+            # Accept full if it did not worsen RMS and AT LEAST ONE extra coeff is
+            # observable (stddev < |coeff|). k3 and the tangential pair are independent
+            # DOF, so OR them, not AND: a lens with real k3 but a centered sensor
+            # (p1=p2~0, the common case) would otherwise drop its observable k3 and fall
+            # back to radial2. Unobservable extra coeffs come out ~0 and are harmless.
             k3_ok = abs(d2.flatten()[4]) > s2[8] if len(s2) > 8 else False
             tan_ok = (abs(d2.flatten()[2]) > s2[6] and abs(d2.flatten()[3]) > s2[7]
                       if len(s2) > 7 else False)
-            if r2 <= rms * 1.05 and k3_ok and tan_ok:
+            if r2 <= rms * 1.05 and (k3_ok or tan_ok):
                 rms, K, dist, rvecs, std_int, model = r2, K2, d2, rv2, si2, "full"
     except cv2.error as e:
         raise IntrinsicsRefused("intrinsics_invalid", f"calibrateCamera failed: {e}")
@@ -147,15 +150,17 @@ def solve_sl_intrinsics(object_points, image_points, image_size, *, max_rms_px: 
 
 
 def _radial_disp_px(dist, fx) -> float:
-    """Radial distortion displacement (px) at the representative corner radius. The
-    smooth-remap class lands in k1,k2,k3 and does NOT move fx/aspect, so this term is
-    what catches it (spec A.1.3 '畸变量级' / Codex critical #1)."""
+    """SIGNED radial distortion displacement (px) at the representative corner radius.
+    The smooth-remap class lands in k1,k2,k3 and does NOT move fx/aspect, so this term
+    is what catches it (spec A.1.3 '畸变量级'). The sign is kept (no abs on the
+    polynomial) so the cross-check can tell barrel (k1<0) from pincushion (k1>0): two
+    equal-magnitude opposite-sign distortions must NOT difference to zero."""
     d = np.asarray(dist, float).flatten()
     k1 = d[0] if len(d) > 0 else 0.0
     k2 = d[1] if len(d) > 1 else 0.0
     k3 = d[4] if len(d) > 4 else 0.0
     r = _CORNER_R_NORM
-    return abs(fx) * abs(r * (k1 * r**2 + k2 * r**4 + k3 * r**6))
+    return abs(fx) * (r * (k1 * r**2 + k2 * r**4 + k3 * r**6))
 
 
 def crosscheck_intrinsics(res: IntrinsicsResult, *, anchor_K, anchor_dist=None) -> IntrinsicsRefused | None:

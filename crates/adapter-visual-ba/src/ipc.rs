@@ -167,8 +167,12 @@ pub struct ResultData {
     #[serde(default)]
     pub procrustes_align_rms_m: f64,
     /// "file" | "auto_self_calibrated"; older sidecars omit it -> default "file".
-    #[serde(default)]
+    #[serde(default = "default_intrinsics_source")]
     pub intrinsics_source: String,
+}
+
+fn default_intrinsics_source() -> String {
+    "file".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

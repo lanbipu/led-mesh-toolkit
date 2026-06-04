@@ -323,10 +323,17 @@ def _warp_local(pl, kind):
 
 @pytest.mark.parametrize("kind", ["anisotropic", "remap"])
 def test_pitch_absorption_guard(tmp_path, kind):
-    """P6 red line: a K-absorbable screen-pitch error projected into a FLAT-wall capture is
-    caught by the cross-check when an anchor is supplied (REFUSE, no file). A control run
-    (no injection, same anchor) passes — proving the refusal is caused by the error, not the
-    anchor. (Isotropic scale -> nominal_misfit guard, tested in Plan 3.)"""
+    """P6 red line — END-TO-END no-ship property: a K-absorbable screen-pitch error injected
+    into a flat-wall auto capture is REFUSED before any file write, and a control run (no
+    injection, same anchor) passes (so the refusal is error-caused, not anchor-caused).
+
+    HONEST SCOPE (per code-review): on a FLAT wall the injected warp also inflates the self-cal
+    reproj RMS / principal-point stddev past solve_sl_intrinsics' GENERIC quality gates, which
+    fire BEFORE crosscheck_intrinsics is reached — so this integration test proves "caught before
+    export" but does NOT, by itself, prove the cross-check is what caught it. The cross-check's
+    own refusal logic (focal/aspect/distortion deviation vs an anchor) is unit-tested directly in
+    test_intrinsics_solve.py::test_crosscheck_refuses_when_anchor_disagrees_on_{aspect,distortion}.
+    (Isotropic scale -> nominal_misfit guard, tested in Plan 3.)"""
     meta_path = _gen_two_cabinet_meta(tmp_path)             # FLAT wall
     meta = json.loads(meta_path.read_text())
     _, K = _write_intrinsics(tmp_path)

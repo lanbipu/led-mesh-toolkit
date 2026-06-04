@@ -76,7 +76,19 @@ def _self_calibrate_inline(meta, corr_files, cmd):
     from the reconstruct's own corr (each cabinet a nominal planar target), solve K,
     and run the anti-absorption cross-check. Returns (K, dist, image_size) or raises
     IntrinsicsRefused. Frame-matched (same shots as the reconstruction)."""
-    dot_world = nominal_dot_positions_world(meta, cmd.project.cabinet_array, cmd.project.shape_prior)
+    # Stale sl_meta / edited layout / unsupported shape_prior surface as a ValueError
+    # from nominal_dot_positions_world; map it to invalid_input (the file-intrinsics
+    # branch classifies the identical condition at step 4), not an internal_error.
+    try:
+        dot_world = nominal_dot_positions_world(meta, cmd.project.cabinet_array, cmd.project.shape_prior)
+    except ValueError as e:
+        raise IntrinsicsRefused("invalid_input", f"nominal model build failed: {e}")
+    # One camera: all poses must agree on camera_image_size BEFORE solving (the solver
+    # keys coverage/K0/calibrate to a single size). The file branch checks this after
+    # loading intrinsics; the auto branch must check it here.
+    sizes = {tuple(int(v) for v in cf.camera_image_size) for cf in corr_files}
+    if len(sizes) != 1:
+        raise IntrinsicsRefused("invalid_input", f"correspondences disagree on camera_image_size: {sorted(sizes)}")
     object_points, image_points = [], []
     image_size = tuple(int(v) for v in corr_files[0].camera_image_size)
     for cf in corr_files:
