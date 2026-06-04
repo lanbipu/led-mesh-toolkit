@@ -192,6 +192,54 @@ def test_seed_dots_filters_oversized_blob():
     assert len(seeds) == 1
 
 
+def _draw_soft_dot(img, cx, cy, radius, peak=255):
+    """Anti-aliased filled disc: pixel value scales with coverage of the disc,
+    so the INTENSITY centroid sits at the true (fractional) (cx, cy)."""
+    h, w = img.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    d = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+    cov = np.clip(radius + 0.5 - d, 0.0, 1.0)        # soft edge
+    img[:] = np.maximum(img, (cov * peak).astype(np.uint8))
+
+
+def _otsu_centroid_baseline(anchor, roi, dot_radius_px):
+    """The pre-change Otsu binary component centroid, for the SAME accepted component —
+    the baseline the weighted centroid must beat. (Shared with the field-fixtures gate.)"""
+    x, y, w, h = roi
+    crop = anchor[y:y + h, x:x + w]
+    _t, bw = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    n, _lbl, stats, cent = cv2.connectedComponentsWithStats(bw, connectivity=8)
+    r = float(dot_radius_px)
+    out = []
+    for i in range(1, n):
+        cw, ch, area = int(stats[i][2]), int(stats[i][3]), int(stats[i][4])
+        if 0.25 * np.pi * r * r <= area <= 9.0 * np.pi * r * r and cw <= 6 * r and ch <= 6 * r:
+            out.append((float(cent[i][0]) + x, float(cent[i][1]) + y))
+    return out
+
+
+def test_seed_dots_weighted_centroid_beats_otsu_baseline():
+    # Codex #5 fix: a SYMMETRIC soft dot's Otsu centroid is already ~0.08px accurate, so a
+    # "Otsu misses 0.3px" RED is false. Instead assert the weighted centroid is STRICTLY
+    # better than the Otsu baseline. Before Task 2, _seed_dots RETURNS the Otsu centroid, so
+    # weighted_err == otsu_err and the strict `<` is guaranteed to FAIL (sound RED). Use a
+    # glare-biased fixture where the global-Otsu binary shape is skewed but the dot's
+    # intensity profile is symmetric, so the photometric (weighted) centroid is better.
+    anchor = np.full((120, 160), 20, np.uint8)
+    yy, xx = np.mgrid[0:120, 0:160]
+    anchor = np.clip(anchor.astype(np.int16) + ((xx - 50) * 1.6).clip(0, 150), 0, 255).astype(np.uint8)  # glare ramp
+    true_x, true_y = 70.37, 60.62
+    _draw_soft_dot(anchor, true_x, true_y, radius=5)
+    roi = (50, 40, 80, 50)
+    seeds = _seed_dots(anchor, roi=roi, dot_radius_px=5)
+    assert len(seeds) >= 1
+    def err(pts):
+        return min(np.hypot(sx - true_x, sy - true_y) for (sx, sy) in pts)
+    w_err = err(seeds)
+    o_err = err(_otsu_centroid_baseline(anchor, roi, dot_radius_px=5))
+    assert w_err < o_err, f"weighted {w_err:.3f} not strictly better than otsu {o_err:.3f}"
+
+
 def test_read_bits_relative_uses_own_min_max_not_global_128():
     # A DIM dot: lit ~90, off ~20 (both below the global-128 brightness threshold).
     # Relative reading (own min/max) must still read [1, 0].
