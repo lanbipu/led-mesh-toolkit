@@ -23,6 +23,7 @@ MIN_DOTS_PER_POSE = 4
 FOCAL_CROSSCHECK_MAX_FRAC = 0.02      # |fx - anchor_fx| / anchor_fx  (class a: isotropic scale)
 ASPECT_CROSSCHECK_MAX = 0.01          # |fx/fy - anchor_fx/anchor_fy| (class b: anisotropic)
 DISTORTION_CROSSCHECK_MAX_PX = 1.5    # radial-displacement gap at the corner (class c: smooth remap)
+TANGENTIAL_CROSSCHECK_MAX_PX = 1.5    # tangential (decentering) gap at the corner (class c': p1/p2)
 _CORNER_R_NORM = 0.6                  # representative normalized radius (wide-lens corner-ish)
 
 
@@ -163,6 +164,24 @@ def _radial_disp_px(dist, fx) -> float:
     return abs(fx) * (r * (k1 * r**2 + k2 * r**4 + k3 * r**6))
 
 
+def _tangential_disp_px(dist, fx) -> tuple[float, float]:
+    """SIGNED tangential (decentering) displacement VECTOR (px) at the representative
+    corner. Tangential distortion is ASYMMETRIC — a screen shear/decentering absorbed
+    into p1/p2 moves the image here even when focal, aspect, and radial all match the
+    anchor, so the radial-only term misses it (Codex P2). The vector (not a magnitude)
+    is returned so an opposite-direction p1/p2 cannot difference to zero, mirroring the
+    signed-radial barrel/pincushion guard."""
+    d = np.asarray(dist, float).flatten()
+    p1 = d[2] if len(d) > 2 else 0.0
+    p2 = d[3] if len(d) > 3 else 0.0
+    r = _CORNER_R_NORM
+    x = y = r / np.sqrt(2.0)                       # a corner point with |(x, y)| = r
+    r2 = x * x + y * y
+    dx = 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x)
+    dy = p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y
+    return abs(fx) * dx, abs(fx) * dy
+
+
 def crosscheck_intrinsics(res: IntrinsicsResult, *, anchor_K, anchor_dist=None) -> IntrinsicsRefused | None:
     """Anti-absorption guard (spec P6/A.1.3). Compares THREE things vs an independent
     anchor — focal (class a), fx/fy aspect (class b), and distortion magnitude (class c).
@@ -170,18 +189,31 @@ def crosscheck_intrinsics(res: IntrinsicsResult, *, anchor_K, anchor_dist=None) 
     non-coplanar target means the caller SHOULD emit WarningEvent(code='no_intrinsics_anchor')."""
     fx, fy = float(res.K[0, 0]), float(res.K[1, 1])
     if anchor_K is not None:
-        afx, afy = float(anchor_K[0, 0]), float(anchor_K[1, 1])
+        # The anchor is a user-supplied file. A malformed K (1-D list, not 3x3, or
+        # non-finite) would otherwise either throw IndexError out of the 2-D indexing
+        # below (escaping as internal_error, not the advertised invalid_input) or, when
+        # NaN, make every `> threshold` comparison False and SILENTLY pass the guard.
+        # Validate shape + finiteness up front (Codex P2).
+        aK = np.asarray(anchor_K, float)
+        a_dist = np.zeros(5) if anchor_dist is None else np.asarray(anchor_dist, float)
+        if aK.shape != (3, 3) or not np.isfinite(aK).all() or not np.isfinite(a_dist).all():
+            return IntrinsicsRefused(
+                "invalid_input",
+                "crosscheck anchor malformed: K must be a finite 3x3 matrix and dist finite")
+        afx, afy = float(aK[0, 0]), float(aK[1, 1])
         focal_dev = abs(fx - afx) / afx if afx else 1.0
         aspect_dev = abs((fx / fy) - (afx / afy)) if (fy and afy) else 1.0
-        a_dist = np.zeros(5) if anchor_dist is None else np.asarray(anchor_dist, float)
         disp_dev_px = abs(_radial_disp_px(res.dist, fx) - _radial_disp_px(a_dist, afx))
+        tan_res, tan_anc = _tangential_disp_px(res.dist, fx), _tangential_disp_px(a_dist, afx)
+        tan_dev_px = float(np.hypot(tan_res[0] - tan_anc[0], tan_res[1] - tan_anc[1]))
         if focal_dev > FOCAL_CROSSCHECK_MAX_FRAC or aspect_dev > ASPECT_CROSSCHECK_MAX \
-                or disp_dev_px > DISTORTION_CROSSCHECK_MAX_PX:
+                or disp_dev_px > DISTORTION_CROSSCHECK_MAX_PX \
+                or tan_dev_px > TANGENTIAL_CROSSCHECK_MAX_PX:
             return IntrinsicsRefused(
                 "observability_failed",
                 f"auto intrinsics deviate from anchor (focal {focal_dev*100:.1f}%, "
-                f"aspect {aspect_dev:.3f}, distortion {disp_dev_px:.2f}px) — "
-                "suspected screen pitch/1:1 absorbed into K")
+                f"aspect {aspect_dev:.3f}, distortion radial {disp_dev_px:.2f}px "
+                f"tangential {tan_dev_px:.2f}px) — suspected screen pitch/1:1 absorbed into K")
         return None
     if res.coplanar_ratio < COPLANAR_RATIO_MIN:
         return IntrinsicsRefused(

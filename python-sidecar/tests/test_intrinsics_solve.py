@@ -142,6 +142,34 @@ def test_crosscheck_refuses_opposite_sign_distortion():
     assert "distortion" in refusal.message.lower()
 
 
+def test_crosscheck_refuses_when_anchor_disagrees_on_tangential():
+    # Codex P2: screen shear/decentering absorbed into p1/p2 while focal, aspect and
+    # RADIAL distortion all match the anchor. A radial-only check would PASS this; the
+    # tangential displacement term must catch it.
+    res = _res(ANCHOR_K, dist=[-0.12, 0.04, 0.003, -0.002, 0.02])   # nonzero p1,p2
+    refusal = crosscheck_intrinsics(res, anchor_K=ANCHOR_K,
+                                    anchor_dist=[-0.12, 0.04, 0.0, 0.0, 0.02])  # same radial, p1=p2=0
+    assert refusal is not None and refusal.code == "observability_failed"
+    assert "tangential" in refusal.message.lower()
+
+
+def test_crosscheck_refuses_malformed_anchor_shape():
+    # Codex P2: a 1-D / non-3x3 anchor K passes np.array(...) but 2-D indexing would throw
+    # IndexError (escaping as internal_error). It must be the advertised invalid_input.
+    res = _res(ANCHOR_K, dist=[-0.12, 0.04, 0, 0, 0.02])
+    refusal = crosscheck_intrinsics(res, anchor_K=[3000.0, 0.0, 2000.0], anchor_dist=np.zeros(5))
+    assert refusal is not None and refusal.code == "invalid_input"
+
+
+def test_crosscheck_refuses_nonfinite_anchor():
+    # Codex P2: a NaN in the anchor K makes every `> threshold` comparison False and would
+    # SILENTLY pass the guard (disabling anti-absorption). It must be rejected as invalid_input.
+    bad_K = np.array([[np.nan, 0, 2000.0], [0, 3000.0, 1500.0], [0, 0, 1.0]])
+    res = _res([[3300.0, 0, 2000.0], [0, 3000.0, 1500.0], [0, 0, 1]])   # 10% focal drift
+    refusal = crosscheck_intrinsics(res, anchor_K=bad_K, anchor_dist=np.zeros(5))
+    assert refusal is not None and refusal.code == "invalid_input"
+
+
 def test_crosscheck_passes_when_anchor_agrees():
     res = _res([[3005.0, 0, 2000.0], [0, 3004.0, 1500.0], [0, 0, 1]], dist=[-0.12, 0.04, 0, 0, 0.02])
     assert crosscheck_intrinsics(res, anchor_K=ANCHOR_K, anchor_dist=[-0.12, 0.04, 0, 0, 0.02]) is None
