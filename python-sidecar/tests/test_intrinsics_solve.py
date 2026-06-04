@@ -161,6 +161,17 @@ def test_crosscheck_refuses_malformed_anchor_shape():
     assert refusal is not None and refusal.code == "invalid_input"
 
 
+def test_crosscheck_refuses_negative_focal_anchor():
+    # Codex P2: a finite 3x3 anchor with NEGATIVE fx/fy is physically invalid, but
+    # focal_dev = abs(fx - afx)/afx divides by a negative afx (-> negative -> below the
+    # threshold) while a sign-symmetric aspect/distortion matches, so it would SILENTLY pass.
+    # It must be rejected as invalid_input, not let the guard through.
+    neg_K = np.array([[-3000.0, 0, 2000.0], [0, -3000.0, 1500.0], [0, 0, 1.0]])
+    res = _res(ANCHOR_K, dist=[-0.12, 0.04, 0, 0, 0.02])   # a valid positive self-cal
+    refusal = crosscheck_intrinsics(res, anchor_K=neg_K, anchor_dist=np.zeros(5))
+    assert refusal is not None and refusal.code == "invalid_input"
+
+
 def test_crosscheck_refuses_nonfinite_anchor():
     # Codex P2: a NaN in the anchor K makes every `> threshold` comparison False and would
     # SILENTLY pass the guard (disabling anti-absorption). It must be rejected as invalid_input.

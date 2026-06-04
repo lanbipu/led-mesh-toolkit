@@ -189,17 +189,21 @@ def crosscheck_intrinsics(res: IntrinsicsResult, *, anchor_K, anchor_dist=None) 
     non-coplanar target means the caller SHOULD emit WarningEvent(code='no_intrinsics_anchor')."""
     fx, fy = float(res.K[0, 0]), float(res.K[1, 1])
     if anchor_K is not None:
-        # The anchor is a user-supplied file. A malformed K (1-D list, not 3x3, or
-        # non-finite) would otherwise either throw IndexError out of the 2-D indexing
-        # below (escaping as internal_error, not the advertised invalid_input) or, when
-        # NaN, make every `> threshold` comparison False and SILENTLY pass the guard.
-        # Validate shape + finiteness up front (Codex P2).
+        # The anchor is a user-supplied file. A malformed K would otherwise either throw
+        # IndexError out of the 2-D indexing below (escaping as internal_error, not the
+        # advertised invalid_input — 1-D / non-3x3), or SILENTLY pass the guard: a NaN makes
+        # every `> threshold` False, and a NEGATIVE focal makes `focal_dev = abs(fx-afx)/afx`
+        # divide by a negative afx so the result is < the threshold while a sign-symmetric
+        # aspect/distortion still matches. Reject shape / non-finite / non-positive focal up
+        # front (Codex P2 x2).
         aK = np.asarray(anchor_K, float)
         a_dist = np.zeros(5) if anchor_dist is None else np.asarray(anchor_dist, float)
-        if aK.shape != (3, 3) or not np.isfinite(aK).all() or not np.isfinite(a_dist).all():
+        if (aK.shape != (3, 3) or not np.isfinite(aK).all() or not np.isfinite(a_dist).all()
+                or float(aK[0, 0]) <= 0.0 or float(aK[1, 1]) <= 0.0):
             return IntrinsicsRefused(
                 "invalid_input",
-                "crosscheck anchor malformed: K must be a finite 3x3 matrix and dist finite")
+                "crosscheck anchor malformed: K must be a finite 3x3 matrix with positive "
+                "fx/fy and finite dist")
         afx, afy = float(aK[0, 0]), float(aK[1, 1])
         focal_dev = abs(fx - afx) / afx if afx else 1.0
         aspect_dev = abs((fx / fy) - (afx / afy)) if (fy and afy) else 1.0
