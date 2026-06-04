@@ -79,6 +79,18 @@ def test_solver_falls_back_to_radial2_on_distortion_free_data():
     assert res.distortion_model == "radial2"
 
 
+def test_radial2_fallback_K_matches_pure_radial_solve():
+    # Codex P1 regression: when allow_full_distortion=True falls back to radial2, the
+    # returned K must be the RADIAL solve's K — not the full probe's (cv2 mutates the
+    # guess in place). It must equal a pure radial solve byte-for-byte.
+    obj, img = _well_object_image_points(noise=0.0)
+    radial = solve_sl_intrinsics(obj, img, IMG, max_rms_px=1.5, allow_full_distortion=False)
+    fallback = solve_sl_intrinsics(obj, img, IMG, max_rms_px=1.5, allow_full_distortion=True)
+    assert fallback.distortion_model == "radial2"
+    assert np.allclose(fallback.K, radial.K)
+    assert np.allclose(fallback.dist, radial.dist)
+
+
 # --- Task 3: anti-absorption cross-check ---
 from lmt_vba_sidecar.intrinsics_solve import crosscheck_intrinsics, IntrinsicsResult
 

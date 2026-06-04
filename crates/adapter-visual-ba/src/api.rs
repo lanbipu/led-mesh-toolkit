@@ -341,8 +341,10 @@ pub async fn calibrate(args: CalibrateArgs) -> VbaResult<CalibrateOut> {
     Ok(CalibrateOut {
         intrinsics_path: args.output_path,
         reproj_error_px: intr.reproj_error_px,
+        // Checkerboard calibrate.py calls cv2.calibrateCamera with NO CALIB_FIX flags,
+        // so it estimates k1,k2,p1,p2,k3 — that is the "full" distortion model, not radial2.
         frames_used: intr.frames_used,
-        distortion_model: "radial2".to_string(),   // checkerboard calibrate is radial k1,k2
+        distortion_model: "full".to_string(),
         focal_stddev_px: None,
         pp_stddev_px: None,
     })

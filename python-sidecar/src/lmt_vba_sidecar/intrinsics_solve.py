@@ -98,8 +98,11 @@ def solve_sl_intrinsics(object_points, image_points, image_size, *, max_rms_px: 
             f = cv2.CALIB_USE_INTRINSIC_GUESS                         # free k1,k2,k3,p1,p2
         else:
             f = cv2.CALIB_USE_INTRINSIC_GUESS | cv2.CALIB_ZERO_TANGENT_DIST | cv2.CALIB_FIX_K3
+        # cv2.calibrateCameraExtended MUTATES the guess in place and returns the SAME
+        # object, so pass a fresh copy per call — otherwise the full probe overwrites
+        # the radial K that a fallback must keep (K would then mismatch radial dist/rms).
         return cv2.calibrateCameraExtended(
-            object_points, image_points, image_size, K0, np.zeros(5), flags=f)
+            object_points, image_points, image_size, K0.copy(), np.zeros(5), flags=f)
 
     model = "radial2"
     try:

@@ -89,9 +89,14 @@ def _self_calibrate_inline(meta, corr_files, cmd):
                               allow_full_distortion=bool(cmd.crosscheck_intrinsics_path))
     anchor_K = anchor_dist = None
     if cmd.crosscheck_intrinsics_path:
-        anchor = json.loads(pathlib.Path(cmd.crosscheck_intrinsics_path).read_text())
-        anchor_K = np.array(anchor["K"], float)
-        anchor_dist = np.array(anchor.get("dist_coeffs", [0, 0, 0, 0, 0]), float)
+        try:
+            anchor = json.loads(pathlib.Path(cmd.crosscheck_intrinsics_path).read_text())
+            anchor_K = np.array(anchor["K"], float)
+            anchor_dist = np.array(anchor.get("dist_coeffs", [0, 0, 0, 0, 0]), float)
+        except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+            # User-supplied anchor problems map to invalid_input, not an internal_error
+            # traceback (the outer caller only catches IntrinsicsRefused).
+            raise IntrinsicsRefused("invalid_input", f"crosscheck intrinsics load failed: {e}")
     refusal = crosscheck_intrinsics(res, anchor_K=anchor_K, anchor_dist=anchor_dist)
     if refusal is not None:
         raise refusal

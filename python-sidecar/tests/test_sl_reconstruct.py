@@ -293,6 +293,21 @@ def test_intrinsics_auto_self_calibrates(tmp_path, capsys):
     rel = np.array(by_id["V001_R000"]["position_mm"]) - np.array(by_id["V000_R000"]["position_mm"])
     assert np.linalg.norm(rel - np.array([500.0, 0.0, 0.0])) < 8.0  # self-cal noisier than given K
 
+    # Codex P3: a missing/malformed crosscheck anchor maps to invalid_input (a clean
+    # user error), NOT an internal_error traceback. Reuse the good corr; only break the
+    # anchor path so the self-cal succeeds and the anchor load is what fails.
+    bad = ReconstructStructuredLightInput.model_validate({
+        "command": "reconstruct_structured_light", "version": 1,
+        "project": {"screen_id": "MAIN", "cabinet_array": {"cols": 2, "rows": 1,
+                    "absent_cells": [], "cabinet_size_mm": [500, 500]}},
+        "correspondence_paths": corr_paths, "sl_meta_path": str(meta_path),
+        "intrinsics_path": "auto", "crosscheck_intrinsics_path": str(tmp_path / "nope.json"),
+        "pose_report_path": str(tmp_path / "bad.json")})
+    assert run_reconstruct_structured_light(bad) == 1
+    errs = [json.loads(l) for l in capsys.readouterr().out.splitlines()
+            if l.strip() and json.loads(l).get("event") == "error"]
+    assert errs[-1]["code"] == "invalid_input"
+
 
 def _warp_local(pl, kind):
     """Inject a screen-side pitch/1:1 error into a centered-origin local-mm point."""
