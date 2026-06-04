@@ -2135,6 +2135,30 @@ fn reconstruct_structured_light_dry_run_writes_nothing() {
 }
 
 #[test]
+fn reconstruct_structured_light_auto_dry_run_writes_nothing() {
+    // `--intrinsics auto` must be accepted by clap (no file needed) and reach the
+    // dry-run payload verbatim (the sidecar, not the CLI, branches on "auto").
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 2, 1);
+    let meta = tmp.path().join("sl_meta.json");
+    std::fs::write(&meta, "{}").unwrap();
+    let c0 = tmp.path().join("c0.json");
+    std::fs::write(&c0, "{}").unwrap();
+    let c1 = tmp.path().join("c1.json");
+    std::fs::write(&c1, "{}").unwrap();
+    let assert = lmt().args(["--json", "--dry-run", "visual", "reconstruct-structured-light",
+        proj.to_str().unwrap(), "MAIN", "--sl-meta", meta.to_str().unwrap(),
+        "--intrinsics", "auto",
+        "--corr", c0.to_str().unwrap(), "--corr", c1.to_str().unwrap()])
+        .assert().success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["data"]["dry_run"], true);
+    assert_eq!(env["data"]["intrinsics"], "auto");
+    assert!(!proj.join("measurements/measured.yaml").exists());
+}
+
+#[test]
 fn reconstruct_structured_light_single_corr_is_invalid_even_in_dry_run() {
     // >= 2 poses required; a single --corr must fail consistently in dry-run AND
     // execute (not falsely report a successful dry-run for a doomed command).
