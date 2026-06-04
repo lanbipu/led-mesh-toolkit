@@ -29,12 +29,24 @@ def test_candidates_lie_within_the_shell():
 
 
 from lmt_vba_sidecar.capture_planner.seed import seed_cameras
-from lmt_vba_sidecar.capture_planner.optimize import optimize
+from lmt_vba_sidecar.capture_planner.optimize import optimize, _score
 
 
 def _score_kwargs():
     return dict(pixel_sigma=0.2, nominal_deviation_mm=0.5, trials=6,
                seed=0, target_p95_residual_mm=4.0)
+
+
+def test_score_deficit_scales_with_min_views():
+    # The view-deficit term (the greedy's tie-break that bootstraps a cabinet toward
+    # min_views) must grow when min_views rises. The `failing` term stays pass-based —
+    # `pass` already respects min_views via coverage_report's reconstructable gate (Task 2),
+    # so only the deficit is parameterized here. (Include "pass" so failing is computable.)
+    report = {(0, 0): {"n_views": 2, "pass": True}, (1, 0): {"n_views": 4, "pass": True}}
+    _f2, deficit2 = _score(report, 2, min_views=2)
+    _f3, deficit3 = _score(report, 2, min_views=3)
+    assert deficit2 == 0            # both cabinets meet 2 views
+    assert deficit3 == 1            # cabinet (0,0) is 1 view short of 3
 
 
 def test_optimize_covers_a_reachable_flat_wall():
