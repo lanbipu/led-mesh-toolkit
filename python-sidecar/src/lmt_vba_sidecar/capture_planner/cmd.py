@@ -51,7 +51,8 @@ def run_plan_capture(cmd: PlanCaptureInput) -> int:
                         focal_err_frac=cmd.focal_err_frac,
                         incidence_max_deg=cmd.incidence_max_deg,
                         trials=cmd.trials, seed=cmd.seed,
-                        target_p95_residual_mm=cmd.target_p95_residual_mm)
+                        target_p95_residual_mm=cmd.target_p95_residual_mm,
+                        min_views=cmd.min_views)
     result = optimize(geom, K, image_size, shell, seed_cams=seed_cams,
                       max_stations=cmd.max_stations, n_standoff=cmd.n_standoff,
                       n_height=cmd.n_height, n_azimuth=cmd.n_azimuth,

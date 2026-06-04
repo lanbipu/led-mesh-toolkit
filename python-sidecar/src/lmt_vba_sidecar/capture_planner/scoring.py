@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 
 from lmt_vba_sidecar.sl_feasibility import project_point, solve_pnp_pose, triangulate_multiview
+from lmt_vba_sidecar.capture_planner import gates
 from lmt_vba_sidecar.capture_planner.geometry import ScreenGeometry
 from lmt_vba_sidecar.capture_planner.visibility import (
     Camera,
@@ -35,9 +36,10 @@ def _all_points(geom: ScreenGeometry):
 
 def score_screen(geom: ScreenGeometry, cams: list[Camera], *, pixel_sigma=0.3,
                  nominal_deviation_mm=2.0, focal_err_frac=0.0, incidence_max_deg=60.0,
-                 margin_frac=0.05, trials=20, seed=0, target_p95_residual_mm=3.0):
+                 margin_frac=0.05, trials=20, seed=0, target_p95_residual_mm=3.0,
+                 min_views=gates.MIN_VIEWS):
     per_cab, counts = coverage_report(geom, cams, margin_frac=margin_frac,
-                                      incidence_max_deg=incidence_max_deg)
+                                      incidence_max_deg=incidence_max_deg, min_views=min_views)
     cov_by_key = {(c.col, c.row): c for c in per_cab}
     bridge = bridging_report(geom, cams, margin_frac=margin_frac,
                              incidence_max_deg=incidence_max_deg, counts=counts)

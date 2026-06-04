@@ -556,6 +556,9 @@ class PlanCaptureInput(BaseModel):
     nominal_deviation_mm: float = 2.0
     focal_err_frac: float = 0.0
     incidence_max_deg: float = 60.0
+    # Precision capture profile can demand >=3 covering views/cabinet to be
+    # reconstructable (default mirrors gates.MIN_VIEWS so the gate-mirror test stays green).
+    min_views: int = 2
     sample_grid: tuple[int, int] = (4, 4)
     n_fan: int = 5
     max_stations: int = 24

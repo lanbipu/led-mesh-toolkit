@@ -52,6 +52,23 @@ def test_well_covered_wall_passes_with_small_residual():
         assert cov["pass"] is True
 
 
+def test_score_screen_min_views_flips_pass_on_two_view_wall():
+    # A 2-camera arc covers every cabinet with exactly 2 views: reconstructable + passing at
+    # the default min_views=2 (p95 well under target), but NOT reconstructable (so not passing)
+    # at the precision profile's min_views=3 — proving min_views threads score_screen ->
+    # coverage_report end-to-end (the path the optimizer drives via score_kwargs).
+    geom = _flat_grid()
+    K = intrinsics_from_fov((1920, 1080), hfov_deg=60.0)
+    cams = _ring(geom, K, n=2, span_deg=50.0, dist=2000.0)
+    common = dict(pixel_sigma=0.3, nominal_deviation_mm=0.5, trials=12, seed=0,
+                  target_p95_residual_mm=3.0)
+    rep2 = score_screen(geom, cams, min_views=2, **common)
+    rep3 = score_screen(geom, cams, min_views=3, **common)
+    assert all(v["n_views"] == 2 for v in rep2.values())
+    assert all(v["reconstructable"] and v["pass"] for v in rep2.values())
+    assert all(not v["reconstructable"] and not v["pass"] for v in rep3.values())
+
+
 def test_under_observed_cabinet_is_flagged_not_scored():
     geom = _flat_grid()
     K = intrinsics_from_fov((1920, 1080), hfov_deg=60.0)

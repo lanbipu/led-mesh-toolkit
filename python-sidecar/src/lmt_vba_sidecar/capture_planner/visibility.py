@@ -122,10 +122,11 @@ def vis_count(cam: Camera, cabg: CabinetGeom, *, margin_frac=0.05,
 
 
 def coverage_report(geom: ScreenGeometry, cams: list[Camera], *, margin_frac=0.05,
-                    incidence_max_deg=60.0):
+                    incidence_max_deg=60.0, min_views=gates.MIN_VIEWS):
     """Return (per_cabinet: list[CabinetCoverage], counts: dict[(ci,(col,row))->int]).
     `counts` is the per-camera per-cabinet visible-point count, reused downstream
-    (bridging, scoring)."""
+    (bridging, scoring). `min_views` (default gates.MIN_VIEWS) is the covering-view
+    count a cabinet needs to be `reconstructable`; the precision profile raises it."""
     arc = geom.arc_occluder
     counts: dict[tuple[int, tuple[int, int]], int] = {}
     for ci, cam in enumerate(cams):
@@ -144,7 +145,7 @@ def coverage_report(geom: ScreenGeometry, cams: list[Camera], *, margin_frac=0.0
         )
         total_obs = sum(counts[(ci, key)] for ci in covering)
         reconstructable = (
-            len(covering) >= gates.MIN_VIEWS
+            len(covering) >= min_views
             and total_obs >= gates.MIN_POINTS_PER_CABINET
         )
         low_obs = reconstructable and len(covering) < gates.QUALITY_MIN_VIEWS
