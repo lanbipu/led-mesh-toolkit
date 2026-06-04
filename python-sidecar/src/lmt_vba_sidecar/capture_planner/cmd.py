@@ -51,7 +51,8 @@ def run_plan_capture(cmd: PlanCaptureInput) -> int:
                         focal_err_frac=cmd.focal_err_frac,
                         incidence_max_deg=cmd.incidence_max_deg,
                         trials=cmd.trials, seed=cmd.seed,
-                        target_p95_residual_mm=cmd.target_p95_residual_mm)
+                        target_p95_residual_mm=cmd.target_p95_residual_mm,
+                        min_views=cmd.min_views)
     result = optimize(geom, K, image_size, shell, seed_cams=seed_cams,
                       max_stations=cmd.max_stations, n_standoff=cmd.n_standoff,
                       n_height=cmd.n_height, n_azimuth=cmd.n_azimuth,
@@ -90,7 +91,7 @@ def run_plan_capture(cmd: PlanCaptureInput) -> int:
             p95_residual_mm=(None if (p95 is None or math.isnan(p95)) else float(p95)),
             n_views=v["n_views"], total_observations=v["total_observations"],
             reconstructable=v["reconstructable"], low_observation=v["low_observation"],
-            bridged=v["bridged"], pass_=v["pass"],
+            bridged=v["bridged"], pass_=v["pass"], fail_reason=v["fail_reason"],
         ))
 
     unreachable = []

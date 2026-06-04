@@ -92,6 +92,11 @@ FALLBACK_ISOTROPIC_M = 0.005
 # (reconstruct aborts at observability_failed first).
 QUALITY_MIN_VIEWS = 4  # below this (but >=2) -> "low_observation"
 QUALITY_MAX_CABINET_RMS_PX = 2.0  # per-cabinet reproj RMS above this -> "high_residual"
+# align_to_nominal rigid-fit residual above this => the as-built wall deviates from the
+# nominal design by more than reconstruction noise (a clean given-K reconstruction aligns at
+# ~0.2mm; ~1% global pitch scale ~2.5mm, ~2% ~4.9mm). Surfaces the NON-absorbable pitch/shape
+# class (P5) the L1 cross-check (absorbable class) does not cover. SL (align_to_nominal) only.
+NOMINAL_MISFIT_WARN_MM = 3.0
 
 # --- Stage B robust-residual trim (PRIMARY geometric authority) ---
 STAGE_B_MAX_ITERS = 3
@@ -483,6 +488,7 @@ def solve_and_emit(
     n_rejected_pre: int = 0,
     rejected_per_cab_pre: dict[int, int] | None = None,
     gauge_strategy: str = "fix_root_cabinet",
+    intrinsics_source: str = "file",
 ) -> int:
     """Shared init -> model_constrained_ba -> per-cabinet geometry -> report ->
     ResultEvent. Used by both run_reconstruct (charuco) and
@@ -632,6 +638,15 @@ def solve_and_emit(
                 event="error", code="procrustes_failed",
                 message=f"align_to_nominal alignment failed: {e}", fatal=True))
             return 1
+        # A large rigid-fit residual is the NON-absorbable pitch/shape class (P5): a global
+        # isotropic pitch scale or genuine shape deviation rigid Procrustes cannot absorb.
+        # Warn (not refuse) — the model is still emitted, but the as-built ≠ nominal signal
+        # matters. (fix_root_cabinet/charuco keeps align_rms_mm == 0, so it never triggers.)
+        if align_rms_mm > NOMINAL_MISFIT_WARN_MM:
+            write_event(WarningEvent(
+                event="warning", code="nominal_misfit",
+                message=(f"align_to_nominal residual {align_rms_mm:.1f}mm > {NOMINAL_MISFIT_WARN_MM}mm: "
+                         "suspected screen pitch scale / shape deviation, NOT a pose error")))
 
     cabinet_poses: list[CabinetPose] = []
     measured_points: list[MeasuredPoint] = []
@@ -689,7 +704,7 @@ def solve_and_emit(
             write_event(WarningEvent(
                 event="warning", code="missing_covariance",
                 message=f"cabinet {cid} has no usable BA covariance; falling back to isotropic 5mm",
-                cabinet=f"MAIN_{cid}",
+                cabinet=cid,
             ))
             uncertainty = Uncertainty(isotropic=FALLBACK_ISOTROPIC_M)
         measured_points.append(MeasuredPoint(
@@ -723,6 +738,7 @@ def solve_and_emit(
             ),
             frame_strategy_used="nominal_anchoring",  # vestigial label; see gauge_strategy
             procrustes_align_rms_m=align_rms_mm / 1000.0,  # mm -> m (0.0 for fix_root_cabinet)
+            intrinsics_source=intrinsics_source,
         ),
     ))
     return 0

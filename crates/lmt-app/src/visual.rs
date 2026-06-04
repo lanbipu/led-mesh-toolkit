@@ -22,7 +22,7 @@ use lmt_adapter_visual_ba::ipc;
 use lmt_shared::dto::{
     CabinetPoseSummary, CabinetSizeCheck, CalibrateResult, CompareKnownResult,
     DecodeStructuredLightResult, EvalResult, GeneratePatternResult, GenerateStructuredLightResult,
-    PairCheck, SimulateResult, VisualReconstructResult,
+    PairCheck, SimulateResult, VisualReconstructResult, WarningDto,
 };
 use lmt_shared::error::{LmtError, LmtResult};
 
@@ -32,6 +32,20 @@ use crate::projects::load_project_yaml_from_path;
 /// `rt` + `process` features (the adapter spawns the sidecar via tokio process).
 fn rt() -> LmtResult<tokio::runtime::Runtime> {
     tokio::runtime::Runtime::new().map_err(|e| LmtError::Other(format!("tokio runtime: {e}")))
+}
+
+/// Map the adapter's sidecar-stream warnings to the public `WarningDto`. These ride the
+/// result so they survive the headless path (the sidecar's live WarningEvents are dropped
+/// when no progress consumer is attached).
+fn map_warnings(warnings: Vec<ipc::WarningEvent>) -> Vec<WarningDto> {
+    warnings
+        .into_iter()
+        .map(|w| WarningDto {
+            code: w.code,
+            message: w.message,
+            cabinet: w.cabinet,
+        })
+        .collect()
 }
 
 /// Map adapter `VbaError` → `LmtError`, preserving the sidecar's error code so
@@ -214,6 +228,8 @@ fn persist_reconstruct_result(
         ba_observations_used: out.ba_observations_used,
         ba_rejected: out.ba_rejected,
         procrustes_align_rms_m: out.procrustes_align_rms_m,
+        intrinsics_source: out.intrinsics_source,
+        warnings: map_warnings(out.warnings),
         cabinets: out
             .cabinet_summaries
             .iter()
@@ -236,7 +252,8 @@ pub fn run_reconstruct_structured_light(
     project_path: &Path,
     screen_id: &str,
     sl_meta: &Path,
-    intrinsics: &Path,
+    intrinsics: &str,
+    intrinsics_crosscheck: Option<&str>,
     correspondences: &[String],
 ) -> LmtResult<VisualReconstructResult> {
     let cfg = load_project_yaml_from_path(project_path)?;
@@ -255,7 +272,8 @@ pub fn run_reconstruct_structured_light(
         project,
         correspondence_paths: correspondences.to_vec(),
         sl_meta_path: sl_meta.display().to_string(),
-        intrinsics_path: intrinsics.display().to_string(),
+        intrinsics_path: intrinsics.to_string(),
+        crosscheck_intrinsics_path: intrinsics_crosscheck.map(str::to_string),
         pose_report_path: pose_report_path.display().to_string(),
         progress_tx: None,
         cancel: None,
@@ -284,6 +302,7 @@ pub fn run_calibrate_structured_light(
     out: Option<&Path>,
     force: bool,
     max_rms_px: f64,
+    intrinsics_crosscheck: Option<&str>,
 ) -> LmtResult<CalibrateResult> {
     let cfg = load_project_yaml_from_path(project_path)?;
     let screen_cfg = load_screen(&cfg, screen_id)?;
@@ -312,6 +331,7 @@ pub fn run_calibrate_structured_light(
         sl_meta_path: sl_meta.display().to_string(),
         output_path: output_path.display().to_string(),
         max_rms_px,
+        crosscheck_intrinsics_path: intrinsics_crosscheck.map(str::to_string),
         progress_tx: None,
         cancel: None,
     };
@@ -324,6 +344,10 @@ pub fn run_calibrate_structured_light(
         intrinsics_path: out.intrinsics_path,
         reproj_error_px: out.reproj_error_px,
         frames_used: out.frames_used,
+        distortion_model: out.distortion_model,
+        focal_stddev_px: out.focal_stddev_px,
+        pp_stddev_px: out.pp_stddev_px,
+        warnings: map_warnings(out.warnings),
     })
 }
 
@@ -412,6 +436,10 @@ pub fn run_calibrate(
         intrinsics_path: out.intrinsics_path,
         reproj_error_px: out.reproj_error_px,
         frames_used: out.frames_used,
+        distortion_model: out.distortion_model,
+        focal_stddev_px: out.focal_stddev_px,
+        pp_stddev_px: out.pp_stddev_px,
+        warnings: map_warnings(out.warnings),
     })
 }
 
@@ -703,10 +731,16 @@ pub fn run_eval(
 pub fn run_compare_known(
     report_path: &Path,
     known_path: &Path,
+    max_size_mm: Option<f64>,
+    max_dist_mm: Option<f64>,
+    max_angle_deg: Option<f64>,
 ) -> LmtResult<CompareKnownResult> {
     let args = CompareKnownArgs {
         report_path: report_path.display().to_string(),
         known_path: known_path.display().to_string(),
+        max_size_mm,
+        max_dist_mm,
+        max_angle_deg,
         progress_tx: None,
         cancel: None,
     };
@@ -797,6 +831,7 @@ pub fn run_plan_capture(
     target_p95_residual_mm: f64,
     trials: u32,
     seed: u32,
+    min_views: Option<u32>,
 ) -> LmtResult<lmt_shared::dto::CapturePlan> {
     use lmt_shared::dto::{CabinetCoverage, CapturePlan, CaptureStation, UnreachableRegion};
 
@@ -829,6 +864,7 @@ pub fn run_plan_capture(
         target_p95_residual_mm,
         trials,
         seed,
+        min_views,
         progress_tx: None,
         cancel: None,
     };
@@ -861,6 +897,7 @@ pub fn run_plan_capture(
                 low_observation: c.low_observation,
                 bridged: c.bridged,
                 pass: c.pass,
+                fail_reason: c.fail_reason,
             })
             .collect(),
         unreachable_regions: out
@@ -949,6 +986,7 @@ pub fn run_capture_card(
     let plan = run_plan_capture(
         project_path, screen_id, image_size, hfov_deg, vfov_deg, standoff, height,
         target_p95_residual_mm, trials, seed,
+        None, // capture-card defers to the sidecar's default min_views (gates.MIN_VIEWS)
     )?;
     let cfg = load_project_yaml_from_path(project_path)?;
     let screen_cfg = load_screen(&cfg, screen_id)?;
@@ -1017,12 +1055,12 @@ mod tests {
                 CabinetCoverage {
                     col: 0, row: 0, p95_residual_mm: Some(1.2), n_views: 4,
                     total_observations: 64, reconstructable: true, low_observation: false,
-                    bridged: true, pass: true,
+                    bridged: true, pass: true, fail_reason: None,
                 },
                 CabinetCoverage {
                     col: 1, row: 0, p95_residual_mm: None, n_views: 1,
                     total_observations: 16, reconstructable: false, low_observation: false,
-                    bridged: false, pass: false,
+                    bridged: false, pass: false, fail_reason: Some("low_coverage".into()),
                 },
             ],
             unreachable_regions: vec![UnreachableRegion {
@@ -1245,7 +1283,10 @@ mod tests {
         std::fs::write(&known_path, serde_json::to_string(&known).unwrap()).unwrap();
 
         std::env::set_var("LMT_VBA_SIDECAR_PATH", wrapper.to_str().unwrap());
-        let res = run_compare_known(&report_path, &known_path);
+        let res = run_compare_known(&report_path, &known_path, None, None, None);
+        // L4: a tighter --max-dist-mm 1.0 must flip the same 2mm error to a failure, and
+        // the applied threshold is echoed back on the result.
+        let tight = run_compare_known(&report_path, &known_path, None, Some(1.0), None);
         std::env::remove_var("LMT_VBA_SIDECAR_PATH");
 
         let res = res.expect("run_compare_known should succeed");
@@ -1256,6 +1297,10 @@ mod tests {
             "distance_error_mm = {} should be 2.0",
             res.pairs[0].distance_error_mm
         );
+
+        let tight = tight.expect("run_compare_known (tight) should succeed");
+        assert!(!tight.passed, "2mm distance must FAIL a 1.0mm threshold");
+        assert_eq!(tight.thresholds.get("distance_mm"), Some(&1.0));
     }
 
     // ── error paths (no sidecar) ────────────────────────────────────────────────

@@ -379,12 +379,15 @@ pub enum VisualCmd {
         /// sl_meta.json 路径(generate-structured-light 产出)。
         #[arg(long)]
         sl_meta: String,
-        /// intrinsics.json 路径(visual calibrate 产出)。
+        /// intrinsics.json 路径(visual calibrate 产出);保留字 `auto` = 用同一组 corr 内联自标定。
         #[arg(long)]
         intrinsics: String,
         /// 每个机位一个 corr.json(decode-structured-light 产出);重复传入 >=2 个。
         #[arg(long = "corr", required = true, num_args = 1.., action = clap::ArgAction::Append)]
         correspondences: Vec<String>,
+        /// 内参 anchor JSON 路径(独立棋盘格标定),仅 --intrinsics auto 时用于防吸收交叉校验。
+        #[arg(long = "intrinsics-crosscheck")]
+        intrinsics_crosscheck: Option<String>,
     },
     /// 结构光白点 + nominal 设计墙(3D 靶) → <screen_id>_sl_intrinsics.json
     /// (cv2.calibrateCamera,病态拒标)。side_effect: destructive
@@ -409,6 +412,9 @@ pub enum VisualCmd {
         /// reproj RMS 门槛(px)。
         #[arg(long = "max-rms-px", default_value_t = 1.5)]
         max_rms_px: f64,
+        /// 内参 anchor JSON 路径,启用防吸收交叉校验(平面墙无 anchor 将被拒)。
+        #[arg(long = "intrinsics-crosscheck")]
+        intrinsics_crosscheck: Option<String>,
     },
     /// 多视角照片 → measured.yaml + cabinet_pose_report.json。side_effect: destructive
     Reconstruct {
@@ -452,6 +458,15 @@ pub enum VisualCmd {
         report: String,
         /// known_geometry.json 路径(用户填的真值)。
         known: String,
+        /// size 误差阈值(mm),覆盖默认 2.0。
+        #[arg(long = "max-size-mm")]
+        max_size_mm: Option<f64>,
+        /// 间距误差阈值(mm),覆盖默认 3.0。
+        #[arg(long = "max-dist-mm")]
+        max_dist_mm: Option<f64>,
+        /// 夹角误差阈值(deg),覆盖默认 0.3。
+        #[arg(long = "max-angle-deg")]
+        max_angle_deg: Option<f64>,
     },
     /// 采集指导:几何 + 内参 → 推荐机位 plan(逐箱体覆盖/残差)。side_effect: write_safe
     #[command(name = "plan-capture")]
@@ -484,6 +499,10 @@ pub enum VisualCmd {
         /// RNG 种子。
         #[arg(long, default_value_t = 0)]
         seed: u32,
+        /// 每箱体最少覆盖视角数(精准档传 3)。省略 = 用 sidecar 默认(gates.MIN_VIEWS,
+        /// 与 reconstruct 观测门同源)——不在 CLI 侧硬编码默认值,避免与 gate 漂移。
+        #[arg(long = "min-views")]
+        min_views: Option<u32>,
     },
     /// 采集指导可视化:渲染自包含 HTML 指导卡(俯视机位图 + 正视覆盖热力图 + 机位清单)。
     /// human 模式 stdout 出 HTML(`... > card.html`);--json 包 `{html_content}`。side_effect: read_only

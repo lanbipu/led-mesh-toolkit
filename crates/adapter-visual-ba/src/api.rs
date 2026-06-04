@@ -16,7 +16,7 @@ use crate::error::{VbaError, VbaResult};
 use crate::ipc::{
     CabinetArray as IpcCabinetArray, CabinetSummary, CompareKnownResultData,
     CoordinateFrame as IpcCoordinateFrame, EvalResultData, Event, PlanCaptureResultData,
-    ReconstructProject, ResultData, ShapePrior as IpcShapePrior, SimulateResultData,
+    ReconstructProject, ResultData, ShapePrior as IpcShapePrior, SimulateResultData, WarningEvent,
 };
 use crate::sidecar::{run_sidecar, SidecarRequest};
 
@@ -50,6 +50,11 @@ pub struct ReconstructOut {
     pub ba_rejected: usize,
     /// align_to_nominal Procrustes 残差（米）；fix_root_cabinet 路径为 0。
     pub procrustes_align_rms_m: f64,
+    /// "file" | "auto_self_calibrated" (--intrinsics auto).
+    pub intrinsics_source: String,
+    /// Non-fatal warnings collected off the sidecar event stream (e.g.
+    /// `no_intrinsics_anchor`, `high_rejection`, `cabinet_quality`, `missing_covariance`).
+    pub warnings: Vec<WarningEvent>,
     pub cabinet_summaries: Vec<CabinetSummary>,
 }
 
@@ -143,23 +148,25 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
         payload["screen_mapping_path"] = json!(p);
     }
 
-    let value = run_sidecar(SidecarRequest {
+    let out = run_sidecar(SidecarRequest {
         subcommand: "reconstruct".into(),
         payload,
         progress_tx: args.progress_tx,
         cancel: args.cancel,
     })
     .await?;
+    let warnings = out.warnings;
 
     // A result we can't decode is a sidecar protocol violation, not caller
     // error → BadEventJson, not InvalidInput.
-    let result: ResultData = serde_json::from_value(value).map_err(VbaError::BadEventJson)?;
+    let result: ResultData = serde_json::from_value(out.data).map_err(VbaError::BadEventJson)?;
 
     let ba_rms_px = result.ba_stats.rms_reprojection_px;
     let ba_observations_total = result.ba_stats.n_observations_total;
     let ba_observations_used = result.ba_stats.n_observations_used;
     let ba_rejected = result.ba_stats.n_rejected;
     let procrustes_align_rms_m = result.procrustes_align_rms_m;
+    let intrinsics_source = result.intrinsics_source.clone();
     let points: Vec<lmt_core::point::MeasuredPoint> = result
         .measured_points
         .into_iter()
@@ -185,6 +192,8 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
         ba_observations_used,
         ba_rejected,
         procrustes_align_rms_m,
+        intrinsics_source,
+        warnings,
         cabinet_summaries,
     })
 }
@@ -198,7 +207,10 @@ pub struct ReconstructStructuredLightArgs {
     /// One CorrespondenceFile path per camera pose (decode_structured_light out).
     pub correspondence_paths: Vec<String>,
     pub sl_meta_path: String,
+    /// File path, or the reserved string "auto" for inline self-calibration.
     pub intrinsics_path: String,
+    /// Optional independent intrinsics anchor for the --intrinsics auto cross-check.
+    pub crosscheck_intrinsics_path: Option<String>,
     /// Where the sidecar writes `cabinet_pose_report.json`; read back for summaries.
     pub pose_report_path: String,
     pub progress_tx: Option<mpsc::Sender<Event>>,
@@ -220,24 +232,27 @@ pub async fn reconstruct_structured_light(
         "correspondence_paths": &args.correspondence_paths,
         "sl_meta_path": &args.sl_meta_path,
         "intrinsics_path": &args.intrinsics_path,
+        "crosscheck_intrinsics_path": &args.crosscheck_intrinsics_path,
         "pose_report_path": &args.pose_report_path,
     });
 
-    let value = run_sidecar(SidecarRequest {
+    let out = run_sidecar(SidecarRequest {
         subcommand: "reconstruct_structured_light".into(),
         payload,
         progress_tx: args.progress_tx,
         cancel: args.cancel,
     })
     .await?;
+    let warnings = out.warnings;
 
-    let result: ResultData = serde_json::from_value(value).map_err(VbaError::BadEventJson)?;
+    let result: ResultData = serde_json::from_value(out.data).map_err(VbaError::BadEventJson)?;
 
     let ba_rms_px = result.ba_stats.rms_reprojection_px;
     let ba_observations_total = result.ba_stats.n_observations_total;
     let ba_observations_used = result.ba_stats.n_observations_used;
     let ba_rejected = result.ba_stats.n_rejected;
     let procrustes_align_rms_m = result.procrustes_align_rms_m;
+    let intrinsics_source = result.intrinsics_source.clone();
     let points: Vec<lmt_core::point::MeasuredPoint> = result
         .measured_points
         .into_iter()
@@ -263,6 +278,8 @@ pub async fn reconstruct_structured_light(
         ba_observations_used,
         ba_rejected,
         procrustes_align_rms_m,
+        intrinsics_source,
+        warnings,
         cabinet_summaries,
     })
 }
@@ -285,6 +302,14 @@ pub struct CalibrateOut {
     pub intrinsics_path: String,
     pub reproj_error_px: f64,
     pub frames_used: u32,
+    /// "radial2" | "full" (SL adaptive); the checkerboard calibrate path is "full"
+    /// (cv2.calibrateCamera with no CALIB_FIX flags estimates k1,k2,p1,p2,k3).
+    pub distortion_model: String,
+    pub focal_stddev_px: Option<[f64; 2]>,
+    pub pp_stddev_px: Option<[f64; 2]>,
+    /// Non-fatal warnings collected off the sidecar event stream (e.g.
+    /// `no_intrinsics_anchor` when `--intrinsics-crosscheck` was omitted on a curved wall).
+    pub warnings: Vec<WarningEvent>,
 }
 
 pub async fn calibrate(args: CalibrateArgs) -> VbaResult<CalibrateOut> {
@@ -304,7 +329,7 @@ pub async fn calibrate(args: CalibrateArgs) -> VbaResult<CalibrateOut> {
     // the sidecar writes to `output_path` (it carries both `reproj_error_px`
     // and `frames_used = len(obj_points)`), mirroring how `generate_pattern`
     // reads pattern_meta.json.
-    let _value = run_sidecar(SidecarRequest {
+    let out = run_sidecar(SidecarRequest {
         subcommand: "calibrate".into(),
         payload,
         progress_tx: args.progress_tx,
@@ -327,7 +352,13 @@ pub async fn calibrate(args: CalibrateArgs) -> VbaResult<CalibrateOut> {
     Ok(CalibrateOut {
         intrinsics_path: args.output_path,
         reproj_error_px: intr.reproj_error_px,
+        // Checkerboard calibrate.py calls cv2.calibrateCamera with NO CALIB_FIX flags,
+        // so it estimates k1,k2,p1,p2,k3 — that is the "full" distortion model, not radial2.
         frames_used: intr.frames_used,
+        distortion_model: "full".to_string(),
+        focal_stddev_px: None,
+        pp_stddev_px: None,
+        warnings: out.warnings,
     })
 }
 
@@ -341,6 +372,8 @@ pub struct CalibrateStructuredLightArgs {
     pub sl_meta_path: String,
     pub output_path: String,
     pub max_rms_px: f64,
+    /// Optional independent intrinsics anchor for the anti-absorption cross-check.
+    pub crosscheck_intrinsics_path: Option<String>,
     pub progress_tx: Option<mpsc::Sender<Event>>,
     pub cancel: Option<oneshot::Receiver<()>>,
 }
@@ -358,9 +391,10 @@ pub async fn calibrate_structured_light(
         "sl_meta_path": &args.sl_meta_path,
         "output_path": &args.output_path,
         "max_rms_px": args.max_rms_px,
+        "crosscheck_intrinsics_path": &args.crosscheck_intrinsics_path,
     });
 
-    let _value = run_sidecar(SidecarRequest {
+    let out = run_sidecar(SidecarRequest {
         subcommand: "calibrate_structured_light".into(),
         payload,
         progress_tx: args.progress_tx,
@@ -368,12 +402,18 @@ pub async fn calibrate_structured_light(
     })
     .await?;
 
-    // Read authoritative reproj_error_px + frames_used from the intrinsics JSON
-    // the sidecar wrote (same pattern as `calibrate`).
+    // Read authoritative reproj_error_px + frames_used (+ precision provenance) from
+    // the intrinsics JSON the sidecar wrote (same pattern as `calibrate`).
     #[derive(serde::Deserialize)]
     struct IntrinsicsFile {
         reproj_error_px: f64,
         frames_used: u32,
+        #[serde(default)]
+        distortion_model: String,
+        #[serde(default)]
+        focal_stddev_px: Option<[f64; 2]>,
+        #[serde(default)]
+        pp_stddev_px: Option<[f64; 2]>,
     }
     let intr: IntrinsicsFile = serde_json::from_str(
         &std::fs::read_to_string(&args.output_path)
@@ -385,6 +425,14 @@ pub async fn calibrate_structured_light(
         intrinsics_path: args.output_path,
         reproj_error_px: intr.reproj_error_px,
         frames_used: intr.frames_used,
+        distortion_model: if intr.distortion_model.is_empty() {
+            "radial2".to_string()
+        } else {
+            intr.distortion_model
+        },
+        focal_stddev_px: intr.focal_stddev_px,
+        pp_stddev_px: intr.pp_stddev_px,
+        warnings: out.warnings,
     })
 }
 
@@ -664,7 +712,7 @@ pub async fn simulate(args: SimulateArgs) -> VbaResult<SimulateResultData> {
     .await?;
 
     // Undecodable result = sidecar protocol violation → BadEventJson.
-    serde_json::from_value(value).map_err(VbaError::BadEventJson)
+    serde_json::from_value(value.data).map_err(VbaError::BadEventJson)
 }
 
 // ---------------------------------------------------------------------------
@@ -697,7 +745,7 @@ pub async fn eval(args: EvalArgs) -> VbaResult<EvalResultData> {
     .await?;
 
     // Undecodable result = sidecar protocol violation → BadEventJson.
-    serde_json::from_value(value).map_err(VbaError::BadEventJson)
+    serde_json::from_value(value.data).map_err(VbaError::BadEventJson)
 }
 
 // ---------------------------------------------------------------------------
@@ -707,16 +755,30 @@ pub async fn eval(args: EvalArgs) -> VbaResult<EvalResultData> {
 pub struct CompareKnownArgs {
     pub report_path: String,
     pub known_path: String,
+    /// Optional acceptance-threshold overrides. Mapped to the sidecar's
+    /// DEFAULT_THRESHOLDS keys (size_mm / distance_mm / angle_deg); only the
+    /// provided ones are sent, so omitted ones keep the Python defaults.
+    pub max_size_mm: Option<f64>,
+    pub max_dist_mm: Option<f64>,
+    pub max_angle_deg: Option<f64>,
     pub progress_tx: Option<mpsc::Sender<Event>>,
     pub cancel: Option<oneshot::Receiver<()>>,
 }
 
 pub async fn compare_known(args: CompareKnownArgs) -> VbaResult<CompareKnownResultData> {
+    // Build the optional thresholds map: CLI --max-* flags -> sidecar threshold keys.
+    // Empty -> null = "use DEFAULT_THRESHOLDS" (the existing Python contract).
+    let mut thresholds = serde_json::Map::new();
+    if let Some(v) = args.max_size_mm { thresholds.insert("size_mm".into(), v.into()); }
+    if let Some(v) = args.max_dist_mm { thresholds.insert("distance_mm".into(), v.into()); }
+    if let Some(v) = args.max_angle_deg { thresholds.insert("angle_deg".into(), v.into()); }
     let payload = json!({
         "command": "compare_known",
         "version": 1,
         "report_path": &args.report_path,
         "known_path": &args.known_path,
+        "thresholds": if thresholds.is_empty() { serde_json::Value::Null }
+                      else { serde_json::Value::Object(thresholds) },
     });
 
     let value = run_sidecar(SidecarRequest {
@@ -728,7 +790,7 @@ pub async fn compare_known(args: CompareKnownArgs) -> VbaResult<CompareKnownResu
     .await?;
 
     // Undecodable result = sidecar protocol violation → BadEventJson.
-    serde_json::from_value(value).map_err(VbaError::BadEventJson)
+    serde_json::from_value(value.data).map_err(VbaError::BadEventJson)
 }
 
 // ---------------------------------------------------------------------------
@@ -747,12 +809,14 @@ pub struct PlanCaptureArgs {
     pub target_p95_residual_mm: f64,
     pub trials: u32,
     pub seed: u32,
+    /// None = let the sidecar use its default (gates.MIN_VIEWS); Some = the precision override.
+    pub min_views: Option<u32>,
     pub progress_tx: Option<mpsc::Sender<Event>>,
     pub cancel: Option<oneshot::Receiver<()>>,
 }
 
 pub async fn plan_capture(args: PlanCaptureArgs) -> VbaResult<PlanCaptureResultData> {
-    let payload = json!({
+    let mut payload = json!({
         "command": "plan_capture",
         "version": 1,
         "project": &args.project,
@@ -771,6 +835,11 @@ pub async fn plan_capture(args: PlanCaptureArgs) -> VbaResult<PlanCaptureResultD
         "trials": args.trials,
         "seed": args.seed,
     });
+    // Send min_views only when overridden — omitting the key (not sending null, which would
+    // fail PlanCaptureInput's int validator) lets the sidecar fill gates.MIN_VIEWS.
+    if let Some(mv) = args.min_views {
+        payload["min_views"] = mv.into();
+    }
 
     let value = run_sidecar(SidecarRequest {
         subcommand: "plan_capture".into(),
@@ -780,5 +849,5 @@ pub async fn plan_capture(args: PlanCaptureArgs) -> VbaResult<PlanCaptureResultD
     })
     .await?;
 
-    serde_json::from_value(value).map_err(VbaError::BadEventJson)
+    serde_json::from_value(value.data).map_err(VbaError::BadEventJson)
 }

@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 
 from lmt_vba_sidecar.sl_feasibility import project_point, solve_pnp_pose, triangulate_multiview
+from lmt_vba_sidecar.capture_planner import gates
 from lmt_vba_sidecar.capture_planner.geometry import ScreenGeometry
 from lmt_vba_sidecar.capture_planner.visibility import (
     Camera,
@@ -35,9 +36,10 @@ def _all_points(geom: ScreenGeometry):
 
 def score_screen(geom: ScreenGeometry, cams: list[Camera], *, pixel_sigma=0.3,
                  nominal_deviation_mm=2.0, focal_err_frac=0.0, incidence_max_deg=60.0,
-                 margin_frac=0.05, trials=20, seed=0, target_p95_residual_mm=3.0):
+                 margin_frac=0.05, trials=20, seed=0, target_p95_residual_mm=3.0,
+                 min_views=gates.MIN_VIEWS):
     per_cab, counts = coverage_report(geom, cams, margin_frac=margin_frac,
-                                      incidence_max_deg=incidence_max_deg)
+                                      incidence_max_deg=incidence_max_deg, min_views=min_views)
     cov_by_key = {(c.col, c.row): c for c in per_cab}
     bridge = bridging_report(geom, cams, margin_frac=margin_frac,
                              incidence_max_deg=incidence_max_deg, counts=counts)
@@ -114,6 +116,18 @@ def score_screen(geom: ScreenGeometry, cams: list[Camera], *, pixel_sigma=0.3,
         else:
             p95 = float("nan")
             median = float("nan")
+        passed = bool(cov.reconstructable and bridged
+                      and (p95 <= target_p95_residual_mm))
+        # Observability diagnostic (no new gate): WHY did it fail?
+        #  - low_coverage: not enough views/points (or unbridged) to even attempt.
+        #  - low_parallax: count-reconstructable + bridged, but p95 over target —
+        #    degenerate (near-duplicate / fronto-parallel) baseline, not coverage.
+        if passed:
+            fail_reason = None
+        elif not (cov.reconstructable and bridged):
+            fail_reason = "low_coverage"
+        else:
+            fail_reason = "low_parallax"
         report[key] = {
             "p95_mm": p95,
             "median_mm": median,
@@ -122,7 +136,7 @@ def score_screen(geom: ScreenGeometry, cams: list[Camera], *, pixel_sigma=0.3,
             "reconstructable": cov.reconstructable,
             "low_observation": cov.low_observation,
             "bridged": bridged,
-            "pass": bool(cov.reconstructable and bridged
-                         and (p95 <= target_p95_residual_mm)),
+            "pass": passed,
+            "fail_reason": fail_reason,
         }
     return report

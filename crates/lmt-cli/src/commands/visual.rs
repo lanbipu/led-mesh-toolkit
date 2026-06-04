@@ -8,6 +8,23 @@ use lmt_shared::envelope::{error_codes, ApiError};
 use std::io::Write as _;
 use std::path::Path;
 
+/// Print any non-fatal warnings a sidecar-backed command collected onto its result.
+/// The sidecar's live WarningEvents are dropped on this headless path (no progress
+/// consumer), so the durable `warnings` field is the only place they surface in human mode;
+/// `--json` carries the same list in the envelope. Written to STDERR (matching the
+/// total-station import warnings convention) so a `> result.txt` redirect of stdout stays
+/// clean. No-op when the run was clean.
+fn print_warnings(warnings: &[lmt_shared::dto::WarningDto]) {
+    for w in warnings {
+        let loc = w
+            .cabinet
+            .as_deref()
+            .map(|c| format!(" ({c})"))
+            .unwrap_or_default();
+        let _ = writeln!(std::io::stderr(), "  warning [{}]{} {}", w.code, loc, w.message);
+    }
+}
+
 pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
     match cmd {
         VisualCmd::Reconstruct {
@@ -32,7 +49,9 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             method,
             seed_matrix,
         } => eval(mode, &dataset, &method, seed_matrix),
-        VisualCmd::CompareKnown { report, known } => compare_known(mode, &report, &known),
+        VisualCmd::CompareKnown { report, known, max_size_mm, max_dist_mm, max_angle_deg } => {
+            compare_known(mode, &report, &known, max_size_mm, max_dist_mm, max_angle_deg)
+        }
         VisualCmd::PlanCapture {
             project_path,
             screen_id,
@@ -44,6 +63,7 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             target_mm,
             trials,
             seed,
+            min_views,
         } => plan_capture(
             mode,
             &project_path,
@@ -56,6 +76,7 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             target_mm,
             trials,
             seed,
+            min_views,
         ),
         VisualCmd::CaptureCard {
             project_path,
@@ -135,8 +156,10 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             sl_meta,
             intrinsics,
             correspondences,
+            intrinsics_crosscheck,
         } => reconstruct_structured_light(
-            mode, &project_path, &screen_id, &sl_meta, &intrinsics, &correspondences, yes, dry_run,
+            mode, &project_path, &screen_id, &sl_meta, &intrinsics,
+            intrinsics_crosscheck.as_deref(), &correspondences, yes, dry_run,
         ),
         VisualCmd::CalibrateStructuredLight {
             project_path,
@@ -146,9 +169,10 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             out,
             force,
             max_rms_px,
+            intrinsics_crosscheck,
         } => calibrate_structured_light(
             mode, &project_path, &screen_id, &sl_meta, &correspondences,
-            out.as_deref(), force, max_rms_px, yes, dry_run,
+            out.as_deref(), force, max_rms_px, intrinsics_crosscheck.as_deref(), yes, dry_run,
         ),
     }
 }
@@ -243,6 +267,7 @@ fn reconstruct(
                         p.measured_yaml_path,
                         p.pose_report_path
                     );
+                    print_warnings(&p.warnings);
                 }),
                 Err(e) => output::err(mode, ApiError::from(e)),
             }
@@ -302,6 +327,7 @@ fn calibrate(
                         p.frames_used,
                         p.intrinsics_path
                     );
+                    print_warnings(&p.warnings);
                 }),
                 Err(e) => output::err(mode, ApiError::from(e)),
             }
@@ -541,6 +567,7 @@ fn reconstruct_structured_light(
     screen_id: &str,
     sl_meta: &str,
     intrinsics: &str,
+    intrinsics_crosscheck: Option<&str>,
     correspondences: &[String],
     yes: bool,
     dry_run: bool,
@@ -589,7 +616,8 @@ fn reconstruct_structured_light(
                 Path::new(project_path),
                 screen_id,
                 Path::new(sl_meta),
-                Path::new(intrinsics),
+                intrinsics,
+                intrinsics_crosscheck,
                 correspondences,
             ) {
                 Ok(r) => output::ok(mode, r, |p| {
@@ -598,6 +626,7 @@ fn reconstruct_structured_light(
                         "reconstructed {} cabinets (ba_rms={:.3}px)\n  measured: {}\n  poses: {}",
                         p.cabinet_count, p.ba_rms_px, p.measured_yaml_path, p.pose_report_path
                     );
+                    print_warnings(&p.warnings);
                 }),
                 Err(e) => output::err(mode, ApiError::from(e)),
             }
@@ -619,6 +648,7 @@ fn calibrate_structured_light(
     out: Option<&str>,
     force: bool,
     max_rms_px: f64,
+    intrinsics_crosscheck: Option<&str>,
     yes: bool,
     dry_run: bool,
 ) -> i32 {
@@ -674,6 +704,7 @@ fn calibrate_structured_light(
                 out.map(Path::new),
                 force,
                 max_rms_px,
+                intrinsics_crosscheck,
             ) {
                 Ok(r) => output::ok(mode, r, |p| {
                     let _ = writeln!(
@@ -681,6 +712,7 @@ fn calibrate_structured_light(
                         "calibrated (SL): reproj={:.3}px frames={} → {}",
                         p.reproj_error_px, p.frames_used, p.intrinsics_path
                     );
+                    print_warnings(&p.warnings);
                 }),
                 Err(e) => output::err(mode, ApiError::from(e)),
             }
@@ -754,9 +786,11 @@ fn eval(mode: Mode, dataset: &str, method: &str, seed_matrix: Vec<i64>) -> i32 {
 // compare_known
 // ---------------------------------------------------------------------------
 
-fn compare_known(mode: Mode, report: &str, known: &str) -> i32 {
+fn compare_known(mode: Mode, report: &str, known: &str, max_size_mm: Option<f64>,
+                 max_dist_mm: Option<f64>, max_angle_deg: Option<f64>) -> i32 {
     // compare-known is write_safe (reads two JSON files, writes nothing) — no gate.
-    match lmt_app::visual::run_compare_known(Path::new(report), Path::new(known)) {
+    match lmt_app::visual::run_compare_known(Path::new(report), Path::new(known),
+                                             max_size_mm, max_dist_mm, max_angle_deg) {
         Ok(r) => output::ok(mode, r, |p| {
             let _ = writeln!(
                 std::io::stdout(),
@@ -783,6 +817,7 @@ fn plan_capture(
     target_mm: f64,
     trials: u32,
     seed: u32,
+    min_views: Option<u32>,
 ) -> i32 {
     // plan-capture is write_safe (computes a plan, writes nothing) — no gate.
     match lmt_app::visual::run_plan_capture(
@@ -796,6 +831,7 @@ fn plan_capture(
         target_mm,
         trials,
         seed,
+        min_views,
     ) {
         Ok(p) => output::ok(mode, p, |plan| {
             let _ = writeln!(

@@ -126,9 +126,12 @@ class ReconstructStructuredLightInput(BaseModel):
     correspondence_paths: Annotated[list[str], Field(min_length=2)]
     sl_meta_path: str
     # Camera intrinsics JSON (visual calibrate output): {K, dist_coeffs, image_size}.
+    # The reserved value "auto" runs inline self-calibration from these same corr files.
     intrinsics_path: str
     # If set, the sidecar writes cabinet_pose_report.json here (spec §9).
     pose_report_path: str | None = None
+    # Optional independent intrinsics anchor for the --intrinsics auto cross-check.
+    crosscheck_intrinsics_path: str | None = None
 
 
 class CalibrateStructuredLightInput(BaseModel):
@@ -143,6 +146,9 @@ class CalibrateStructuredLightInput(BaseModel):
     # reproj RMS gate (px). Looser than checkerboard's 0.5 — SL centroids are noisier.
     # Upper cap: beyond 5 px the fit is garbage and the quality gate is effectively disabled.
     max_rms_px: float = Field(default=1.5, gt=0.0, le=5.0)
+    # Optional independent intrinsics anchor (checkerboard intrinsics.json) for the
+    # anti-absorption cross-check. Without it, a coplanar (flat) wall is refused.
+    crosscheck_intrinsics_path: str | None = None
 
 
 class CalibrateInput(BaseModel):
@@ -323,6 +329,8 @@ class ResultData(BaseModel):
     # Optional for forward/backward compat with subcommands that don't run
     # Procrustes (calibrate, generate_pattern) and with older sidecar versions.
     procrustes_align_rms_m: float = Field(default=0.0, ge=0.0)
+    # "file" (provided intrinsics) | "auto_self_calibrated" (--intrinsics auto).
+    intrinsics_source: str = "file"
 
 
 class ProgressEvent(BaseModel):
@@ -548,6 +556,10 @@ class PlanCaptureInput(BaseModel):
     nominal_deviation_mm: float = 2.0
     focal_err_frac: float = 0.0
     incidence_max_deg: float = 60.0
+    # Precision capture profile can demand >=3 covering views/cabinet to be reconstructable.
+    # Floor is 2 (reconstruct's observation gate — a single view can never triangulate). The
+    # default literal 2 is pinned to gates.MIN_VIEWS by a mirror test in test_capture_planner_gates.
+    min_views: int = Field(default=2, ge=2)
     sample_grid: tuple[int, int] = (4, 4)
     n_fan: int = 5
     max_stations: int = 24
@@ -578,6 +590,11 @@ class CabinetCoverageData(BaseModel):
     low_observation: bool
     bridged: bool
     pass_: bool = Field(alias="pass")
+    # WHY a cabinet fails (observability diagnostic, not a gate): "low_coverage"
+    # (too few views/points or unbridged) vs "low_parallax" (count-reconstructable
+    # but p95 over target = degenerate baseline). None when the cabinet passes. A
+    # Literal so a producer typo is a validation error, not a silent wrong reason.
+    fail_reason: Literal["low_coverage", "low_parallax"] | None = None
 
     model_config = {"populate_by_name": True, "serialize_by_alias": True}
 

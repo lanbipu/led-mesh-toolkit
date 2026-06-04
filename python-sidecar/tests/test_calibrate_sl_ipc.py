@@ -46,3 +46,12 @@ def test_max_rms_px_at_cap_accepted():
         "max_rms_px": 5.0,
     })
     assert m.max_rms_px == 5.0
+
+
+def test_crosscheck_path_defaults_none():
+    m = CalibrateStructuredLightInput.model_validate({
+        "command": "calibrate_structured_light", "version": 1,
+        "project": _project().model_dump(),
+        "correspondence_paths": ["a.json"], "sl_meta_path": "m.json", "output_path": "o.json",
+    })
+    assert m.crosscheck_intrinsics_path is None

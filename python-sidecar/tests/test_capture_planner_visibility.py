@@ -105,6 +105,22 @@ def test_two_views_reconstructable_but_low_observation():
     assert cov.low_observation is True               # 2 < QUALITY_MIN_VIEWS(4)
 
 
+def test_coverage_min_views_param_tightens_reconstructable():
+    # The same 2-covering-view single cabinet as the low_observation test: reconstructable
+    # at the default min_views=2, but NOT at the precision profile's min_views=3.
+    geom = _single_flat_cabinet()
+    K = intrinsics_from_fov((1920, 1080), hfov_deg=50.0)
+    cams = [
+        _good_cam(K, [-1500.0, 250.0, 3000.0], geom),
+        _good_cam(K, [2000.0, 250.0, 3000.0], geom),
+    ]
+    per2, _ = coverage_report(geom, cams, min_views=2)
+    per3, _ = coverage_report(geom, cams, min_views=3)
+    assert len(per2[0].covering_cams) == 2
+    assert per2[0].reconstructable is True
+    assert per3[0].reconstructable is False
+
+
 def test_four_views_not_low_observation():
     geom = _single_flat_cabinet()
     K = intrinsics_from_fov((1920, 1080), hfov_deg=50.0)

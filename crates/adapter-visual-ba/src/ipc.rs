@@ -166,6 +166,13 @@ pub struct ResultData {
     // so Rust adapter doesn't reject otherwise-valid responses.
     #[serde(default)]
     pub procrustes_align_rms_m: f64,
+    /// "file" | "auto_self_calibrated"; older sidecars omit it -> default "file".
+    #[serde(default = "default_intrinsics_source")]
+    pub intrinsics_source: String,
+}
+
+fn default_intrinsics_source() -> String {
+    "file".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -426,6 +433,8 @@ pub struct CabinetCoverageData {
     // across the `pydantic>=2.0,<3.0` pin range.
     #[serde(alias = "pass_")]
     pub pass: bool,
+    #[serde(default)]
+    pub fail_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

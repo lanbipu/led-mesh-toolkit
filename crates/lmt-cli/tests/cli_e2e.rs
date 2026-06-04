@@ -1460,6 +1460,60 @@ fn gp_stderr_env(out: &std::process::Output) -> Value {
         .expect("stderr must be a JSON envelope")
 }
 
+/// L4: the compare-known tolerance flags are registered + documented (no sidecar needed).
+#[test]
+fn compare_known_help_lists_tolerance_flags() {
+    let assert = lmt().args(["visual", "compare-known", "--help"]).assert().success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    for flag in ["--max-size-mm", "--max-dist-mm", "--max-angle-deg"] {
+        assert!(stdout.contains(flag), "compare-known --help must list {flag}:\n{stdout}");
+    }
+}
+
+/// L3: the --min-views flag is registered + documented on plan-capture (no sidecar needed).
+#[test]
+fn plan_capture_help_lists_min_views() {
+    let assert = lmt().args(["visual", "plan-capture", "--help"]).assert().success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(
+        stdout.contains("--min-views"),
+        "plan-capture --help must list --min-views:\n{stdout}"
+    );
+}
+
+/// L3 end-to-end (real sidecar): `--min-views 3` is accepted and threads to the planner;
+/// every reconstructable cabinet in the returned plan honors the raised view requirement.
+#[test]
+#[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary/wrapper"]
+fn plan_capture_min_views_threads_end_to_end() {
+    let sidecar = match gp_sidecar() {
+        Some(s) => s,
+        None => { eprintln!("skip: LMT_VBA_SIDECAR_PATH unset"); return; }
+    };
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 2, 2);
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &sidecar)
+        .args([
+            "--json", "visual", "plan-capture", proj.to_str().unwrap(), "MAIN",
+            "--image-size", "1920x1080", "--hfov-deg", "60", "--standoff", "2000..4000",
+            "--height", "400..2200", "--trials", "6", "--min-views", "3",
+        ])
+        .assert()
+        .success();
+    let env = gp_stdout_env(assert.get_output());
+    assert_eq!(env["ok"], true);
+    for c in env["data"]["coverage"].as_array().unwrap() {
+        if c["reconstructable"] == true {
+            assert!(
+                c["n_views"].as_u64().unwrap() >= 3,
+                "min_views=3 not honored for a reconstructable cabinet: {c}"
+            );
+        }
+    }
+}
+
 /// Happy uniform path: pattern_meta.json is schema v2 with per-cabinet geometry;
 /// a 540px square cabinet reproduces the legacy 9x9 board.
 #[test]
@@ -2131,6 +2185,30 @@ fn reconstruct_structured_light_dry_run_writes_nothing() {
     let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
     assert_eq!(env["ok"], true);
     assert_eq!(env["data"]["dry_run"], true);
+    assert!(!proj.join("measurements/measured.yaml").exists());
+}
+
+#[test]
+fn reconstruct_structured_light_auto_dry_run_writes_nothing() {
+    // `--intrinsics auto` must be accepted by clap (no file needed) and reach the
+    // dry-run payload verbatim (the sidecar, not the CLI, branches on "auto").
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 2, 1);
+    let meta = tmp.path().join("sl_meta.json");
+    std::fs::write(&meta, "{}").unwrap();
+    let c0 = tmp.path().join("c0.json");
+    std::fs::write(&c0, "{}").unwrap();
+    let c1 = tmp.path().join("c1.json");
+    std::fs::write(&c1, "{}").unwrap();
+    let assert = lmt().args(["--json", "--dry-run", "visual", "reconstruct-structured-light",
+        proj.to_str().unwrap(), "MAIN", "--sl-meta", meta.to_str().unwrap(),
+        "--intrinsics", "auto",
+        "--corr", c0.to_str().unwrap(), "--corr", c1.to_str().unwrap()])
+        .assert().success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["data"]["dry_run"], true);
+    assert_eq!(env["data"]["intrinsics"], "auto");
     assert!(!proj.join("measurements/measured.yaml").exists());
 }
 

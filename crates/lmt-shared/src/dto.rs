@@ -239,6 +239,23 @@ pub struct CabinetPoseSummary {
     pub quality: String,
 }
 
+fn default_intrinsics_source() -> String {
+    "file".to_string()
+}
+
+/// One non-fatal warning surfaced by a sidecar-backed command. The sidecar emits these
+/// as streaming `WarningEvent`s; the adapter collects them off the event stream and rides
+/// them on the result so they survive the headless CLI path (where no progress consumer is
+/// attached and the live events would otherwise be dropped). Codes today: `no_intrinsics_anchor`,
+/// `high_rejection`, `cabinet_quality`, `missing_covariance`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct WarningDto {
+    pub code: String,
+    pub message: String,
+    #[serde(default)]
+    pub cabinet: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct VisualReconstructResult {
     pub screen_id: String,
@@ -254,6 +271,14 @@ pub struct VisualReconstructResult {
     /// charuco/fix_root_cabinet 路径恒为 0（不做配准）。
     #[serde(default)]
     pub procrustes_align_rms_m: f64,
+    /// "file" (provided intrinsics) | "auto_self_calibrated" (--intrinsics auto).
+    #[serde(default = "default_intrinsics_source")]
+    pub intrinsics_source: String,
+    /// Non-fatal warnings collected from the sidecar run (e.g. `no_intrinsics_anchor` when
+    /// `--intrinsics auto` self-calibrated without an anchor, `high_rejection`/`cabinet_quality`/
+    /// `missing_covariance` per cabinet). Empty = clean run. See [`WarningDto`].
+    #[serde(default)]
+    pub warnings: Vec<WarningDto>,
     pub cabinets: Vec<CabinetPoseSummary>,
 }
 
@@ -309,6 +334,18 @@ pub struct CalibrateResult {
     pub intrinsics_path: String,
     pub reproj_error_px: f64,
     pub frames_used: u32,
+    /// "radial2" (k1,k2) | "full" (k1,k2,k3+tangential). The checkerboard `visual
+    /// calibrate` path calls cv2.calibrateCamera with no CALIB_FIX flags, so it is "full".
+    #[serde(default)]
+    pub distortion_model: String,
+    #[serde(default)]
+    pub focal_stddev_px: Option<[f64; 2]>,
+    #[serde(default)]
+    pub pp_stddev_px: Option<[f64; 2]>,
+    /// Non-fatal warnings collected from the sidecar run (e.g. `no_intrinsics_anchor` when
+    /// `--intrinsics-crosscheck` was omitted on a curved wall). Empty = clean run.
+    #[serde(default)]
+    pub warnings: Vec<WarningDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -432,6 +469,12 @@ mod tests {
             ba_observations_used: 94,
             ba_rejected: 2,
             procrustes_align_rms_m: 0.0017,
+            intrinsics_source: "file".into(),
+            warnings: vec![WarningDto {
+                code: "no_intrinsics_anchor".into(),
+                message: "auto intrinsics solved without an independent anchor".into(),
+                cabinet: None,
+            }],
             cabinets: vec![cabinet],
         };
         let json = serde_json::to_string(&vr).unwrap();
@@ -441,6 +484,10 @@ mod tests {
         assert_eq!(back.screen_id, "MAIN");
         assert_eq!(back.cabinets[0].cabinet_id, "MAIN_V001_R001");
         assert_eq!(back.cabinets[0].observed_views, 8);
+        // warnings survive the round-trip (the headless contract): WarningDto derives serde.
+        assert_eq!(back.warnings.len(), 1);
+        assert_eq!(back.warnings[0].code, "no_intrinsics_anchor");
+        assert_eq!(back.warnings[0].cabinet, None);
 
         // SimulateResult
         let sim = SimulateResult {
@@ -470,6 +517,10 @@ mod tests {
             intrinsics_path: "intrinsics.yaml".into(),
             reproj_error_px: 0.25,
             frames_used: 30,
+            distortion_model: "radial2".into(),
+            focal_stddev_px: Some([0.4, 0.4]),
+            pp_stddev_px: Some([1.1, 1.2]),
+            warnings: vec![],
         };
         let cal_json = serde_json::to_string(&cal).unwrap();
         let cal_back: CalibrateResult = serde_json::from_str(&cal_json).unwrap();
@@ -641,6 +692,11 @@ pub struct CabinetCoverage {
     pub low_observation: bool,
     pub bridged: bool,
     pub pass: bool,
+    /// WHY a cabinet fails (observability diagnostic, not a gate): "low_coverage"
+    /// (too few views/points or unbridged) vs "low_parallax" (count-reconstructable but
+    /// p95 over target = degenerate baseline). None when the cabinet passes.
+    #[serde(default)]
+    pub fail_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

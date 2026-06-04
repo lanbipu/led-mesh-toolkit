@@ -49,11 +49,38 @@ async fn mock_sidecar_round_trip() {
     }
 
     let value = task.await.unwrap().unwrap();
-    let result: lmt_adapter_visual_ba::ipc::ResultData = serde_json::from_value(value).unwrap();
+    let result: lmt_adapter_visual_ba::ipc::ResultData =
+        serde_json::from_value(value.data).unwrap();
     assert!(events
         .iter()
         .any(|e| matches!(e, lmt_adapter_visual_ba::Event::Progress(_))));
     assert!(result.frame_strategy_used == lmt_adapter_visual_ba::FrameStrategy::NominalAnchoring);
+    env::remove_var("LMT_VBA_SIDECAR_PATH");
+}
+
+#[tokio::test]
+async fn run_sidecar_collects_warnings_off_stream_when_headless() {
+    // The headless CLI/app path passes progress_tx: None, so the sidecar's live
+    // WarningEvents are NOT forwarded anywhere. They must still be collected onto
+    // SidecarOutput.warnings (in stream order, cabinet field preserved) — this is the
+    // durable carrier the general warnings channel relies on.
+    let _guard = ENV_LOCK.lock().unwrap();
+    env::set_var(
+        "LMT_VBA_SIDECAR_PATH",
+        fixture("mock_sidecar_warning.sh").to_str().unwrap(),
+    );
+    let out = run_sidecar(SidecarRequest {
+        subcommand: "reconstruct".into(),
+        payload: json!({"command":"reconstruct","version":1}),
+        progress_tx: None,
+        cancel: None,
+    })
+    .await
+    .unwrap();
+    let codes: Vec<&str> = out.warnings.iter().map(|w| w.code.as_str()).collect();
+    assert_eq!(codes, ["no_intrinsics_anchor", "high_rejection"]);
+    assert_eq!(out.warnings[0].cabinet, None);
+    assert_eq!(out.warnings[1].cabinet.as_deref(), Some("MAIN_V000_R000"));
     env::remove_var("LMT_VBA_SIDECAR_PATH");
 }
 
@@ -110,7 +137,8 @@ async fn slow_progress_consumer_does_not_block_stdout() {
         .expect("must not hang on slow consumer")
         .expect("task panicked")
         .expect("sidecar should still complete");
-    let result: lmt_adapter_visual_ba::ipc::ResultData = serde_json::from_value(value).unwrap();
+    let result: lmt_adapter_visual_ba::ipc::ResultData =
+        serde_json::from_value(value.data).unwrap();
     assert_eq!(
         result.frame_strategy_used,
         lmt_adapter_visual_ba::FrameStrategy::NominalAnchoring

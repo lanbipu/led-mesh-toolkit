@@ -5,6 +5,7 @@ from pathlib import Path
 from lmt_vba_sidecar import reconstruct
 from lmt_vba_sidecar.observability import check_observability
 from lmt_vba_sidecar.capture_planner import gates
+from lmt_vba_sidecar.ipc import PlanCaptureInput
 
 
 def test_gate_constants_mirror_reconstruct():
@@ -12,6 +13,14 @@ def test_gate_constants_mirror_reconstruct():
     # constants in reconstruct.py — assert exact mirror.
     assert gates.MIN_PNP_CORNERS == reconstruct.MIN_PNP_CORNERS
     assert gates.QUALITY_MIN_VIEWS == reconstruct.QUALITY_MIN_VIEWS
+
+
+def test_plan_capture_min_views_default_mirrors_gate():
+    # The plan-capture REQUEST default must equal the reconstruct observation gate, or the
+    # planner would advertise reconstructability at a looser bar than reconstruct enforces.
+    # Pins the literal-2 pydantic default (and, by contract, the Rust default + capture-card
+    # literal) so a future gates.MIN_VIEWS bump forces this default to be updated too.
+    assert PlanCaptureInput.model_fields["min_views"].default == gates.MIN_VIEWS
 
 
 def test_gate_constants_mirror_check_observability_call_sites():

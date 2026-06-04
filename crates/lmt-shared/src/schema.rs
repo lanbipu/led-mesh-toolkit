@@ -63,6 +63,7 @@ pub fn dump_all() -> Value {
     add!("InstructionCardResult", dto::InstructionCardResult);
 
     // Visual reconstruction (camera-branch)
+    add!("WarningDto", dto::WarningDto);
     add!("CabinetPoseSummary", dto::CabinetPoseSummary);
     add!("VisualReconstructResult", dto::VisualReconstructResult);
     add!("SimulateResult", dto::SimulateResult);
@@ -161,6 +162,27 @@ mod tests {
         assert!(props.contains_key("ba_observations_total"));
         assert!(props.contains_key("ba_observations_used"));
         assert!(props.contains_key("ba_rejected"));
+    }
+
+    #[test]
+    fn visual_reconstruct_result_schema_has_intrinsics_source() {
+        let v = dump_all();
+        let props = v["types"]["VisualReconstructResult"]["properties"]
+            .as_object()
+            .unwrap();
+        assert!(props.contains_key("intrinsics_source"));
+        assert!(props.contains_key("warnings"));
+    }
+
+    #[test]
+    fn calibrate_result_schema_has_distortion_fields() {
+        let v = dump_all();
+        let props = v["types"]["CalibrateResult"]["properties"]
+            .as_object()
+            .unwrap();
+        assert!(props.contains_key("distortion_model"));
+        assert!(props.contains_key("focal_stddev_px"));
+        assert!(props.contains_key("pp_stddev_px"));
     }
 
     #[test]
