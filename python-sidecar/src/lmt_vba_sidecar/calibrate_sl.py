@@ -135,7 +135,8 @@ def run_calibrate_structured_light(cmd: CalibrateStructuredLightInput) -> int:
         return _err(refusal.code, refusal.message)
     if anchor_K is None and res.coplanar_ratio >= COPLANAR_RATIO_MIN:
         write_event(WarningEvent(event="warning", code="no_intrinsics_anchor",
-            message="no independent intrinsics anchor; anisotropic pitch/1:1 absorption is unguarded"))
+            message="no independent intrinsics anchor; anisotropic pitch/1:1 absorption is "
+                    "unguarded — pass --intrinsics-crosscheck <anchor.json> to validate"))
     K, dist, rms = res.K, res.dist, res.rms
     pp_std, foc_std = res.pp_stddev_px, res.focal_stddev_px
 

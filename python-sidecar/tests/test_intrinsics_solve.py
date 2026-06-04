@@ -102,7 +102,16 @@ def test_radial2_fallback_K_matches_pure_radial_solve():
 
 
 # --- Task 3: anti-absorption cross-check ---
-from lmt_vba_sidecar.intrinsics_solve import crosscheck_intrinsics, IntrinsicsResult
+from lmt_vba_sidecar.intrinsics_solve import crosscheck_intrinsics, IntrinsicsResult, intrinsics_K_problem
+
+
+def test_intrinsics_K_problem_rejects_malformed_accepts_valid():
+    # The shared validator the cross-check AND the file-intrinsics loader both use.
+    assert intrinsics_K_problem(ANCHOR_K) is None                                  # valid
+    assert intrinsics_K_problem([3000.0, 0.0, 2000.0]) is not None                 # 1-D, not 3x3
+    assert intrinsics_K_problem(np.full((3, 3), np.nan)) is not None               # non-finite
+    assert intrinsics_K_problem([[-3000.0, 0, 2000.0], [0, 3000.0, 1500.0], [0, 0, 1.0]]) is not None  # neg fx
+    assert intrinsics_K_problem([[3000.0, 0, 2000.0], [0, 0.0, 1500.0], [0, 0, 1.0]]) is not None      # fy = 0
 
 
 def _res(K, dist=None, coplanar=0.3):
@@ -162,12 +171,14 @@ def test_crosscheck_refuses_malformed_anchor_shape():
 
 
 def test_crosscheck_refuses_negative_focal_anchor():
-    # Codex P2: a finite 3x3 anchor with NEGATIVE fx/fy is physically invalid, but
-    # focal_dev = abs(fx - afx)/afx divides by a negative afx (-> negative -> below the
-    # threshold) while a sign-symmetric aspect/distortion matches, so it would SILENTLY pass.
-    # It must be rejected as invalid_input, not let the guard through.
+    # Codex P2: a finite 3x3 anchor with NEGATIVE fx/fy is physically invalid. The res here
+    # is constructed so EVERY comparison term is symmetric WITHOUT the focal-sign guard:
+    # focal_dev = abs(3000 - (-3000))/(-3000) = -2.0 (< threshold), aspect = |1 - (-3000/-3000)|
+    # = 0, radial/tangential both 0 (dist all zero) — so the OLD code returned None (SILENT
+    # PASS, the bug). The positive-fx/fy validator must turn that into invalid_input. (If this
+    # used a non-symmetric dist the distortion term would fire and mask the focal-sign bug.)
     neg_K = np.array([[-3000.0, 0, 2000.0], [0, -3000.0, 1500.0], [0, 0, 1.0]])
-    res = _res(ANCHOR_K, dist=[-0.12, 0.04, 0, 0, 0.02])   # a valid positive self-cal
+    res = _res(ANCHOR_K)                                    # positive fx/fy, zero distortion
     refusal = crosscheck_intrinsics(res, anchor_K=neg_K, anchor_dist=np.zeros(5))
     assert refusal is not None and refusal.code == "invalid_input"
 

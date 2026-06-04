@@ -11,7 +11,9 @@ use std::path::Path;
 /// Print any non-fatal warnings a sidecar-backed command collected onto its result.
 /// The sidecar's live WarningEvents are dropped on this headless path (no progress
 /// consumer), so the durable `warnings` field is the only place they surface in human mode;
-/// `--json` carries the same list in the envelope. No-op when the run was clean.
+/// `--json` carries the same list in the envelope. Written to STDERR (matching the
+/// total-station import warnings convention) so a `> result.txt` redirect of stdout stays
+/// clean. No-op when the run was clean.
 fn print_warnings(warnings: &[lmt_shared::dto::WarningDto]) {
     for w in warnings {
         let loc = w
@@ -19,7 +21,7 @@ fn print_warnings(warnings: &[lmt_shared::dto::WarningDto]) {
             .as_deref()
             .map(|c| format!(" ({c})"))
             .unwrap_or_default();
-        let _ = writeln!(std::io::stdout(), "  warning [{}]{} {}", w.code, loc, w.message);
+        let _ = writeln!(std::io::stderr(), "  warning [{}]{} {}", w.code, loc, w.message);
     }
 }
 

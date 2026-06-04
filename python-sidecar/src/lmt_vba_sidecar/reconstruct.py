@@ -690,7 +690,7 @@ def solve_and_emit(
             write_event(WarningEvent(
                 event="warning", code="missing_covariance",
                 message=f"cabinet {cid} has no usable BA covariance; falling back to isotropic 5mm",
-                cabinet=f"MAIN_{cid}",
+                cabinet=cid,
             ))
             uncertainty = Uncertainty(isotropic=FALLBACK_ISOTROPIC_M)
         measured_points.append(MeasuredPoint(

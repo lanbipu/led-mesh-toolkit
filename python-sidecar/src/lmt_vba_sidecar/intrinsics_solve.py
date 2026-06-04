@@ -182,6 +182,20 @@ def _tangential_disp_px(dist, fx) -> tuple[float, float]:
     return abs(fx) * dx, abs(fx) * dy
 
 
+def intrinsics_K_problem(K) -> str | None:
+    """Return a human reason if K is not a usable camera matrix — must be a FINITE 3x3 with
+    POSITIVE fx/fy — else None. Shared by the anti-absorption anchor check AND the
+    file-intrinsics loader so every user-supplied K is rejected by the same rule: a non-3x3
+    array IndexErrors downstream, and a negative focal silently flips projection handedness
+    (mirror-image reconstruction) instead of failing."""
+    aK = np.asarray(K, float)
+    if aK.shape != (3, 3) or not np.isfinite(aK).all():
+        return "K must be a finite 3x3 matrix"
+    if float(aK[0, 0]) <= 0.0 or float(aK[1, 1]) <= 0.0:
+        return "K must have positive fx/fy"
+    return None
+
+
 def crosscheck_intrinsics(res: IntrinsicsResult, *, anchor_K, anchor_dist=None) -> IntrinsicsRefused | None:
     """Anti-absorption guard (spec P6/A.1.3). Compares THREE things vs an independent
     anchor — focal (class a), fx/fy aspect (class b), and distortion magnitude (class c).
@@ -194,16 +208,14 @@ def crosscheck_intrinsics(res: IntrinsicsResult, *, anchor_K, anchor_dist=None) 
         # advertised invalid_input — 1-D / non-3x3), or SILENTLY pass the guard: a NaN makes
         # every `> threshold` False, and a NEGATIVE focal makes `focal_dev = abs(fx-afx)/afx`
         # divide by a negative afx so the result is < the threshold while a sign-symmetric
-        # aspect/distortion still matches. Reject shape / non-finite / non-positive focal up
-        # front (Codex P2 x2).
+        # aspect/distortion still matches. Reject via the shared K validator up front.
         aK = np.asarray(anchor_K, float)
         a_dist = np.zeros(5) if anchor_dist is None else np.asarray(anchor_dist, float)
-        if (aK.shape != (3, 3) or not np.isfinite(aK).all() or not np.isfinite(a_dist).all()
-                or float(aK[0, 0]) <= 0.0 or float(aK[1, 1]) <= 0.0):
+        prob = intrinsics_K_problem(aK)
+        if prob is not None or not np.isfinite(a_dist).all():
             return IntrinsicsRefused(
                 "invalid_input",
-                "crosscheck anchor malformed: K must be a finite 3x3 matrix with positive "
-                "fx/fy and finite dist")
+                f"crosscheck anchor malformed: {prob or 'dist must be finite'}")
         afx, afy = float(aK[0, 0]), float(aK[1, 1])
         focal_dev = abs(fx - afx) / afx if afx else 1.0
         aspect_dev = abs((fx / fy) - (afx / afy)) if (fy and afy) else 1.0

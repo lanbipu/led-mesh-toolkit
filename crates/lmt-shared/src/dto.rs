@@ -484,6 +484,10 @@ mod tests {
         assert_eq!(back.screen_id, "MAIN");
         assert_eq!(back.cabinets[0].cabinet_id, "MAIN_V001_R001");
         assert_eq!(back.cabinets[0].observed_views, 8);
+        // warnings survive the round-trip (the headless contract): WarningDto derives serde.
+        assert_eq!(back.warnings.len(), 1);
+        assert_eq!(back.warnings[0].code, "no_intrinsics_anchor");
+        assert_eq!(back.warnings[0].cabinet, None);
 
         // SimulateResult
         let sim = SimulateResult {

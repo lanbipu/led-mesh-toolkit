@@ -54,6 +54,7 @@ from lmt_vba_sidecar.io_utils import write_event
 from lmt_vba_sidecar.intrinsics_solve import (
     IntrinsicsRefused,
     crosscheck_intrinsics,
+    intrinsics_K_problem,
     solve_sl_intrinsics,
 )
 from lmt_vba_sidecar.ipc import (
@@ -118,7 +119,8 @@ def _self_calibrate_inline(meta, corr_files, cmd):
     # it off the event stream onto the result so it survives the headless CLI path.
     if anchor_K is None:
         write_event(WarningEvent(event="warning", code="no_intrinsics_anchor",
-            message="auto intrinsics solved without an independent anchor; anisotropic pitch/1:1 unguarded"))
+            message="auto intrinsics solved without an independent anchor; anisotropic pitch/1:1 "
+                    "unguarded — pass --intrinsics-crosscheck <anchor.json> to validate"))
     return res.K, res.dist, image_size
 
 
@@ -174,6 +176,13 @@ def run_reconstruct_structured_light(cmd: ReconstructStructuredLightInput) -> in
         try:
             intr = json.loads(pathlib.Path(cmd.intrinsics_path).read_text())
             K = np.array(intr["K"], dtype=float)
+            # Validate the trusted-file K by the SAME rule the cross-check applies to the
+            # anchor: a non-3x3 or negative-focal file K (hand-edited / sign-flipped export)
+            # would otherwise feed straight into BA and silently produce a mirror-image or
+            # divergent result instead of a clean error.
+            prob = intrinsics_K_problem(K)
+            if prob is not None:
+                raise ValueError(prob)
             dist = np.array(intr["dist_coeffs"], dtype=float)
             image_size = tuple(int(v) for v in intr["image_size"])
             intrinsics_source = "file"
