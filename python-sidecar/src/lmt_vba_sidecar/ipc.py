@@ -126,9 +126,12 @@ class ReconstructStructuredLightInput(BaseModel):
     correspondence_paths: Annotated[list[str], Field(min_length=2)]
     sl_meta_path: str
     # Camera intrinsics JSON (visual calibrate output): {K, dist_coeffs, image_size}.
+    # The reserved value "auto" runs inline self-calibration from these same corr files.
     intrinsics_path: str
     # If set, the sidecar writes cabinet_pose_report.json here (spec §9).
     pose_report_path: str | None = None
+    # Optional independent intrinsics anchor for the --intrinsics auto cross-check.
+    crosscheck_intrinsics_path: str | None = None
 
 
 class CalibrateStructuredLightInput(BaseModel):
@@ -326,6 +329,8 @@ class ResultData(BaseModel):
     # Optional for forward/backward compat with subcommands that don't run
     # Procrustes (calibrate, generate_pattern) and with older sidecar versions.
     procrustes_align_rms_m: float = Field(default=0.0, ge=0.0)
+    # "file" (provided intrinsics) | "auto_self_calibrated" (--intrinsics auto).
+    intrinsics_source: str = "file"
 
 
 class ProgressEvent(BaseModel):

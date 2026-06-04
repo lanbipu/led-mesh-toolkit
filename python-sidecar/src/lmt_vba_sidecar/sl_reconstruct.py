@@ -51,17 +51,54 @@ import pathlib
 import numpy as np
 
 from lmt_vba_sidecar.io_utils import write_event
+from lmt_vba_sidecar.intrinsics_solve import (
+    COPLANAR_RATIO_MIN,
+    IntrinsicsRefused,
+    crosscheck_intrinsics,
+    solve_sl_intrinsics,
+)
 from lmt_vba_sidecar.ipc import (
-    ErrorEvent, ProgressEvent, ReconstructStructuredLightInput, StructuredLightMeta,
+    ErrorEvent, ProgressEvent, ReconstructStructuredLightInput, StructuredLightMeta, WarningEvent,
 )
 from lmt_vba_sidecar.model_constrained_ba import Observation
 from lmt_vba_sidecar.nominal import (
     nominal_cabinet_centers_model_frame,
     nominal_cabinet_normals_model_frame,
+    nominal_dot_positions_world,
 )
 from lmt_vba_sidecar.observability import ObservabilityError, check_observability
 from lmt_vba_sidecar.reconstruct import ROOT_CABINET, _undistort_obs, solve_and_emit, stage_a_prune
 from lmt_vba_sidecar.sl_geometry import sl_cabinet_corners_mm, sl_local_mm
+
+
+def _self_calibrate_inline(meta, corr_files, cmd):
+    """Inline self-cal for --intrinsics auto: assemble per-pose object/image points
+    from the reconstruct's own corr (each cabinet a nominal planar target), solve K,
+    and run the anti-absorption cross-check. Returns (K, dist, image_size) or raises
+    IntrinsicsRefused. Frame-matched (same shots as the reconstruction)."""
+    dot_world = nominal_dot_positions_world(meta, cmd.project.cabinet_array, cmd.project.shape_prior)
+    object_points, image_points = [], []
+    image_size = tuple(int(v) for v in corr_files[0].camera_image_size)
+    for cf in corr_files:
+        objp = [dot_world[int(p.id)] for p in cf.points if int(p.id) in dot_world]
+        imgp = [[p.x, p.y] for p in cf.points if int(p.id) in dot_world]
+        if len(objp) >= 4:
+            object_points.append(np.asarray(objp, dtype=np.float32))
+            image_points.append(np.asarray(imgp, dtype=np.float32))
+    res = solve_sl_intrinsics(object_points, image_points, image_size, max_rms_px=1.5,
+                              allow_full_distortion=bool(cmd.crosscheck_intrinsics_path))
+    anchor_K = anchor_dist = None
+    if cmd.crosscheck_intrinsics_path:
+        anchor = json.loads(pathlib.Path(cmd.crosscheck_intrinsics_path).read_text())
+        anchor_K = np.array(anchor["K"], float)
+        anchor_dist = np.array(anchor.get("dist_coeffs", [0, 0, 0, 0, 0]), float)
+    refusal = crosscheck_intrinsics(res, anchor_K=anchor_K, anchor_dist=anchor_dist)
+    if refusal is not None:
+        raise refusal
+    if anchor_K is None and res.coplanar_ratio >= COPLANAR_RATIO_MIN:
+        write_event(WarningEvent(event="warning", code="no_intrinsics_anchor",
+            message="auto intrinsics solved without an independent anchor; anisotropic pitch/1:1 unguarded"))
+    return res.K, res.dist, image_size
 
 
 def run_reconstruct_structured_light(cmd: ReconstructStructuredLightInput) -> int:
@@ -104,15 +141,24 @@ def run_reconstruct_structured_light(cmd: ReconstructStructuredLightInput) -> in
         write_event(ErrorEvent(event="error", code="invalid_input", message=str(e), fatal=True))
         return 1
 
-    # --- 3. intrinsics ---
-    try:
-        intr = json.loads(pathlib.Path(cmd.intrinsics_path).read_text())
-        K = np.array(intr["K"], dtype=float)
-        dist = np.array(intr["dist_coeffs"], dtype=float)
-        image_size = tuple(int(v) for v in intr["image_size"])
-    except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
-        write_event(ErrorEvent(event="error", code="intrinsics_invalid", message=f"intrinsics load failed: {e}", fatal=True))
-        return 1
+    # --- 3. intrinsics (file path OR inline self-cal via the "auto" sentinel) ---
+    if cmd.intrinsics_path == "auto":
+        try:
+            K, dist, image_size = _self_calibrate_inline(meta, corr_files, cmd)
+            intrinsics_source = "auto_self_calibrated"
+        except IntrinsicsRefused as e:
+            write_event(ErrorEvent(event="error", code=e.code, message=e.message, fatal=True))
+            return 1
+    else:
+        try:
+            intr = json.loads(pathlib.Path(cmd.intrinsics_path).read_text())
+            K = np.array(intr["K"], dtype=float)
+            dist = np.array(intr["dist_coeffs"], dtype=float)
+            image_size = tuple(int(v) for v in intr["image_size"])
+            intrinsics_source = "file"
+        except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+            write_event(ErrorEvent(event="error", code="intrinsics_invalid", message=f"intrinsics load failed: {e}", fatal=True))
+            return 1
     for c in corr_files:
         if tuple(c.camera_image_size) != image_size:
             write_event(ErrorEvent(event="error", code="invalid_input",
@@ -197,4 +243,5 @@ def run_reconstruct_structured_light(cmd: ReconstructStructuredLightInput) -> in
         per_cabinet_views=per_cabinet_views, per_cabinet_points=per_cabinet_points,
         corners_local_provider=corners_provider, pose_report_path=cmd.pose_report_path,
         n_rejected_pre=n_rej_stage_a, rejected_per_cab_pre=rej_per_cab_stage_a,
-        gauge_strategy="align_to_nominal")  # SL output lands in the nominal design frame
+        gauge_strategy="align_to_nominal",  # SL output lands in the nominal design frame
+        intrinsics_source=intrinsics_source)

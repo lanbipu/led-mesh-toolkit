@@ -483,6 +483,7 @@ def solve_and_emit(
     n_rejected_pre: int = 0,
     rejected_per_cab_pre: dict[int, int] | None = None,
     gauge_strategy: str = "fix_root_cabinet",
+    intrinsics_source: str = "file",
 ) -> int:
     """Shared init -> model_constrained_ba -> per-cabinet geometry -> report ->
     ResultEvent. Used by both run_reconstruct (charuco) and
@@ -723,6 +724,7 @@ def solve_and_emit(
             ),
             frame_strategy_used="nominal_anchoring",  # vestigial label; see gauge_strategy
             procrustes_align_rms_m=align_rms_mm / 1000.0,  # mm -> m (0.0 for fix_root_cabinet)
+            intrinsics_source=intrinsics_source,
         ),
     ))
     return 0

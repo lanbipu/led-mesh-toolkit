@@ -233,3 +233,61 @@ def test_run_rejects_provenance_mismatch(tmp_path):
         "correspondence_paths": [str(tmp_path / "c0.json"), str(tmp_path / "c1.json")],
         "sl_meta_path": str(meta_path), "intrinsics_path": str(intr_path)})
     assert run_reconstruct_structured_light(cmd) == 1
+
+
+# Codex #7 fix: shape_prior CANNOT be the bare string "curved" (IPC ShapePrior accepts only
+# Literal "flat" or {"curved": {"radius_mm": ...}}). This uses the proven FLAT 2-cabinet
+# synthetic (sl_local_mm + per-cabinet translation, MM — the geometry the reconstruct BA
+# expects) so the BA fits, with an anchor + NOISE-FREE projection so the flat-wall self-cal
+# recovers ~K_TRUE with ~zero distortion and the cross-check passes (a flat wall's distortion
+# only overfits in the presence of pixel noise).
+def _write_anchor(tmp_path, K, name="anchor.json"):
+    p = tmp_path / name
+    p.write_text(json.dumps({"K": K.tolist(), "dist_coeffs": [0, 0, 0, 0, 0], "image_size": [4000, 3000]}))
+    return p
+
+
+def test_intrinsics_auto_self_calibrates(tmp_path, capsys):
+    meta_path = _gen_two_cabinet_meta(tmp_path)          # FLAT 2-cabinet wall (MM via sl_local_mm)
+    meta = json.loads(meta_path.read_text())
+    _, K = _write_intrinsics(tmp_path)                   # K_TRUE = synthesis camera
+    anchor = _write_anchor(tmp_path, K)                  # independent anchor == K_TRUE
+    rect_by_cr = {(c["col"], c["row"]): c["input_rect_px"] for c in meta["cabinets"]}
+    pitch_by_cr = {(c["col"], c["row"]): c["pixel_pitch_mm"] for c in meta["cabinets"]}
+    cab_by_id = {d["id"]: tuple(d["cabinet"]) for d in meta["dots"]}
+    cab_world_t = {(0, 0): np.zeros(3), (1, 0): np.array([500.0, 0.0, 0.0])}
+    truth = {}
+    for d in meta["dots"]:
+        cr = cab_by_id[d["id"]]
+        truth[d["id"]] = sl_local_mm(tuple(rect_by_cr[cr]), d["u"], d["v"],
+                                     pitch_by_cr[cr][0], pitch_by_cr[cr][1]) + cab_world_t[cr]
+    sha = hashlib.sha256(meta_path.read_bytes()).hexdigest()
+    # Standoff close enough that the ~1000x500mm wall fills > 20% of both image axes (the
+    # self-cal coverage gate), oblique for focal/pp observability.
+    poses = [look_at_pose(np.array([px, py, -1800.0]), np.array([250.0, 0.0, 0.0]))
+             for (px, py) in [(-700, -300), (-300, 300), (300, -300), (700, 300), (0, 500), (0, -500)]]
+    corr_paths = []
+    for vi, (R, t) in enumerate(poses):
+        pts = [{"id": d["id"], "u": d["u"], "v": d["v"],
+                **dict(zip(("x", "y"), project_point(K, R, t, truth[d["id"]]).tolist()))}  # noise-free
+               for d in meta["dots"]]
+        cp = tmp_path / f"corr_{vi}.json"
+        cp.write_text(json.dumps({"schema_version": 1, "screen_id": "MAIN", "sl_meta_sha256": sha,
+            "screen_resolution": meta["screen_resolution"], "camera_image_size": [4000, 3000],
+            "source_input": f"/cap/p{vi}.mp4", "points": pts}))
+        corr_paths.append(str(cp))
+    report = tmp_path / "rep.json"
+    cmd = ReconstructStructuredLightInput.model_validate({
+        "command": "reconstruct_structured_light", "version": 1,
+        "project": {"screen_id": "MAIN", "cabinet_array": {"cols": 2, "rows": 1,
+                    "absent_cells": [], "cabinet_size_mm": [500, 500]}},   # default shape_prior="flat"
+        "correspondence_paths": corr_paths, "sl_meta_path": str(meta_path),
+        "intrinsics_path": "auto", "crosscheck_intrinsics_path": str(anchor),
+        "pose_report_path": str(report)})
+    assert run_reconstruct_structured_light(cmd) == 0
+    result = [json.loads(l) for l in capsys.readouterr().out.splitlines()
+              if l.strip() and json.loads(l).get("event") == "result"][-1]
+    assert result["data"]["intrinsics_source"] == "auto_self_calibrated"
+    by_id = {c["cabinet_id"]: c for c in json.loads(report.read_text())["cabinet_poses"]}
+    rel = np.array(by_id["V001_R000"]["position_mm"]) - np.array(by_id["V000_R000"]["position_mm"])
+    assert np.linalg.norm(rel - np.array([500.0, 0.0, 0.0])) < 8.0  # self-cal noisier than given K
