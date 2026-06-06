@@ -32,6 +32,7 @@ vitest.config.js
 
 # 临时输出
 /tmp-output/
+/_walkthrough/
 *.log
 .playwright-mcp/
 .claude/knowledge.json
