@@ -310,7 +310,11 @@ RUN_ID=$(./target/debug/lmt --json --db $LMT_DB reconstruct list-runs $LMT_WORK/
   --dst $LMT_WORK/curved-flat/output_neutral.obj --yes
 ```
 
-预期：生成 `.obj` 文件。`disguise` target 套 disguise 约定（+Y up / +Z 朝观众 / flipY + winding 反转）；`neutral` 保持原始右手系（+Z up）。
+预期：生成 `.obj` 文件。target 可选 `disguise` / `unreal` / `neutral`：
+- `disguise`：+Y up / +Z 朝观众 / flipY + winding 反转
+- `unreal`：Unreal Engine 约定
+- `neutral`：原始右手系（+Z up）
+
 实测：两种 target 均 160 行，45 vertices / 64 triangles。OBJ 头注释标明坐标系约定。
 
 ### 7.2 从 pose report 导出（pose-obj）
@@ -318,6 +322,14 @@ RUN_ID=$(./target/debug/lmt --json --db $LMT_DB reconstruct list-runs $LMT_WORK/
 ```bash
 # 需要先通过 visual reconstruct 产出 cabinet_pose_report.json
 # 这里先跳过，在 §9 visual 管线完成后回来跑
+./target/debug/lmt --json --db $LMT_DB export pose-obj \
+  <cabinet_pose_report.json> \
+  disguise \
+  --out $LMT_WORK/curved-flat/world_mesh.obj \
+  --yes
+  # target: disguise / unreal / neutral
+  # --root <cabinet_id>  以指定箱体为基准重定位
+  # --ground             让下边缘贴地
 ```
 
 验证 OBJ：
@@ -377,10 +389,11 @@ EOF
 
 ```bash
 ./target/debug/lmt --json visual eval $LMT_WORK/sim_flat --method charuco
+  # --seed-matrix 0,1,2（可选：逗号分隔多 seed 评估，默认 [0]）
 ```
 
 预期：gauge-invariant 指标（尺寸/距离/角度误差），不写文件。
-实测返回：`max_size_error_mm: 0.0, max_distance_error_mm: 0.12, max_angle_error_deg: 0.13`。
+实测返回：`method: charuco, max_size_error_mm: 0.0, max_distance_error_mm: 0.12, max_angle_error_deg: 0.13, seeds: [0]`。
 
 ### 8.3 对比已知几何
 
@@ -389,8 +402,11 @@ EOF
 # 这里用 monitor-bench 的 known_geometry.json 示例结构
 ./target/debug/lmt --json visual compare-known \
   <pose_report.json> \
-  examples/monitor-bench/known_geometry.json \
-  --max-size-mm 2.0 --max-dist-mm 3.0 --max-angle-deg 0.3
+  examples/monitor-bench/known_geometry.json
+  # 可选容差参数（覆盖默认值）：
+  # --max-size-mm 2.0    尺寸误差阈值（默认 2.0mm）
+  # --max-dist-mm 3.0    间距误差阈值（默认 3.0mm）
+  # --max-angle-deg 0.3  夹角误差阈值（默认 0.3°）
 ```
 
 预期：per-cabinet 尺寸误差、per-pair 距离/角度误差 + pass/fail 判定。
@@ -412,7 +428,9 @@ EOF
   $LMT_WORK/curved-flat MAIN \
   --image-size 4000x3000 --hfov-deg 60 \
   --standoff 1500..4000 --height 500..2500 \
-  --target-mm 3.0 --min-views 2
+  --target-mm 3.0 --min-views 3
+  # --min-views：每箱体最少覆盖视角数（精准档传 3）；
+  #   省略则用 sidecar 默认值（与 reconstruct 观测门同源）
 
 # 可视化指导卡
 ./target/debug/lmt visual capture-card \
@@ -424,7 +442,8 @@ EOF
 open $LMT_WORK/capture_card.html
 ```
 
-预期：`plan-capture` 返回 `CapturePlan`（stations + coverage + unreachable_regions）；
+预期：`plan-capture` 返回 `CapturePlan`（stations + coverage + unreachable_regions + all_pass）；
+每个 cabinet 的 coverage 含 `fail_reason` 字段（`null` = pass，否则 `low_parallax` / `low_coverage`）。
 `capture-card` 输出自包含 3D HTML（Three.js 内联，可离线打开）。
 实测：8 stations（5 fan + 1 top + 1 bottom + 1 added），32/32 cabinets all_pass。
 capture-card 输出 ~714KB 自包含 HTML。
@@ -443,25 +462,35 @@ capture-card 输出 ~714KB 自包含 HTML。
 
 预期产物：`calibration/<screen_id>_intrinsics.json`（K 矩阵 + 畸变系数 + reproj error）。
 
-### 9.3 ChArUco Pattern 生成（generate-pattern）
+### 9.3 Pattern 生成（generate-pattern）
+
+默认方法为 **VP-QSP**（自编码 marker，32-bit ID 无字典容量上限），替代旧版 ChArUco。
 
 ```bash
-# 均匀网格（无 screen_mapping）
+# VP-QSP（默认）— 均匀网格
 ./target/debug/lmt --json visual generate-pattern \
   $LMT_WORK/curved-flat MAIN \
-  --method charuco \
   --yes
+  # --method vpqsp（默认，可省略）
+  # --screen-id-code 0（多屏 Volume 时每屏取不同值 0-15）
 
-# 或指定 screen_mapping（逐 cabinet 像素尺寸不同时）
+# 指定 screen_mapping（逐 cabinet 像素尺寸不同时）
 # ./target/debug/lmt --json visual generate-pattern \
 #   $LMT_WORK/curved-flat MAIN \
-#   --method charuco --screen-mapping screen_mapping.json --yes
+#   --screen-mapping screen_mapping.json --yes
+
+# legacy ChArUco（仍可用，但有 ~13 cabinet 字典容量上限）
+# ./target/debug/lmt --json visual generate-pattern \
+#   $LMT_WORK/curved-flat MAIN \
+#   --method charuco --yes
 ```
 
-预期产物：`patterns/MAIN/` 目录含 `cabinets/` 下 per-cabinet PNG + `full_screen.png` 合图 + `pattern_meta.json`（v2 schema）。
-实测返回：`cabinet_count: 32, total_markers: 256`。
+预期产物：`patterns/MAIN/` 目录含 `cabinets/` 下 per-cabinet PNG + `full_screen.png` 合图 + `pattern_meta.json`（`vpqsp.v1` schema）。
+实测返回：`cabinet_count: 32, total_markers: 288`（每 cabinet 3×3 = 9 markers）。
 
-### 9.4 ChArUco 重建（reconstruct）
+> **VP-QSP vs ChArUco**：VP-QSP 用 32-bit 自编码 marker（screen 4bit + col 7bit + row 7bit + local 6bit + CRC8），无 ArUco 字典容量天花板；ChArUco 在 >13 cabinet 时会报 `invalid_input`。
+
+### 9.4 视觉重建（reconstruct）
 
 需要多角度拍摄的照片 + capture_manifest.json：
 
@@ -469,8 +498,9 @@ capture-card 输出 ~714KB 自包含 HTML。
 ./target/debug/lmt --json visual reconstruct \
   $LMT_WORK/curved-flat MAIN \
   --capture-manifest <capture_manifest.json> \
-  --method charuco \
   --yes
+  # --method vpqsp（默认，可省略）
+  # 实际方法以 capture manifest 的 method 字段为准
 ```
 
 预期产物：`measurements/measured.yaml` + `measurements/MAIN_cabinet_pose_report.json`。
@@ -520,7 +550,9 @@ disguise target 项目会额外产出 `MAIN.seq/`（10-bit TIFF 序列）。
   --corr $LMT_WORK/curved-arc/corr_pose3.json \
   --yes
   # --out 默认 calibration/<screen_id>_sl_intrinsics.json
-  # --intrinsics-crosscheck <anchor.json> 可选交叉验证
+  # --force        覆盖已存在的内参文件（否则拒绝，防误覆盖可信棋盘格标定）
+  # --max-rms-px 1.5  reproj RMS 门槛（默认 1.5px，超出则拒标）
+  # --intrinsics-crosscheck <anchor.json> 可选防吸收交叉校验
 ```
 
 预期产物：`calibration/MAIN_sl_intrinsics.json`。
@@ -553,9 +585,10 @@ Pose report 的 `frame.gauge_strategy` = `align_to_nominal`（SL 特有，Procru
   disguise \
   --out $LMT_WORK/curved-arc/world_mesh.obj \
   --yes
+  # target: disguise / unreal / neutral
   # 默认（无 --root）= 标准摆法（中心列转正 + 水平居中 + 贴地）
-  # --root <cabinet_id> = 重定根到指定箱体
-  # --ground = neutral 模式贴地
+  # --root <cabinet_id> = 以指定箱体为基准重定位（它轴对齐落原点）
+  # --ground = 让下边缘贴地（最低 Y = 0）
 ```
 
 预期：一个 OBJ，所有 cabinet 合并在世界坐标系，逐箱体独立面片 + 整体 UV。
@@ -674,7 +707,7 @@ echo "Artifacts in: $WORK"
 | `curved-arc` | MAIN | 16×6 | curved (R=12000mm) | 自带 `measured.yaml`，可跑重建 + 导出 |
 | `monitor-bench` | BENCH | 1×2 | flat | 两块显示器模拟，自带 `capture_manifest.json` + `screen_mapping.json` + `known_geometry.json`，用于视觉管线 bench |
 
-## 附录 C. 验证状态汇总（2026-06-06）
+## 附录 C. 验证状态汇总（2026-06-07）
 
 | Step | 功能 | 状态 | 备注 |
 | ---: | --- | :---: | --- |
@@ -699,9 +732,10 @@ echo "Artifacts in: $WORK"
 | 8.1 | simulate | PASS | 6 views, 4608 obs |
 | 8.2 | eval | PASS | dist err=0.12mm, angle err=0.13° |
 | 8.3 | compare-known | SKIP | 需真实 pose report |
-| 9.1 | plan-capture | PASS | 8 stations, 32/32 pass |
+| 9.1 | plan-capture (--min-views) | PASS | 8 stations, 32/32 pass, fail_reason 字段正常 |
 | 9.1 | capture-card | PASS | 714KB HTML |
-| 9.3 | generate-pattern | PASS | 32 cabinets, 256 markers |
+| 9.3 | generate-pattern (vpqsp) | PASS | 32 cabinets, 288 markers, schema vpqsp.v1 |
+| 9.3 | generate-pattern (charuco) | PASS | 32 cabinets, 256 markers (legacy) |
 | 9.5.1 | generate-structured-light | PASS | 2048 dots, 15 frames |
 | 9.2 | calibrate | SKIP | 需棋盘格照片 |
 | 9.4 | visual reconstruct | SKIP | 需多角度拍摄照片 |
@@ -709,7 +743,7 @@ echo "Artifacts in: $WORK"
 | 9.5.3 | calibrate-structured-light | SKIP | 需 corr 文件 |
 | 9.5.4 | reconstruct-structured-light | SKIP | 需 corr + intrinsics |
 
-**18/28 PASS, 0 FAIL, 10 SKIP**（SKIP 项均需真实相机/全站仪数据）。
+**19/28 PASS, 0 FAIL, 9 SKIP**（SKIP 项均需真实相机/全站仪数据）。
 
 ## 附录 D. E2E 测试覆盖范围
 
@@ -719,6 +753,9 @@ CLI E2E 测试（`crates/lmt-cli/tests/cli_e2e.rs`）覆盖以下场景，可作
 - **全站仪管线**：grid import（dry-run / refuse / happy）、scatter import + reconstruct + export 全链路
 - **项目管理**：save-load round-trip
 - **Seed example**：dry-run / happy / 重复目标拒绝
-- **视觉管线**：simulate → eval → compare-known 合成台全链路、generate-pattern v2 schema、plan-capture 最低观测门槛
+- **视觉管线**：simulate → eval → compare-known 合成台全链路、plan-capture --min-views 端到端验证
+- **VP-QSP**：generate-pattern happy（vpqsp.v1 schema + screen_id_code）、无容量上限（26 cabinets）、dry-run、未知 method → exit 7、reconstruct detection_failed → exit 13
+- **compare-known**：happy + 容差 flags（--max-size-mm / --max-dist-mm / --max-angle-deg）注册验证
+- **export pose-obj**：happy（2-cabinet neutral/disguise）、缺 --yes 拒绝、dry-run
 - **错误码覆盖**：exit 2/3/7/12/13/14/15/16/17/18 各至少一个 case
 - **输出格式**：`--output json` / `--output ndjson` / completion raw 输出
