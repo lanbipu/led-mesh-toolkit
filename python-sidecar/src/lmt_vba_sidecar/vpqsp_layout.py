@@ -81,14 +81,14 @@ def choose_marker_grid(resolution_px: tuple[int, int]) -> tuple[int, int, int]:
 
     best: tuple[int, int, float, int] | None = None  # (mx, my, squareness, count)
 
-    for ms in range(TARGET_MARKERS_SHORT, 0, -1):
+    for ms in range(TARGET_MARKERS_SHORT, 1, -1):  # ms >= 2: avoid collinear grid
         cell = short / ms
         if cell < MIN_CELL_PX:
             continue
-        ml = max(1, round(long_ / cell))
+        ml = max(2, round(long_ / cell))  # ml >= 2: avoid collinear grid
         if ms * ml > MAX_MARKERS_PER_CABINET:
             ml = MAX_MARKERS_PER_CABINET // ms
-        if long_ / ml < MIN_CELL_PX:
+        if ml < 2 or long_ / ml < MIN_CELL_PX:
             continue
 
         mx = ml if is_landscape else ms
