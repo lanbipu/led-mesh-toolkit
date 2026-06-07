@@ -30,6 +30,14 @@ pub struct ReconstructArgs {
     /// Optional override of the manifest's screen_mapping reference. `None`
     /// tells the sidecar to use the path the capture manifest points to.
     pub screen_mapping_path: Option<String>,
+    /// Optional override of the manifest's intrinsics reference. The reserved
+    /// value `"auto"` runs inline self-calibration from the captured VP-QSP
+    /// markers (vpqsp method only); a file path loads `{K, dist_coeffs,
+    /// image_size}`. `None` tells the sidecar to use the manifest's reference.
+    pub intrinsics_path: Option<String>,
+    /// Optional independent intrinsics anchor for the `--intrinsics auto`
+    /// anti-absorption cross-check (vpqsp self-cal only).
+    pub crosscheck_intrinsics_path: Option<String>,
     /// Where the sidecar writes `cabinet_pose_report.json` (spec §9). The
     /// adapter reads it back to build `cabinet_summaries`.
     pub pose_report_path: String,
@@ -146,6 +154,14 @@ pub async fn reconstruct(args: ReconstructArgs) -> VbaResult<ReconstructOut> {
     // manifest's reference (its `None` default).
     if let Some(p) = &args.screen_mapping_path {
         payload["screen_mapping_path"] = json!(p);
+    }
+    // Same for intrinsics: omit when None so the sidecar uses the manifest's
+    // reference; "auto" or a file path is forwarded verbatim.
+    if let Some(p) = &args.intrinsics_path {
+        payload["intrinsics_path"] = json!(p);
+    }
+    if let Some(p) = &args.crosscheck_intrinsics_path {
+        payload["crosscheck_intrinsics_path"] = json!(p);
     }
 
     let out = run_sidecar(SidecarRequest {

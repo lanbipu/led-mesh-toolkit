@@ -1067,6 +1067,48 @@ fn visual_reconstruct_dry_run_writes_nothing() {
     );
 }
 
+/// visual reconstruct `--intrinsics auto` (+ `--intrinsics-crosscheck`) — clap must
+/// accept the "auto" sentinel (no file needed) and both reach the dry-run payload
+/// verbatim (the sidecar, not the CLI, branches on "auto"). No sidecar, no write.
+#[test]
+fn visual_reconstruct_auto_dry_run_writes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    let manifest = tmp.path().join("manifest.json");
+    std::fs::write(&manifest, "{}").unwrap();
+    let anchor = tmp.path().join("anchor.json");
+    std::fs::write(&anchor, "{}").unwrap();
+
+    let assert = lmt()
+        .args([
+            "--json",
+            "--dry-run",
+            "visual",
+            "reconstruct",
+            proj.to_str().unwrap(),
+            "MAIN",
+            "--capture-manifest",
+            manifest.to_str().unwrap(),
+            "--intrinsics",
+            "auto",
+            "--intrinsics-crosscheck",
+            anchor.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true, "envelope ok: {env}");
+    assert_eq!(env["data"]["dry_run"], true);
+    assert_eq!(env["data"]["intrinsics"], "auto");
+    assert_eq!(env["data"]["intrinsics_crosscheck"], anchor.to_str().unwrap());
+    assert!(
+        !proj.join("measurements/measured.yaml").exists(),
+        "dry-run must not write measured.yaml"
+    );
+}
+
 /// visual simulate refuse — no --yes and no --dry-run → gate_destructive
 /// refuses, exit 2 (invalid_input).
 #[test]
@@ -1831,6 +1873,36 @@ fn visual_reconstruct_vpqsp_detection_failed_exit_13() {
     let env: Value = serde_json::from_str(std::str::from_utf8(&out.stderr).unwrap().trim_end()).unwrap();
     assert_eq!(env["ok"], false);
     assert_eq!(env["error"]["code"], "detection_failed");
+}
+
+/// `visual reconstruct --intrinsics auto` error envelope: a sidecar refusal (e.g.
+/// the self-cal observability gate) must surface as `observability_failed` -> exit
+/// 17 through the auto path, same as the file path.
+#[cfg(unix)]
+#[test]
+fn visual_reconstruct_auto_observability_failed_exit_17() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_visual_project(&proj);
+    let manifest = tmp.path().join("manifest.json");
+    std::fs::write(&manifest, "{}").unwrap();
+    let mock = write_error_mock(tmp.path(), "observability_failed");
+
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &mock)
+        .args([
+            "--json", "visual", "reconstruct",
+            proj.to_str().unwrap(), "MAIN",
+            "--capture-manifest", manifest.to_str().unwrap(),
+            "--intrinsics", "auto", "--yes",
+        ])
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    assert_eq!(out.status.code(), Some(17), "observability_failed -> exit 17");
+    let env: Value = serde_json::from_str(std::str::from_utf8(&out.stderr).unwrap().trim_end()).unwrap();
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "observability_failed");
 }
 
 // ── export pose-obj E2E (Task 2.3) ────────────────────────────────────────────

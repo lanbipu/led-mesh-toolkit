@@ -140,6 +140,8 @@ pub fn run_reconstruct(
     project_path: &Path,
     screen_id: &str,
     capture_manifest: &Path,
+    intrinsics: Option<&str>,
+    intrinsics_crosscheck: Option<&str>,
 ) -> LmtResult<VisualReconstructResult> {
     let cfg = load_project_yaml_from_path(project_path)?;
     let screen_cfg = load_screen(&cfg, screen_id)?;
@@ -160,6 +162,9 @@ pub fn run_reconstruct(
         project,
         capture_manifest_path: capture_manifest.display().to_string(),
         screen_mapping_path: None,
+        // `intrinsics` (CLI override) > manifest reference; "auto" = self-cal.
+        intrinsics_path: intrinsics.map(str::to_string),
+        crosscheck_intrinsics_path: intrinsics_crosscheck.map(str::to_string),
         pose_report_path: pose_report_path.display().to_string(),
         progress_tx: None,
         cancel: None,
@@ -1353,7 +1358,7 @@ output:
         let dir = tempdir().unwrap();
         seed_project(dir.path());
         let manifest = dir.path().join("capture_manifest.json");
-        let err = run_reconstruct(dir.path(), "FLOOR", &manifest).unwrap_err();
+        let err = run_reconstruct(dir.path(), "FLOOR", &manifest, None, None).unwrap_err();
         assert!(matches!(err, LmtError::NotFound(_)), "got: {err:?}");
         assert!(format!("{err}").contains("FLOOR"), "got: {err}");
     }
@@ -1362,7 +1367,7 @@ output:
     fn reconstruct_missing_project_yaml_errors() {
         let dir = tempdir().unwrap();
         let manifest = dir.path().join("capture_manifest.json");
-        let err = run_reconstruct(dir.path(), "MAIN", &manifest).unwrap_err();
+        let err = run_reconstruct(dir.path(), "MAIN", &manifest, None, None).unwrap_err();
         assert!(format!("{err}").contains("project.yaml"), "got: {err}");
     }
 

@@ -33,6 +33,8 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             capture_manifest,
             images,
             method,
+            intrinsics,
+            intrinsics_crosscheck,
         } => reconstruct(
             mode,
             &project_path,
@@ -40,6 +42,8 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             capture_manifest,
             images,
             &method,
+            intrinsics.as_deref(),
+            intrinsics_crosscheck.as_deref(),
             yes,
             dry_run,
         ),
@@ -190,6 +194,8 @@ fn reconstruct(
     capture_manifest: Option<String>,
     images: Option<String>,
     method: &str,
+    intrinsics: Option<&str>,
+    intrinsics_crosscheck: Option<&str>,
     yes: bool,
     dry_run: bool,
 ) -> i32 {
@@ -246,6 +252,9 @@ fn reconstruct(
                 "dry_run": true,
                 "would_write": would_write,
                 "capture_manifest": manifest,
+                // null = use the manifest's intrinsics; "auto" = self-calibrate.
+                "intrinsics": intrinsics,
+                "intrinsics_crosscheck": intrinsics_crosscheck,
             });
             output::ok(mode, payload, |_| {
                 let _ = writeln!(
@@ -259,6 +268,8 @@ fn reconstruct(
                 Path::new(project_path),
                 screen_id,
                 Path::new(&manifest),
+                intrinsics,
+                intrinsics_crosscheck,
             ) {
                 Ok(r) => output::ok(mode, r, |p| {
                     let _ = writeln!(

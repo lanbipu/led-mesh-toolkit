@@ -38,7 +38,11 @@ class CaptureManifest(BaseModel):
     """Top-level capture manifest model."""
 
     method: Literal["charuco", "vpqsp", "structured-light"]
-    intrinsics: str
+    # Camera intrinsics JSON path. Optional: when omitted, reconstruct must get
+    # intrinsics another way — an `--intrinsics <path>` CLI override, or
+    # `--intrinsics auto` self-calibration from the captured markers (vpqsp). A
+    # null is preserved verbatim through load (not path-resolved).
+    intrinsics: str | None = None
     pattern_meta: str
     screen_mapping: str
     views: list[CaptureView]
@@ -104,7 +108,10 @@ def load_capture_manifest(path: str) -> CaptureManifest:
 
     # --- resolve relative paths to absolute ---
     base = manifest_path.parent
-    manifest.intrinsics = _resolve(manifest.intrinsics, base)
+    # Preserve the "auto" self-calibration sentinel verbatim (vpqsp); only real
+    # path references are absolutized.
+    if manifest.intrinsics is not None and manifest.intrinsics != "auto":
+        manifest.intrinsics = _resolve(manifest.intrinsics, base)
     manifest.pattern_meta = _resolve(manifest.pattern_meta, base)
     manifest.screen_mapping = _resolve(manifest.screen_mapping, base)
 

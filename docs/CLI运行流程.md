@@ -525,6 +525,28 @@ capture-card 输出 ~714KB 自包含 HTML。
 
 预期产物：`measurements/measured.yaml` + `measurements/MAIN_cabinet_pose_report.json`。
 
+**镜头自标定（`--intrinsics auto`，仅 vpqsp）**：现场拍屏流程无需棋盘格——直接拿拍到的
+VP-QSP marker 当标定靶，用屏幕像素间距作为度量尺度，先解算 K + 畸变再做相机反算（同一批
+照片、单次检测）。capture manifest 的 `intrinsics` 字段现在**可选**（自标定流程留空即可），
+也可在 CLI 用 `--intrinsics` 覆盖：
+
+```bash
+./target/debug/lmt --json visual reconstruct \
+  $LMT_WORK/curved-flat MAIN \
+  --capture-manifest <capture_manifest.json> \
+  --intrinsics auto \
+  --yes
+  # 结果 intrinsics_source = "auto_self_calibrated"
+  # 平面墙无 anchor 也放行（warning: no_intrinsics_anchor，假设屏幕 1:1 直显）；
+  #   全程正对平拍等病态采集会被 observability_failed 拒绝并提示补拍角度
+  # --intrinsics-crosscheck <anchor.json> → 用独立内参做反吸收校验
+  #   （焦距/横纵比/畸变偏差 → observability_failed，写盘前拒绝）
+  # capture manifest 里写 "intrinsics": "auto" 等价于 CLI 传 --intrinsics auto
+```
+
+> 与结构光 `reconstruct-structured-light --intrinsics auto` 的区别：SL 路径在「平面墙 + 无
+> anchor」时直接拒绝；vpqsp 信任你提供的屏幕几何，改为放行 + 警告（条件由求解器的标准差门槛兜底）。
+
 ### 9.5 结构光管线（generate → decode → calibrate → reconstruct）
 
 #### 9.5.1 生成结构光序列

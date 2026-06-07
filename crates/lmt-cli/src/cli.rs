@@ -434,6 +434,13 @@ pub enum VisualCmd {
         /// 重建方法:vpqsp(默认)/ charuco。实际方法以 capture manifest 的 method 为准。
         #[arg(long, default_value = "vpqsp")]
         method: String,
+        /// intrinsics.json 路径,或保留字 `auto` = 从拍摄的 VP-QSP marker 内联自标定(仅 vpqsp 方法)。
+        /// 省略则用 capture manifest 的 `intrinsics` 字段。
+        #[arg(long)]
+        intrinsics: Option<String>,
+        /// 内参 anchor JSON 路径(独立标定),仅 --intrinsics auto 时用于防吸收交叉校验。
+        #[arg(long = "intrinsics-crosscheck")]
+        intrinsics_crosscheck: Option<String>,
     },
     /// 合成数据集生成。side_effect: destructive
     Simulate {

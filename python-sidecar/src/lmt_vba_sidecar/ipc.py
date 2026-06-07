@@ -149,6 +149,14 @@ class ReconstructInput(BaseModel):
     screen_mapping_path: str | None = None
     # If set, the sidecar writes cabinet_pose_report.json (spec §9) here.
     pose_report_path: str | None = None
+    # Optional override of the manifest's intrinsics reference. The reserved value
+    # "auto" runs inline self-calibration from the captured VP-QSP markers (vpqsp
+    # method only); a file path loads {K, dist_coeffs, image_size}. When null the
+    # sidecar uses the manifest's intrinsics reference.
+    intrinsics_path: str | None = None
+    # Optional independent intrinsics anchor for the --intrinsics auto anti-
+    # absorption cross-check (vpqsp self-cal only).
+    crosscheck_intrinsics_path: str | None = None
 
 
 class ReconstructStructuredLightInput(BaseModel):

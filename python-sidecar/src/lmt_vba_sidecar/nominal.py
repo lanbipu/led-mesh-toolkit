@@ -227,3 +227,49 @@ def nominal_dot_positions_world(meta: Any, cab: CabinetArray, shape_prior: Any) 
         local_m = np.array([local_m[0], -local_m[1], local_m[2]])
         out[int(d.id)] = np.asarray(centers[cr]) + R_by_cr[cr] @ local_m
     return out
+
+
+def nominal_marker_positions_world(
+    meta: Any, cab: CabinetArray, shape_prior: Any,
+) -> "dict[tuple[int, int, int], np.ndarray]":
+    """(col, row, local_id) -> [x,y,z] (meters) in the model/design frame.
+
+    VP-QSP analog of nominal_dot_positions_world. Each cabinet's marker grid is a
+    planar target whose nominal world position is
+    ``center_m(col,row) + R_y(-alpha) @ (marker_local_m with y NEGATED)``.
+    marker_local_mm uses +y-UP (same convention as sl_local_mm); the inter-cabinet
+    center grid (_cabinet_center_model_m) uses +y-DOWN. Composing the two raw makes
+    a multi-row wall a vertical sawtooth (within-cabinet y up, across-cabinet y
+    jumping down) — a non-rigid target that wrecks calibrateCamera. Flipping
+    local-y here reconciles both onto +y-DOWN so a multi-row flat wall is a single
+    rigid plane. (The reconstruct path keeps +y-UP local and lets the per-cabinet
+    BA pose absorb the sign — flipping it there would mirror those poses.)
+
+    Flat => R_y(0)=I => pure (y-flipped) translation. Used by VP-QSP reconstruct's
+    --intrinsics auto self-calibration as the known 3D calibration target. Raises
+    ValueError (mapped to invalid_input) on unsupported shape or a cabinet absent
+    from the nominal model.
+    """
+    import numpy as np
+    from lmt_vba_sidecar.vpqsp_layout import local_ids, marker_local_mm
+
+    centers = nominal_cabinet_centers_model_frame(cab, shape_prior)  # present cells only
+    R_by_cr = {cr: _cabinet_R_y_model(cr[0], cr[1], cab, shape_prior) for cr in centers}
+
+    out: dict[tuple[int, int, int], np.ndarray] = {}
+    for c in meta.cabinets:
+        cr = (int(c.col), int(c.row))
+        if cr not in centers:
+            raise ValueError(f"vpqsp cabinet {cr} absent/unknown in nominal model")
+        center = np.asarray(centers[cr])
+        R = R_by_cr[cr]
+        for lid in local_ids(c.markers_x, c.markers_y):
+            local_mm = marker_local_mm(
+                lid, markers_x=c.markers_x, markers_y=c.markers_y,
+                resolution_px=(c.resolution_px[0], c.resolution_px[1]),
+                pixel_pitch_mm=(c.pixel_pitch_mm[0], c.pixel_pitch_mm[1]),
+            )
+            local_m = local_mm / 1000.0
+            local_m = np.array([local_m[0], -local_m[1], local_m[2]])
+            out[(cr[0], cr[1], int(lid))] = center + R @ local_m
+    return out

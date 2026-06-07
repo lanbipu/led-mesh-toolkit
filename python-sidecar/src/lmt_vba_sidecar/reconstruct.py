@@ -41,6 +41,12 @@ import numpy as np
 from lmt_vba_sidecar.capture_manifest import load_capture_manifest
 from lmt_vba_sidecar.detect import detect_charuco_corners
 from lmt_vba_sidecar.eval_runner import reconstruct_cabinet_geometry
+from lmt_vba_sidecar.intrinsics_solve import (
+    IntrinsicsRefused,
+    crosscheck_intrinsics,
+    intrinsics_K_problem,
+    solve_sl_intrinsics,
+)
 from lmt_vba_sidecar.io_utils import write_event
 from lmt_vba_sidecar.ipc import (
     BaStats,
@@ -348,6 +354,21 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
     # screen_mapping: an explicit cmd.screen_mapping_path overrides the
     # manifest's reference (lets a caller swap in a corrected mapping without
     # editing the manifest); otherwise use the manifest-resolved path.
+    # intrinsics: cmd.intrinsics_path (CLI override) > manifest reference. The
+    # `auto` self-cal sentinel is vpqsp-only (charuco has no marker-grid target
+    # assembled here), so reject it loud rather than silently loading a file
+    # named "auto".
+    intrinsics_spec = cmd.intrinsics_path or manifest.intrinsics
+    if intrinsics_spec is None:
+        write_event(ErrorEvent(event="error", code="invalid_input",
+            message="no intrinsics: set the capture manifest's `intrinsics` field, or pass "
+                    "--intrinsics <path>", fatal=True))
+        return 1
+    if intrinsics_spec == "auto":
+        write_event(ErrorEvent(event="error", code="invalid_input",
+            message="--intrinsics auto self-calibration is only supported for method=vpqsp; "
+                    "this capture manifest is method=charuco", fatal=True))
+        return 1
     sm_path = cmd.screen_mapping_path or manifest.screen_mapping
     try:
         screen_mapping = ScreenMapping.model_validate(
@@ -356,7 +377,7 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
         pattern_meta = PatternMeta.model_validate(
             json.loads(pathlib.Path(manifest.pattern_meta).read_text(encoding="utf-8"))
         )
-        intr = json.loads(pathlib.Path(manifest.intrinsics).read_text(encoding="utf-8"))
+        intr = json.loads(pathlib.Path(intrinsics_spec).read_text(encoding="utf-8"))
         K = np.array(intr["K"], dtype=float)
         dist = np.array(intr["dist_coeffs"], dtype=float)
         image_size = tuple(int(v) for v in intr["image_size"])
@@ -480,17 +501,106 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
     )
 
 
+def _first_image_size(view_images) -> tuple[int, int] | None:
+    """(width, height) of the first readable capture image, or None. One camera =
+    one frame size; the self-cal solver keys K0 / coverage to it."""
+    for imgs in view_images:
+        for p in imgs:
+            img = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
+            if img is not None:
+                return int(img.shape[1]), int(img.shape[0])
+    return None
+
+
+def _self_calibrate_vpqsp(meta, detections, view_images, image_size, cmd):
+    """Inline self-cal for VP-QSP `--intrinsics auto`. Each captured view is a
+    photo of the KNOWN VP-QSP marker wall — a planar (flat) or per-cabinet-tilted
+    (curved) calibration target whose metric geometry comes from the displayed
+    pixel pitch. Assemble per-view (nominal world 3D, image px) from the SAME
+    detections the reconstruction uses (frame-matched), then solve K + distortion
+    via the shared Zhang solver (cv2.calibrateCamera).
+
+    Unlike the SL path (sl_reconstruct._self_calibrate_inline), a FLAT wall WITHOUT
+    an anchor is ADMITTED here, not refused: the provided pixel pitch IS the metric
+    scale that fixes the focal/scale ambiguity, so a known flat target + angularly
+    diverse shots is a well-posed Zhang problem. solve_sl_intrinsics's own
+    conditioning gates (>=5deg rotation diversity, >=20% coverage, focal/principal-
+    point stddev caps) still refuse an ill-posed capture (e.g. all shots fronto-
+    parallel) with a clear message. The unguarded residual — anisotropic screen
+    pitch / a non-1:1-driven wall corrupting fx/fy aspect — is surfaced as a
+    no_intrinsics_anchor warning; pass --intrinsics-crosscheck to validate it.
+
+    Returns (K, dist) or raises IntrinsicsRefused (code maps to the error event).
+    """
+    from lmt_vba_sidecar.nominal import nominal_marker_positions_world
+
+    # Stale pattern_meta / edited layout / unsupported shape_prior surface as a
+    # ValueError; map to invalid_input (the file branch classifies bad input the
+    # same way), not an internal_error traceback.
+    try:
+        marker_world = nominal_marker_positions_world(
+            meta, cmd.project.cabinet_array, cmd.project.shape_prior)
+    except ValueError as e:
+        raise IntrinsicsRefused("invalid_input", f"nominal model build failed: {e}")
+
+    # One calibrateCamera "pose" per VIEW (matches the reconstruct's camera
+    # grouping: all images in a view share one pose). Concatenate that view's
+    # marker detections into nominal-world / image-pixel point pairs.
+    object_points, image_points = [], []
+    for imgs in view_images:
+        objp, imgp = [], []
+        for path in imgs:
+            for det in detections.get(path, []):
+                key = (int(det["cabinet"][0]), int(det["cabinet"][1]), int(det["local_id"]))
+                w = marker_world.get(key)
+                if w is None:
+                    continue  # decoded marker not in this pattern_meta (defensive)
+                objp.append(w)
+                imgp.append([det["corner_px"][0], det["corner_px"][1]])
+        if len(objp) >= 4:
+            object_points.append(np.asarray(objp, dtype=np.float32))
+            image_points.append(np.asarray(imgp, dtype=np.float32))
+
+    has_anchor = bool(cmd.crosscheck_intrinsics_path)
+    res = solve_sl_intrinsics(object_points, image_points, image_size,
+                              max_rms_px=1.5, allow_full_distortion=has_anchor)
+    if has_anchor:
+        try:
+            anchor = json.loads(pathlib.Path(cmd.crosscheck_intrinsics_path).read_text())
+            anchor_K = np.array(anchor["K"], float)
+            anchor_dist = np.array(anchor.get("dist_coeffs", [0, 0, 0, 0, 0]), float)
+        except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+            raise IntrinsicsRefused("invalid_input", f"crosscheck intrinsics load failed: {e}")
+        refusal = crosscheck_intrinsics(res, anchor_K=anchor_K, anchor_dist=anchor_dist)
+        if refusal is not None:
+            raise refusal
+    else:
+        # No anchor: trust the displayed screen geometry as the metric target (the
+        # flat-wall conditioning is already guarded by solve_sl_intrinsics). Warn
+        # that anisotropic pitch / non-1:1 drive is unvalidated.
+        write_event(WarningEvent(event="warning", code="no_intrinsics_anchor",
+            message="VP-QSP auto intrinsics solved from the displayed marker wall without an "
+                    "independent anchor; assumes the screen is driven pixel-exact (1:1). "
+                    "Anisotropic pitch / non-1:1 scaling is unguarded — pass "
+                    "--intrinsics-crosscheck <anchor.json> to validate."))
+    return res.K, res.dist
+
+
 def run_reconstruct_vpqsp(cmd: ReconstructInput, manifest) -> int:
     """VP-QSP reconstruct front-end: self-encoding marker detect → Observation →
     shared solve_and_emit. Mirrors run_reconstruct (charuco) but the marker
     decode yields (screen_id, col, row, local_id) directly — no ArUco routing
     table — and p_local comes from the VP-QSP marker grid (vpqsp pattern_meta),
-    +y-up center-origin mm. Everything from observability onward is shared.
+    +y-up center-origin mm. Intrinsics come from a file OR `--intrinsics auto`
+    self-calibration (the captured markers are themselves the calibration target);
+    everything from observability onward is shared.
     """
     from lmt_vba_sidecar.vpqsp_detect import detect_vpqsp_markers
     from lmt_vba_sidecar.vpqsp_layout import marker_local_mm
 
-    # --- 2. referenced files (screen_mapping reused for active-surface corners) ---
+    # --- 2. referenced files (screen_mapping reused for active-surface corners).
+    #         Intrinsics are resolved AFTER detection (step 3c) so `--intrinsics
+    #         auto` can self-calibrate from the same detected markers. ---
     sm_path = cmd.screen_mapping_path or manifest.screen_mapping
     try:
         screen_mapping = ScreenMapping.model_validate(
@@ -499,9 +609,6 @@ def run_reconstruct_vpqsp(cmd: ReconstructInput, manifest) -> int:
         meta = VpqspPatternMeta.model_validate(
             json.loads(pathlib.Path(manifest.pattern_meta).read_text(encoding="utf-8"))
         )
-        intr = json.loads(pathlib.Path(manifest.intrinsics).read_text(encoding="utf-8"))
-        K = np.array(intr["K"], dtype=float)
-        dist = np.array(intr["dist_coeffs"], dtype=float)
     except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
         write_event(ErrorEvent(event="error", code="invalid_input",
             message=f"failed to load manifest references: {e}", fatal=True))
@@ -585,6 +692,42 @@ def run_reconstruct_vpqsp(cmd: ReconstructInput, manifest) -> int:
     all_paths = [p for imgs in view_images for p in imgs]
     detections = detect_vpqsp_markers(all_paths, screen_id_code=meta.screen_id_code)
 
+    # --- 3c. resolve intrinsics: CLI override (cmd.intrinsics_path) > manifest
+    #         reference. The reserved value "auto" self-calibrates K + distortion
+    #         from the SAME detected markers (frame-matched); else load a file. ---
+    intrinsics_spec = cmd.intrinsics_path or manifest.intrinsics
+    if intrinsics_spec is None:
+        write_event(ErrorEvent(event="error", code="invalid_input",
+            message="no intrinsics: set the capture manifest's `intrinsics` field, or pass "
+                    "--intrinsics <path|auto>", fatal=True))
+        return 1
+    if intrinsics_spec == "auto":
+        image_size = _first_image_size(view_images)
+        if image_size is None:
+            write_event(ErrorEvent(event="error", code="invalid_input",
+                message="--intrinsics auto: cannot read any capture image to determine frame size",
+                fatal=True))
+            return 1
+        try:
+            K, dist = _self_calibrate_vpqsp(meta, detections, view_images, image_size, cmd)
+            intrinsics_source = "auto_self_calibrated"
+        except IntrinsicsRefused as e:
+            write_event(ErrorEvent(event="error", code=e.code, message=e.message, fatal=True))
+            return 1
+    else:
+        try:
+            intr = json.loads(pathlib.Path(intrinsics_spec).read_text(encoding="utf-8"))
+            K = np.array(intr["K"], dtype=float)
+            prob = intrinsics_K_problem(K)
+            if prob is not None:
+                raise ValueError(prob)
+            dist = np.array(intr["dist_coeffs"], dtype=float)
+            intrinsics_source = "file"
+        except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+            write_event(ErrorEvent(event="error", code="intrinsics_invalid",
+                message=f"intrinsics load failed: {e}", fatal=True))
+            return 1
+
     observations: list[Observation] = []
     per_view_cab_corners: dict[tuple[int, int], list[tuple[np.ndarray, np.ndarray]]] = {}
     per_cabinet_views: dict[int, set[int]] = {}
@@ -641,6 +784,7 @@ def run_reconstruct_vpqsp(cmd: ReconstructInput, manifest) -> int:
         pose_report_path=cmd.pose_report_path,
         n_rejected_pre=n_rej_stage_a, rejected_per_cab_pre=rej_per_cab_stage_a,
         gauge_strategy="fix_root_cabinet",  # fast-mode marker, same gauge as charuco
+        intrinsics_source=intrinsics_source,
     )
 
 
