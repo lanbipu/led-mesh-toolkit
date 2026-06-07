@@ -445,6 +445,11 @@ pub struct GeneratePatternArgs {
     pub cabinet_array: IpcCabinetArray,
     pub output_dir: String,
     pub screen_resolution: [u32; 2],
+    /// "vpqsp" (default) renders self-encoding VP-QSP markers (no capacity ceiling);
+    /// "charuco" keeps the legacy ChArUco path.
+    pub method: String,
+    /// 4-bit numeric screen id baked into every VP-QSP marker (vpqsp only).
+    pub screen_id_code: u8,
     /// When set, per-cabinet board geometry (size/pitch) is read from this
     /// screen_mapping.json instead of the uniform grid.
     pub screen_mapping_path: Option<String>,
@@ -472,6 +477,8 @@ pub async fn generate_pattern(args: GeneratePatternArgs) -> VbaResult<GeneratePa
         },
         "output_dir": &args.output_dir,
         "screen_resolution": args.screen_resolution,
+        "method": &args.method,
+        "screen_id_code": args.screen_id_code,
     });
     // Omit screen_mapping_path when None so the sidecar uses uniform generation.
     if let Some(p) = &args.screen_mapping_path {
@@ -490,22 +497,36 @@ pub async fn generate_pattern(args: GeneratePatternArgs) -> VbaResult<GeneratePa
     .await?;
 
     let meta_path = Path::new(&args.output_dir).join("pattern_meta.json");
-    let meta: crate::ipc::PatternMeta = serde_json::from_str(
-        &std::fs::read_to_string(&meta_path)
-            .map_err(|e| VbaError::InvalidInput(format!("pattern_meta.json unreadable: {e}")))?,
-    )
-    .map_err(|e| VbaError::InvalidInput(format!("pattern_meta.json decode failed: {e}")))?;
+    let meta_text = std::fs::read_to_string(&meta_path)
+        .map_err(|e| VbaError::InvalidInput(format!("pattern_meta.json unreadable: {e}")))?;
 
-    // Saturating arithmetic: a malformed/hand-edited pattern_meta with
-    // aruco_id_end < aruco_id_start must not panic (debug) or wrap (release).
-    let total_markers: u32 = meta
-        .cabinets
-        .iter()
-        .map(|c| c.aruco_id_end.saturating_sub(c.aruco_id_start).saturating_add(1))
-        .fold(0u32, |acc, n| acc.saturating_add(n));
+    // Parse the method-appropriate pattern_meta and total the markers. VP-QSP
+    // markers self-encode their identity (no ArUco id ranges), so the count comes
+    // from the per-cabinet grid shape.
+    let (cabinet_count, total_markers) = if args.method == "vpqsp" {
+        let meta: crate::ipc::VpqspPatternMeta = serde_json::from_str(&meta_text)
+            .map_err(|e| VbaError::InvalidInput(format!("vpqsp pattern_meta.json decode failed: {e}")))?;
+        let total: u32 = meta
+            .cabinets
+            .iter()
+            .map(|c| c.markers_x.saturating_mul(c.markers_y))
+            .fold(0u32, |acc, n| acc.saturating_add(n));
+        (meta.cabinets.len() as u32, total)
+    } else {
+        let meta: crate::ipc::PatternMeta = serde_json::from_str(&meta_text)
+            .map_err(|e| VbaError::InvalidInput(format!("pattern_meta.json decode failed: {e}")))?;
+        // Saturating arithmetic: a malformed/hand-edited pattern_meta with
+        // aruco_id_end < aruco_id_start must not panic (debug) or wrap (release).
+        let total: u32 = meta
+            .cabinets
+            .iter()
+            .map(|c| c.aruco_id_end.saturating_sub(c.aruco_id_start).saturating_add(1))
+            .fold(0u32, |acc, n| acc.saturating_add(n));
+        (meta.cabinets.len() as u32, total)
+    };
     Ok(GeneratePatternOut {
         output_dir: args.output_dir,
-        cabinet_count: meta.cabinets.len() as u32,
+        cabinet_count,
         total_markers,
     })
 }

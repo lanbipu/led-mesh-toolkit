@@ -1,0 +1,216 @@
+"""VP-QSP per-cabinet marker layout + local-mm geometry (single source of truth).
+
+Both pattern generation (vpqsp_pattern) and reconstruct (the p_local lookup) call
+`marker_center_px` / `marker_local_mm` here, so a decoded marker's nominal 3D
+coordinate is guaranteed to match the pixel position it was actually rendered at.
+
+Layout (MVP): a regular markers_x × markers_y grid filling each cabinet's LED
+canvas; `local_id = marker_row * markers_x + marker_col` (row-major). Because each
+marker carries a globally-unique self-encoded id, a regular grid is unambiguous —
+the design doc's anti-regular-grid guidance targets plain dot matrices, not
+self-coded markers. Blue-noise / multi-scale layout is a documented follow-up that
+can replace these functions without touching the codec / detector / BA contract.
+
+local-mm convention (MUST match screen_mapping.charuco_corner_local_mm): origin =
+cabinet active-surface center, +x right, **+y up** (OpenCV board frame), z = 0,
+millimetres. Feeding a y-down model to solvePnP recovers a chirally-mirrored pose,
+so the +y-up sign is load-bearing.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+from numpy.typing import NDArray
+
+from lmt_vba_sidecar.vpqsp_codec import (
+    GRID,
+    _CENTER,
+    _MARGIN_FRAC,
+    code_to_cellgrid,
+)
+
+# Marker-grid sizing. Anchor the marker count to the cabinet's SHORT side so a
+# square cabinet gets TARGET_MARKERS_SHORT per side; the long side scales by
+# aspect ratio. MIN_CELL_PX keeps each marker physically large enough to decode
+# (a 9x9-effective marker needs ~6 px/cell). DEFAULT_MARKER_FILL leaves a gap
+# between adjacent markers so their bright outlines never merge.
+#
+# 6/side ≈ ChArUco's effective per-side marker density (squares_short 9 / √2 ≈ 6.4),
+# restoring the observation margin VP-QSP loses by emitting one centroid per marker
+# (vs ChArUco's ~64 inner corners): each cabinet gets >> the 8-observation
+# observability floor, so per-view marker loss (occlusion/glare/incidence) keeps a
+# healthy margin instead of sitting one bad decode above the floor.
+TARGET_MARKERS_SHORT = 6
+MIN_CELL_PX = 80
+DEFAULT_MARKER_FILL = 0.8
+MIN_MARKER_PX = 48  # absolute floor; below this the 7x7 panel is undecodable
+_PANEL_BG = 40  # dark panel grey level (matches vpcal)
+
+
+def choose_marker_grid(resolution_px: tuple[int, int]) -> tuple[int, int, int]:
+    """Pick (markers_x, markers_y, marker_px) for one cabinet's LED canvas.
+
+    Mirrors board_layout.choose_board_shape's short-side anchoring so the marker
+    grid scales sanely for any cabinet size / aspect. marker_px is sized to fill
+    DEFAULT_MARKER_FILL of the (possibly non-square) cell so neighbouring markers
+    keep a gap.
+    """
+    w_px, h_px = int(resolution_px[0]), int(resolution_px[1])
+    short = min(w_px, h_px)
+    cell = max(MIN_CELL_PX, short // TARGET_MARKERS_SHORT)
+    markers_x = max(1, w_px // cell)
+    markers_y = max(1, h_px // cell)
+    cell_w = w_px / markers_x
+    cell_h = h_px / markers_y
+    marker_px = max(MIN_MARKER_PX, int(round(DEFAULT_MARKER_FILL * min(cell_w, cell_h))))
+    return markers_x, markers_y, marker_px
+
+
+def marker_count(markers_x: int, markers_y: int) -> int:
+    return int(markers_x) * int(markers_y)
+
+
+def local_ids(markers_x: int, markers_y: int) -> range:
+    """All valid local_ids for a markers_x × markers_y grid (row-major)."""
+    return range(marker_count(markers_x, markers_y))
+
+
+def marker_center_px(
+    local_id: int, *, markers_x: int, markers_y: int, resolution_px: tuple[int, int]
+) -> tuple[float, float]:
+    """Pixel centre (cx, cy) of `local_id`'s marker on the cabinet canvas.
+
+    Image convention: top-left origin, +y down. The marker sits at the centre of
+    its grid cell. This is the SINGLE definition shared by generation and the
+    p_local lookup.
+    """
+    w_px, h_px = float(resolution_px[0]), float(resolution_px[1])
+    mr, mc = divmod(int(local_id), int(markers_x))
+    if not (0 <= mr < markers_y):
+        raise ValueError(
+            f"local_id {local_id} out of range for {markers_x}x{markers_y} grid"
+        )
+    cell_w = w_px / markers_x
+    cell_h = h_px / markers_y
+    cx = (mc + 0.5) * cell_w
+    cy = (mr + 0.5) * cell_h
+    return cx, cy
+
+
+def marker_local_mm(
+    local_id: int,
+    *,
+    markers_x: int,
+    markers_y: int,
+    resolution_px: tuple[int, int],
+    pixel_pitch_mm: tuple[float, float],
+) -> np.ndarray:
+    """Local-mm [x, y, 0] of `local_id`'s marker centre, center origin, +y up.
+
+    Identical convention to screen_mapping.charuco_corner_local_mm: subtract half
+    the canvas to move edge-origin → center, scale by the cabinet's own pitch, and
+    flip y so larger pixel-y (lower on the displayed pattern) → smaller local y.
+    """
+    cx, cy = marker_center_px(
+        local_id, markers_x=markers_x, markers_y=markers_y, resolution_px=resolution_px
+    )
+    w_px, h_px = float(resolution_px[0]), float(resolution_px[1])
+    pitch_x, pitch_y = float(pixel_pitch_mm[0]), float(pixel_pitch_mm[1])
+    x_mm = (cx - w_px / 2.0) * pitch_x
+    y_mm = (h_px / 2.0 - cy) * pitch_y
+    return np.array([x_mm, y_mm, 0.0], dtype=float)
+
+
+def splat_gaussian_dot(
+    img: NDArray[np.uint8], cx: float, cy: float, sigma: float, peak: int = 255
+) -> None:
+    """Add a bright isotropic Gaussian dot centred at (cx, cy) (in place).
+
+    Ported from vpcal: the locator dot the detector's centroid locks onto. An
+    analytic Gaussian recovers a clean sub-pixel centroid and is robust to mild
+    defocus / LED bloom.
+    """
+    win = int(np.ceil(sigma * 4))
+    x0 = max(0, int(round(cx)) - win)
+    x1 = min(img.shape[1], int(round(cx)) + win + 1)
+    y0 = max(0, int(round(cy)) - win)
+    y1 = min(img.shape[0], int(round(cy)) + win + 1)
+    if x1 <= x0 or y1 <= y0:
+        return
+    ys, xs = np.mgrid[y0:y1, x0:x1]
+    g = peak * np.exp(-((xs - cx) ** 2 + (ys - cy) ** 2) / (2.0 * sigma * sigma))
+    region = img[y0:y1, x0:x1].astype(np.float64)
+    img[y0:y1, x0:x1] = np.clip(np.maximum(region, g), 0, 255).astype(np.uint8)
+
+
+def build_marker_template(
+    code: int, size_px: int, *, bake_dot: bool = True
+) -> NDArray[np.uint8]:
+    """Render the canonical (fronto-parallel) VP-QSP marker image for a code.
+
+    Bright square outline → dark panel → 7x7 bright/dark cells → dark centre well
+    with a baked Gaussian locator dot (ported from vpcal build_marker_template,
+    GRID=7 + 3x3 centre well). `bake_dot=True` for LED-facing patterns.
+    """
+    img = np.full((size_px, size_px), 255, dtype=np.uint8)  # bright outline
+    m = int(round(size_px * _MARGIN_FRAC))
+    panel = slice(m, size_px - m)
+    img[panel, panel] = _PANEL_BG  # dark panel
+    grid = code_to_cellgrid(code)
+    panel_size = size_px - 2 * m
+    cell = panel_size / GRID
+    pad = cell * 0.12
+    for r in range(GRID):
+        for c in range(GRID):
+            if (r, c) in _CENTER:
+                continue  # centre well stays dark (holds the locator dot)
+            if not grid[r, c]:
+                continue  # dark cell == panel background
+            y0 = int(round(m + r * cell + pad))
+            y1 = int(round(m + (r + 1) * cell - pad))
+            x0 = int(round(m + c * cell + pad))
+            x1 = int(round(m + (c + 1) * cell - pad))
+            img[y0:y1, x0:x1] = 255
+    if bake_dot:
+        splat_gaussian_dot(img, size_px / 2.0, size_px / 2.0, sigma=panel_size * 0.045, peak=255)
+    return img
+
+
+def render_cabinet_tile(
+    *,
+    screen_id_code: int,
+    col: int,
+    row: int,
+    markers_x: int,
+    markers_y: int,
+    marker_px: int,
+    resolution_px: tuple[int, int],
+) -> NDArray[np.uint8]:
+    """Render one cabinet's full VP-QSP tile at exactly resolution_px.
+
+    Each marker encodes (screen_id_code, col, row, local_id) and is centred at its
+    grid cell via marker_center_px — the same function the p_local lookup uses, so
+    rendered position and reconstructed nominal coordinate agree by construction.
+    """
+    from lmt_vba_sidecar.vpqsp_codec import VpqspMarkerId, encode_marker
+
+    w_px, h_px = int(resolution_px[0]), int(resolution_px[1])
+    img = np.zeros((h_px, w_px), dtype=np.uint8)
+    for lid in local_ids(markers_x, markers_y):
+        code = encode_marker(VpqspMarkerId(screen_id_code, col, row, lid))
+        tmpl = build_marker_template(code, marker_px, bake_dot=True)
+        cx, cy = marker_center_px(
+            lid, markers_x=markers_x, markers_y=markers_y, resolution_px=resolution_px
+        )
+        x0 = int(round(cx)) - marker_px // 2
+        y0 = int(round(cy)) - marker_px // 2
+        x1, y1 = x0 + marker_px, y0 + marker_px
+        sx0, sy0 = max(0, -x0), max(0, -y0)
+        x0c, y0c = max(0, x0), max(0, y0)
+        x1c, y1c = min(w_px, x1), min(h_px, y1)
+        if x1c <= x0c or y1c <= y0c:
+            continue
+        img[y0c:y1c, x0c:x1c] = np.maximum(
+            img[y0c:y1c, x0c:x1c], tmpl[sy0 : sy0 + (y1c - y0c), sx0 : sx0 + (x1c - x0c)]
+        )
+    return img

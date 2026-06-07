@@ -307,17 +307,20 @@ pub enum VisualCmd {
         #[arg(long, default_value = "9x9")]
         inner: String,
     },
-    /// 生成 ChArUco pattern 三件套。side_effect: destructive
+    /// 生成 pattern 三件套(cabinets/ + full_screen.png + pattern_meta.json)。side_effect: destructive
     #[command(name = "generate-pattern")]
     GeneratePattern {
         /// 项目根目录。
         project_path: String,
         /// screen id。
         screen_id: String,
-        /// Pattern 方法(目前只支持 charuco)。
-        #[arg(long, default_value = "charuco")]
+        /// Pattern 方法:vpqsp(默认,自编码 marker,无字典容量上限)/ charuco(legacy)。
+        #[arg(long, default_value = "vpqsp")]
         method: String,
-        /// 可选 screen_mapping.json:提供后按每箱体尺寸/点间距生成专属棋盘
+        /// VP-QSP 数值 screen id(0-15),写入每个 marker;多屏 Volume 每屏取不同值。
+        #[arg(long, default_value_t = 0)]
+        screen_id_code: u8,
+        /// 可选 screen_mapping.json:提供后按每箱体尺寸/点间距生成专属图案
         /// (支持非正方形 / 不等尺寸箱体),而非均匀网格。相对路径按项目根解析。
         #[arg(long)]
         screen_mapping: Option<String>,
@@ -428,8 +431,8 @@ pub enum VisualCmd {
         /// 图像目录(便利参数,暂未实现;请用 --capture-manifest)。
         #[arg(long)]
         images: Option<String>,
-        /// 重建方法(目前只支持 charuco)。
-        #[arg(long, default_value = "charuco")]
+        /// 重建方法:vpqsp(默认)/ charuco。实际方法以 capture manifest 的 method 为准。
+        #[arg(long, default_value = "vpqsp")]
         method: String,
     },
     /// 合成数据集生成。side_effect: destructive

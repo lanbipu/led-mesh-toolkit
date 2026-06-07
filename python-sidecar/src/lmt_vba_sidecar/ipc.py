@@ -100,6 +100,39 @@ class PatternMeta(BaseModel):
     cabinets: list[PatternMetaCabinet]
 
 
+class VpqspMarkerGrid(BaseModel):
+    """Per-cabinet VP-QSP marker grid geometry (vpqsp pattern_meta).
+
+    Unlike PatternMetaCabinet there is no ArUco id range — each marker self-encodes
+    its (screen_id, col, row, local_id), so the only routing data is the grid shape
+    needed to map a decoded local_id back to its nominal local-mm position.
+    """
+
+    col: int
+    row: int
+    resolution_px: PositiveIntPair      # [width_px, height_px] of the cabinet canvas
+    markers_x: int = Field(ge=1)
+    markers_y: int = Field(ge=1)
+    marker_px: int = Field(gt=0)
+    pixel_pitch_mm: PositiveSizePair    # [pitch_x, pitch_y]
+
+    @property
+    def markers(self) -> int:
+        return self.markers_x * self.markers_y
+
+
+class VpqspPatternMeta(BaseModel):
+    """VP-QSP pattern metadata (replaces the ChArUco PatternMeta for method=vpqsp).
+
+    `screen_id_code` is the 4-bit numeric screen id encoded into every marker on
+    this screen; reconstruct filters detections to it for multi-screen Volumes.
+    """
+
+    schema_version: Literal["vpqsp.v1"]
+    screen_id_code: int = Field(ge=0, le=15)
+    cabinets: list[VpqspMarkerGrid]
+
+
 class ReconstructProject(BaseModel):
     screen_id: str
     cabinet_array: CabinetArray
@@ -174,6 +207,14 @@ class GeneratePatternInput(BaseModel):
     # When set, per-cabinet board geometry (size/pitch) is read from this
     # screen_mapping.json; when None, uniform grid generation is used.
     screen_mapping_path: str | None = None
+    # Marker family. "vpqsp" (the CLI default) renders self-encoding VP-QSP markers
+    # with no dictionary capacity limit; "charuco" keeps the legacy ChArUco path.
+    # The model default stays "charuco" so direct-model callers are unchanged; the
+    # CLI/adapter always send the resolved method explicitly.
+    method: Literal["charuco", "vpqsp"] = "charuco"
+    # 4-bit numeric screen id baked into every VP-QSP marker (method=vpqsp only);
+    # distinct per screen in a multi-screen Volume. Ignored for charuco.
+    screen_id_code: int = Field(default=0, ge=0, le=15)
 
 
 class GenerateStructuredLightInput(BaseModel):
@@ -338,6 +379,7 @@ class ProgressEvent(BaseModel):
     stage: Literal[
         "load",
         "detect_charuco",
+        "detect_vpqsp",
         "subpixel_refine",
         "bundle_adjustment",
         "procrustes_align",

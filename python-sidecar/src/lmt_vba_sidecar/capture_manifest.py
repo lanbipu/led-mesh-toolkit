@@ -37,7 +37,7 @@ class CaptureView(BaseModel):
 class CaptureManifest(BaseModel):
     """Top-level capture manifest model."""
 
-    method: Literal["charuco", "structured-light"]
+    method: Literal["charuco", "vpqsp", "structured-light"]
     intrinsics: str
     pattern_meta: str
     screen_mapping: str
@@ -95,7 +95,7 @@ def load_capture_manifest(path: str) -> CaptureManifest:
     if len(manifest.views) == 0:
         raise CaptureManifestError("Manifest must have at least one view.")
 
-    if manifest.method == "charuco":
+    if manifest.method in ("charuco", "vpqsp"):
         for view in manifest.views:
             if not view.images and not view.frames:
                 raise CaptureManifestError(

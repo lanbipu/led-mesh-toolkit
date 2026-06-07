@@ -1,0 +1,172 @@
+"""VP-QSP pattern generation. Each cabinet gets a regular grid of self-encoding
+VP-QSP markers — no shared ArUco dictionary, so no ~13-cabinet capacity ceiling.
+
+Outputs the same three artifacts as the ChArUco path so the rest of the pipeline
+(full_screen.png drop-in, pattern_meta-driven reconstruct) is unchanged:
+  - cabinets/V<col>_R<row>.png    per-cabinet VP-QSP tile (debug / regenerate)
+  - full_screen.png               assembled screen-resolution image (Disguise drop-in)
+  - pattern_meta.json             VpqspPatternMeta (schema_version "vpqsp.v1")
+"""
+from __future__ import annotations
+
+import pathlib
+import shutil
+import tempfile
+
+import cv2
+
+from lmt_vba_sidecar.io_utils import write_event
+from lmt_vba_sidecar.ipc import (
+    BaStats,
+    ErrorEvent,
+    GeneratePatternInput,
+    ProgressEvent,
+    ResultData,
+    ResultEvent,
+    VpqspMarkerGrid,
+    VpqspPatternMeta,
+)
+from lmt_vba_sidecar.pattern import (
+    ATOMIC_BACKUP_SUFFIX,
+    _assemble_screen,
+    _resolve_cabinet_specs,
+)
+from lmt_vba_sidecar.vpqsp_layout import choose_marker_grid, render_cabinet_tile
+
+# Below this many markers a cabinet cannot clear reconstruct's observability gate
+# (>= 8 observations / cabinet). Generation refuses rather than silently shipping a
+# pattern that fails at reconstruct time.
+MIN_MARKERS_PER_CABINET = 8
+
+
+def run_generate_pattern_vpqsp(cmd: GeneratePatternInput) -> int:
+    out_dir = pathlib.Path(cmd.output_dir)
+    cols = cmd.project.cabinet_array.cols
+    rows = cmd.project.cabinet_array.rows
+    absent = set(tuple(c) for c in cmd.project.cabinet_array.absent_cells)
+    sw, sh = cmd.screen_resolution
+
+    screen_mapping = None
+    if cmd.screen_mapping_path is not None:
+        from lmt_vba_sidecar.screen_mapping import ScreenMapping
+        try:
+            screen_mapping = ScreenMapping.model_validate_json(
+                pathlib.Path(cmd.screen_mapping_path).read_text())
+        except (OSError, ValueError) as exc:
+            write_event(ErrorEvent(event="error", code="invalid_input",
+                message=f"screen_mapping load/validate failed: {exc}", fatal=True))
+            return 1
+
+    if screen_mapping is None and (sw % cols != 0 or sh % rows != 0):
+        write_event(ErrorEvent(event="error", code="invalid_input",
+            message=f"screen_resolution {sw}x{sh} must divide evenly by grid {cols}x{rows}",
+            fatal=True))
+        return 1
+
+    try:
+        specs = _resolve_cabinet_specs(
+            cols=cols, rows=rows, absent=absent,
+            screen_resolution=(sw, sh), screen_mapping=screen_mapping,
+            cabinet_size_mm=list(cmd.project.cabinet_array.cabinet_size_mm),
+        )
+    except ValueError as exc:
+        write_event(ErrorEvent(event="error", code="invalid_input",
+            message=str(exc), fatal=True))
+        return 1
+
+    # Choose per-cabinet marker grid; refuse a cabinet too small to clear
+    # observability. NO dictionary-capacity check — that ceiling is exactly what
+    # VP-QSP removes.
+    for s in specs:
+        s["markers_x"], s["markers_y"], s["marker_px"] = choose_marker_grid(s["resolution_px"])
+        n_markers = s["markers_x"] * s["markers_y"]
+        if n_markers < MIN_MARKERS_PER_CABINET:
+            write_event(ErrorEvent(event="error", code="invalid_input",
+                message=(f"cabinet V{s['col']:03d}_R{s['row']:03d} resolution "
+                         f"{s['resolution_px']} yields only {n_markers} VP-QSP markers "
+                         f"(need >= {MIN_MARKERS_PER_CABINET} for reconstruct observability); "
+                         f"use a higher cabinet resolution"), fatal=True))
+            return 1
+
+    # Placement-rect sanity (mirrors the charuco path): rects inside the screen,
+    # no overlaps (mapped mode rects are operator-supplied).
+    for s in specs:
+        rx, ry, rw, rh = s["input_rect_px"]
+        if rx < 0 or ry < 0 or rx + rw > sw or ry + rh > sh:
+            write_event(ErrorEvent(event="error", code="invalid_input",
+                message=(f"cabinet V{s['col']:03d}_R{s['row']:03d} input_rect "
+                         f"[{rx},{ry},{rw},{rh}] spills past screen {sw}x{sh}"), fatal=True))
+            return 1
+    for i in range(len(specs)):
+        ax, ay, aw, ah = specs[i]["input_rect_px"]
+        for j in range(i + 1, len(specs)):
+            bx, by, bw_, bh_ = specs[j]["input_rect_px"]
+            if not (ax + aw <= bx or bx + bw_ <= ax or ay + ah <= by or by + bh_ <= ay):
+                write_event(ErrorEvent(event="error", code="invalid_input",
+                    message=(f"cabinets V{specs[i]['col']:03d}_R{specs[i]['row']:03d} and "
+                             f"V{specs[j]['col']:03d}_R{specs[j]['row']:03d} have overlapping "
+                             f"input_rect_px ([{ax},{ay},{aw},{ah}] vs [{bx},{by},{bw_},{bh_}])"),
+                    fatal=True))
+                return 1
+
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging = pathlib.Path(tempfile.mkdtemp(
+        prefix=f".{out_dir.name}-staging-", dir=str(out_dir.parent)))
+    cabinets_dir = staging / "cabinets"
+    cabinets_dir.mkdir(parents=True)
+
+    try:
+        cabinets_meta: list[VpqspMarkerGrid] = []
+        total = len(specs)
+        for i, s in enumerate(specs):
+            col, row = s["col"], s["row"]
+            tile = render_cabinet_tile(
+                screen_id_code=cmd.screen_id_code, col=col, row=row,
+                markers_x=s["markers_x"], markers_y=s["markers_y"],
+                marker_px=s["marker_px"], resolution_px=s["resolution_px"])
+            cv2.imwrite(str(cabinets_dir / f"V{col:03d}_R{row:03d}.png"), tile)
+            cabinets_meta.append(VpqspMarkerGrid(
+                col=col, row=row,
+                resolution_px=[s["resolution_px"][0], s["resolution_px"][1]],
+                markers_x=s["markers_x"], markers_y=s["markers_y"], marker_px=s["marker_px"],
+                pixel_pitch_mm=[s["pixel_pitch_mm"][0], s["pixel_pitch_mm"][1]]))
+            write_event(ProgressEvent(event="progress", stage="output",
+                percent=(i + 1) / total, message=f"cabinet V{col:03d}_R{row:03d}"))
+
+        _assemble_screen(
+            out_path=staging / "full_screen.png",
+            cabinets_dir=cabinets_dir, specs=specs, screen_resolution=(sw, sh))
+
+        meta = VpqspPatternMeta(
+            schema_version="vpqsp.v1", screen_id_code=cmd.screen_id_code,
+            cabinets=cabinets_meta)
+        (staging / "pattern_meta.json").write_text(meta.model_dump_json(indent=2))
+
+        backup: pathlib.Path | None = None
+        if out_dir.exists():
+            backup = out_dir.with_suffix(out_dir.suffix + ATOMIC_BACKUP_SUFFIX)
+            if backup.exists():
+                shutil.rmtree(backup)
+            out_dir.rename(backup)
+        try:
+            staging.rename(out_dir)
+        except OSError:
+            if backup is not None and not out_dir.exists():
+                backup.rename(out_dir)
+            raise
+        if backup is not None:
+            shutil.rmtree(backup, ignore_errors=True)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+    write_event(ResultEvent(
+        event="result",
+        data=ResultData(
+            measured_points=[],
+            ba_stats=BaStats(rms_reprojection_px=0.0, iterations=0, converged=True),
+            frame_strategy_used="nominal_anchoring",
+            procrustes_align_rms_m=0.0,
+        ),
+    ))
+    return 0

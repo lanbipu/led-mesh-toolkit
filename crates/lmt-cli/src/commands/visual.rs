@@ -122,9 +122,10 @@ pub fn run(cmd: VisualCmd, mode: Mode, yes: bool, dry_run: bool) -> i32 {
             project_path,
             screen_id,
             method,
+            screen_id_code,
             screen_mapping,
         } => generate_pattern(
-            mode, &project_path, &screen_id, &method,
+            mode, &project_path, &screen_id, &method, screen_id_code,
             screen_mapping.as_deref(), yes, dry_run,
         ),
         VisualCmd::GenerateStructuredLight {
@@ -192,13 +193,14 @@ fn reconstruct(
     yes: bool,
     dry_run: bool,
 ) -> i32 {
-    // Only charuco is implemented; structured-light is gated (spec §16).
-    if method != "charuco" {
+    // vpqsp (default) + charuco are implemented; the manifest's own `method` is
+    // authoritative for the actual detection path. structured-light is gated (spec §16).
+    if method != "charuco" && method != "vpqsp" {
         return output::err(
             mode,
             ApiError::new(
                 error_codes::UNSUPPORTED,
-                "only --method charuco implemented (structured-light is gated, spec §16)",
+                "only --method vpqsp|charuco implemented (structured-light is gated, spec §16)",
             ),
         );
     }
@@ -339,22 +341,23 @@ fn calibrate(
 // generate_pattern
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn generate_pattern(
     mode: Mode,
     project_path: &str,
     screen_id: &str,
     method: &str,
+    screen_id_code: u8,
     screen_mapping: Option<&str>,
     yes: bool,
     dry_run: bool,
 ) -> i32 {
-    // Only charuco is supported.
-    if method != "charuco" {
+    if method != "charuco" && method != "vpqsp" {
         return output::err(
             mode,
             ApiError::new(
                 error_codes::UNSUPPORTED,
-                format!("unsupported pattern method '{method}' (only 'charuco')"),
+                format!("unsupported pattern method '{method}' (expected 'vpqsp' or 'charuco')"),
             ),
         );
     }
@@ -383,6 +386,7 @@ fn generate_pattern(
                 Path::new(project_path),
                 screen_id,
                 method,
+                screen_id_code,
                 screen_mapping.map(Path::new),
             ) {
                 Ok(r) => output::ok(mode, r, |p| {

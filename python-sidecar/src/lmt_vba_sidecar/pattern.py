@@ -163,6 +163,11 @@ ATOMIC_BACKUP_SUFFIX = ".lmt-vba-old"
 
 
 def run_generate_pattern(cmd: GeneratePatternInput) -> int:
+    # VP-QSP: self-encoding markers, no ArUco dictionary capacity ceiling.
+    if cmd.method == "vpqsp":
+        from lmt_vba_sidecar.vpqsp_pattern import run_generate_pattern_vpqsp
+        return run_generate_pattern_vpqsp(cmd)
+
     out_dir = pathlib.Path(cmd.output_dir)
     cols = cmd.project.cabinet_array.cols
     rows = cmd.project.cabinet_array.rows

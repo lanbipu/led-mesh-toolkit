@@ -84,6 +84,23 @@ pub struct PatternMeta {
     pub cabinets: Vec<PatternMetaCabinet>,
 }
 
+/// VP-QSP pattern metadata (method=vpqsp). No ArUco id ranges — each marker
+/// self-encodes its identity — so marker counts come from the grid shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VpqspMarkerGrid {
+    pub col: u32,
+    pub row: u32,
+    pub markers_x: u32,
+    pub markers_y: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VpqspPatternMeta {
+    pub schema_version: String,
+    pub screen_id_code: u8,
+    pub cabinets: Vec<VpqspMarkerGrid>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameStrategy {

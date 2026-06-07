@@ -1528,7 +1528,7 @@ fn generate_pattern_uniform_writes_v2_meta() {
     write_gp_project(&proj, 1, 2);
     let assert = lmt()
         .env("LMT_VBA_SIDECAR_PATH", &sidecar)
-        .args(["--json", "visual", "generate-pattern", proj.to_str().unwrap(), "MAIN", "--yes"])
+        .args(["--json", "visual", "generate-pattern", proj.to_str().unwrap(), "MAIN", "--method", "charuco", "--yes"])
         .assert()
         .success();
     let env = gp_stdout_env(assert.get_output());
@@ -1572,7 +1572,7 @@ fn generate_pattern_screen_mapping_unequal_cabinets() {
     lmt()
         .env("LMT_VBA_SIDECAR_PATH", &sidecar)
         .args(["--json", "visual", "generate-pattern", proj.to_str().unwrap(), "MAIN",
-               "--screen-mapping", sm.to_str().unwrap(), "--yes"])
+               "--method", "charuco", "--screen-mapping", sm.to_str().unwrap(), "--yes"])
         .assert()
         .success();
     let meta: Value = serde_json::from_str(
@@ -1598,7 +1598,7 @@ fn generate_pattern_over_capacity_invalid_input() {
     write_gp_project(&proj, 26, 1);
     let assert = lmt()
         .env("LMT_VBA_SIDECAR_PATH", &sidecar)
-        .args(["--json", "visual", "generate-pattern", proj.to_str().unwrap(), "MAIN", "--yes"])
+        .args(["--json", "visual", "generate-pattern", proj.to_str().unwrap(), "MAIN", "--method", "charuco", "--yes"])
         .assert()
         .failure();
     let env = gp_stderr_env(assert.get_output());
@@ -1633,7 +1633,7 @@ fn generate_pattern_missing_cabinet_invalid_input() {
     let assert = lmt()
         .env("LMT_VBA_SIDECAR_PATH", &sidecar)
         .args(["--json", "visual", "generate-pattern", proj.to_str().unwrap(), "MAIN",
-               "--screen-mapping", sm.to_str().unwrap(), "--yes"])
+               "--method", "charuco", "--screen-mapping", sm.to_str().unwrap(), "--yes"])
         .assert()
         .failure();
     let env = gp_stderr_env(assert.get_output());
@@ -1641,6 +1641,127 @@ fn generate_pattern_missing_cabinet_invalid_input() {
     assert_eq!(env["error"]["code"], "invalid_input");
     assert!(env["error"]["message"].as_str().unwrap().contains("V000_R001"),
             "message should name the missing cabinet: {}", env["error"]["message"]);
+}
+
+// ── VP-QSP E2E (default method) ───────────────────────────────────────────────
+
+/// generate-pattern HAPPY with VP-QSP (the default method): pattern_meta.json is
+/// the vpqsp.v1 schema and carries the numeric screen_id_code (real sidecar).
+#[test]
+#[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary/wrapper"]
+fn generate_pattern_vpqsp_happy() {
+    let sidecar = match gp_sidecar() {
+        Some(s) => s,
+        None => { eprintln!("skip: LMT_VBA_SIDECAR_PATH unset"); return; }
+    };
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 1, 2);
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &sidecar)
+        // no --method => default vpqsp
+        .args(["--json", "visual", "generate-pattern", proj.to_str().unwrap(), "MAIN",
+               "--screen-id-code", "4", "--yes"])
+        .assert()
+        .success();
+    let env = gp_stdout_env(assert.get_output());
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["cabinet_count"], 2);
+    let meta: Value = serde_json::from_str(
+        &std::fs::read_to_string(proj.join("patterns/MAIN/pattern_meta.json")).unwrap(),
+    ).unwrap();
+    assert_eq!(meta["schema_version"], "vpqsp.v1");
+    assert_eq!(meta["screen_id_code"], 4);
+    assert!(meta["cabinets"][0]["markers_x"].as_u64().unwrap() >= 1);
+}
+
+/// VP-QSP has NO ArUco dictionary capacity ceiling: 26 cabinets (which overflow
+/// ChArUco's ~13-cabinet limit) generate successfully (real sidecar).
+#[test]
+#[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary/wrapper"]
+fn generate_pattern_vpqsp_no_capacity_limit() {
+    let sidecar = match gp_sidecar() {
+        Some(s) => s,
+        None => { eprintln!("skip: LMT_VBA_SIDECAR_PATH unset"); return; }
+    };
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 26, 1);  // would be invalid_input under --method charuco
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &sidecar)
+        .args(["--json", "visual", "generate-pattern", proj.to_str().unwrap(), "MAIN", "--yes"])
+        .assert()
+        .success();
+    let env = gp_stdout_env(assert.get_output());
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["cabinet_count"], 26);
+}
+
+/// generate-pattern DRY-RUN (vpqsp default): exit 0, dry_run echo, no files written.
+#[test]
+fn generate_pattern_vpqsp_dry_run_writes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    let assert = lmt()
+        .args(["--json", "--dry-run", "visual", "generate-pattern",
+               proj.to_str().unwrap(), "MAIN"])
+        .assert()
+        .success();
+    let env: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(env["ok"], true, "envelope ok: {env}");
+    assert_eq!(env["data"]["dry_run"], true);
+    assert_eq!(env["data"]["method"], "vpqsp");
+    assert!(!proj.join("patterns/MAIN/pattern_meta.json").exists(),
+            "dry-run must not write artifacts");
+}
+
+/// REFUSE: an unknown pattern method is UNSUPPORTED (exit 7) before any side effect.
+#[test]
+fn generate_pattern_unknown_method_is_unsupported() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    let assert = lmt()
+        .args(["--json", "visual", "generate-pattern", proj.to_str().unwrap(), "MAIN",
+               "--method", "gray_code", "--yes"])
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    assert_eq!(out.status.code(), Some(7), "expected exit 7 (unsupported)");
+    let env: Value = serde_json::from_str(std::str::from_utf8(&out.stderr).unwrap().trim_end()).unwrap();
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "unsupported");
+}
+
+/// ERROR ENVELOPE: a VP-QSP reconstruct whose sidecar emits `detection_failed`
+/// maps to exit 13 (the marker-decode failure mode). Mirrors the charuco
+/// error-envelope harness with an explicit --method vpqsp.
+#[cfg(unix)]
+#[test]
+fn visual_reconstruct_vpqsp_detection_failed_exit_13() {
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_visual_project(&proj);
+    let manifest = tmp.path().join("manifest.json");
+    std::fs::write(&manifest, "{}").unwrap();
+    let mock = write_error_mock(tmp.path(), "detection_failed");
+
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &mock)
+        .args([
+            "--json", "visual", "reconstruct",
+            proj.to_str().unwrap(), "MAIN",
+            "--capture-manifest", manifest.to_str().unwrap(),
+            "--method", "vpqsp", "--yes",
+        ])
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    assert_eq!(out.status.code(), Some(13), "detection_failed -> exit 13");
+    let env: Value = serde_json::from_str(std::str::from_utf8(&out.stderr).unwrap().trim_end()).unwrap();
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "detection_failed");
 }
 
 // ── export pose-obj E2E (Task 2.3) ────────────────────────────────────────────

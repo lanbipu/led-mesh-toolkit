@@ -524,11 +524,12 @@ pub fn run_generate_pattern(
     project_path: &Path,
     screen_id: &str,
     method: &str,
+    screen_id_code: u8,
     screen_mapping_path: Option<&Path>,
 ) -> LmtResult<GeneratePatternResult> {
-    if method != "charuco" {
+    if method != "charuco" && method != "vpqsp" {
         return Err(LmtError::InvalidInput(format!(
-            "unsupported pattern method '{method}' (only 'charuco')"
+            "unsupported pattern method '{method}' (expected 'vpqsp' or 'charuco')"
         )));
     }
 
@@ -551,6 +552,8 @@ pub fn run_generate_pattern(
         cabinet_array,
         output_dir: output_dir.display().to_string(),
         screen_resolution,
+        method: method.to_string(),
+        screen_id_code,
         screen_mapping_path: sm_abs.map(|p| p.display().to_string()),
         progress_tx: None,
         cancel: None,
@@ -1351,19 +1354,19 @@ output:
     }
 
     #[test]
-    fn generate_pattern_rejects_non_charuco_method() {
+    fn generate_pattern_rejects_unknown_method() {
         let dir = tempdir().unwrap();
         seed_project(dir.path());
-        let err = run_generate_pattern(dir.path(), "MAIN", "gray_code", None).unwrap_err();
+        let err = run_generate_pattern(dir.path(), "MAIN", "gray_code", 0, None).unwrap_err();
         assert!(matches!(err, LmtError::InvalidInput(_)), "got: {err:?}");
-        assert!(format!("{err}").contains("charuco"), "got: {err}");
+        assert!(format!("{err}").contains("vpqsp"), "got: {err}");
     }
 
     #[test]
     fn generate_pattern_unknown_screen_is_not_found() {
         let dir = tempdir().unwrap();
         seed_project(dir.path());
-        let err = run_generate_pattern(dir.path(), "FLOOR", "charuco", None).unwrap_err();
+        let err = run_generate_pattern(dir.path(), "FLOOR", "charuco", 0, None).unwrap_err();
         assert!(matches!(err, LmtError::NotFound(_)), "got: {err:?}");
     }
 

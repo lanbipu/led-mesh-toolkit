@@ -57,6 +57,7 @@ from lmt_vba_sidecar.ipc import (
     ResultData,
     ResultEvent,
     Uncertainty,
+    VpqspPatternMeta,
     WarningEvent,
 )
 from lmt_vba_sidecar.model_constrained_ba import (
@@ -242,12 +243,13 @@ def _undistort_obs(pix: np.ndarray, K: np.ndarray, dist: np.ndarray) -> np.ndarr
     return out[:2] / out[2]
 
 
-def pattern_hash(pattern_meta: PatternMeta) -> str:
+def pattern_hash(pattern_meta: "PatternMeta | VpqspPatternMeta") -> str:
     """Deterministic pattern hash scheme.
 
     SHA-256 over the canonical pydantic JSON dump of pattern_meta, truncated to
     16 hex chars. The fixture / pattern producer must set
-    ScreenMapping.expected_pattern_hash with this exact scheme.
+    ScreenMapping.expected_pattern_hash with this exact scheme. Works for both the
+    ChArUco PatternMeta and the VP-QSP VpqspPatternMeta (any pydantic model).
     """
     return hashlib.sha256(pattern_meta.model_dump_json().encode()).hexdigest()[:16]
 
@@ -332,10 +334,12 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
     except Exception as e:  # CaptureManifestError or IO error
         write_event(ErrorEvent(event="error", code="invalid_input", message=str(e), fatal=True))
         return 1
+    if manifest.method == "vpqsp":
+        return run_reconstruct_vpqsp(cmd, manifest)
     if manifest.method != "charuco":
         write_event(ErrorEvent(
             event="error", code="invalid_input",
-            message=f"only charuco implemented; structured-light gated (method={manifest.method})",
+            message=f"only charuco/vpqsp implemented; structured-light gated (method={manifest.method})",
             fatal=True,
         ))
         return 1
@@ -467,6 +471,164 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
         pose_report_path=cmd.pose_report_path,
         n_rejected_pre=n_rej_stage_a, rejected_per_cab_pre=rej_per_cab_stage_a,
         gauge_strategy="fix_root_cabinet",  # charuco unchanged; output stays in BA-local frame
+    )
+
+
+def run_reconstruct_vpqsp(cmd: ReconstructInput, manifest) -> int:
+    """VP-QSP reconstruct front-end: self-encoding marker detect → Observation →
+    shared solve_and_emit. Mirrors run_reconstruct (charuco) but the marker
+    decode yields (screen_id, col, row, local_id) directly — no ArUco routing
+    table — and p_local comes from the VP-QSP marker grid (vpqsp pattern_meta),
+    +y-up center-origin mm. Everything from observability onward is shared.
+    """
+    from lmt_vba_sidecar.vpqsp_detect import detect_vpqsp_markers
+    from lmt_vba_sidecar.vpqsp_layout import marker_local_mm
+
+    # --- 2. referenced files (screen_mapping reused for active-surface corners) ---
+    sm_path = cmd.screen_mapping_path or manifest.screen_mapping
+    try:
+        screen_mapping = ScreenMapping.model_validate(
+            json.loads(pathlib.Path(sm_path).read_text(encoding="utf-8"))
+        )
+        meta = VpqspPatternMeta.model_validate(
+            json.loads(pathlib.Path(manifest.pattern_meta).read_text(encoding="utf-8"))
+        )
+        intr = json.loads(pathlib.Path(manifest.intrinsics).read_text(encoding="utf-8"))
+        K = np.array(intr["K"], dtype=float)
+        dist = np.array(intr["dist_coeffs"], dtype=float)
+    except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+        write_event(ErrorEvent(event="error", code="invalid_input",
+            message=f"failed to load manifest references: {e}", fatal=True))
+        return 1
+
+    # --- 3. preflight (pattern hash ties screen_mapping to this exact pattern) ---
+    try:
+        screen_mapping.preflight(pattern_hash(meta))
+    except ScreenMappingError as e:
+        write_event(ErrorEvent(event="error", code="invalid_input", message=str(e), fatal=True))
+        return 1
+
+    # Per-cabinet VP-QSP grid: (col,row) -> (markers_x, markers_y, resolution_px, pitch).
+    # The displayed pattern is the single source of truth for marker positions.
+    grid_by_cr = {
+        (c.col, c.row): (c.markers_x, c.markers_y,
+                         (c.resolution_px[0], c.resolution_px[1]),
+                         (c.pixel_pitch_mm[0], c.pixel_pitch_mm[1]))
+        for c in meta.cabinets
+    }
+
+    # --- 3b. cross-source consistency preflight ---
+    # The charuco path gets two guards for free via screen_mapping.charuco_corner_local_mm:
+    # (a) it fails loud on rotation/mirror, (b) ScreenMappingCabinet enforces
+    # resolution_px*pixel_pitch_mm ~= active_size_mm. VP-QSP sources p_local's metric
+    # scale from the pattern_meta (resolution_px x pixel_pitch_mm) but the pose-report
+    # corners from screen_mapping.active_size_mm, so neither guard applies automatically.
+    # Re-assert both here, or a swapped/edited screen_mapping (even with the correct
+    # pattern_hash) would silently mix scales / drop a rotation.
+    sm_by_id = {c.cabinet_id: c for c in screen_mapping.cabinets}
+    for c in meta.cabinets:
+        cid = _cabinet_id(c.col, c.row)
+        sm_cab = sm_by_id.get(cid)
+        if sm_cab is None:
+            continue  # unmapped cabinet (handled later by cab_to_idx routing)
+        if sm_cab.rotation != 0 or sm_cab.mirror_x or sm_cab.mirror_y:
+            write_event(ErrorEvent(event="error", code="invalid_input",
+                message=(f"cabinet '{cid}' has rotation={sm_cab.rotation}, "
+                         f"mirror_x={sm_cab.mirror_x}, mirror_y={sm_cab.mirror_y}; "
+                         "rotation/mirror not yet supported in VP-QSP local-mm mapping "
+                         "(fail loud, not silent)"), fatal=True))
+            return 1
+        # The VP-QSP marker grid's implied physical extent (resolution_px x pitch, the
+        # BA scale) must match active_size_mm (the pose-report corner scale) within the
+        # same 1% tolerance ScreenMappingCabinet uses, or the recovered geometry and the
+        # BA point cloud are at different scales.
+        for axis, name in ((0, "width"), (1, "height")):
+            implied = c.resolution_px[axis] * c.pixel_pitch_mm[axis]
+            active = sm_cab.active_size_mm[axis]
+            if abs(implied - active) > 0.01 * active:
+                write_event(ErrorEvent(event="error", code="invalid_input",
+                    message=(f"cabinet '{cid}' {name} scale mismatch: vpqsp pattern_meta "
+                             f"resolution_px {c.resolution_px[axis]} x pixel_pitch_mm "
+                             f"{c.pixel_pitch_mm[axis]} = {implied:.3f}mm, but screen_mapping "
+                             f"active_size_mm = {active}mm (>1% apart). These set the BA scale "
+                             "and the pose-report corner scale respectively and must agree."),
+                    fatal=True))
+                return 1
+
+    # --- 4. deterministic cabinet index map ---
+    present = sorted(((c.col, c.row) for c in meta.cabinets), key=lambda cr: (cr[1], cr[0]))
+    if ROOT_CABINET not in present:
+        write_event(ErrorEvent(event="error", code="invalid_input",
+            message=f"root cabinet {_cabinet_id(*ROOT_CABINET)} (0,0) not present in pattern_meta",
+            fatal=True))
+        return 1
+    cab_to_idx: dict[tuple[int, int], int] = {cr: i for i, cr in enumerate(present)}
+    root_idx = cab_to_idx[ROOT_CABINET]
+    n_cabinets = len(present)
+
+    # --- 5. detect + build observations ---
+    write_event(ProgressEvent(event="progress", stage="detect_vpqsp", percent=0.2,
+                              message="detecting VP-QSP markers"))
+    view_images: list[list[str]] = [list(v.images) for v in manifest.views]
+    all_paths = [p for imgs in view_images for p in imgs]
+    detections = detect_vpqsp_markers(all_paths, screen_id_code=meta.screen_id_code)
+
+    observations: list[Observation] = []
+    per_view_cab_corners: dict[tuple[int, int], list[tuple[np.ndarray, np.ndarray]]] = {}
+    per_cabinet_views: dict[int, set[int]] = {}
+    per_cabinet_points: dict[int, int] = {}
+    for cam_idx, imgs in enumerate(view_images):
+        for path in imgs:
+            for det in detections.get(path, []):
+                cab_cr = tuple(det["cabinet"])
+                if cab_cr not in cab_to_idx or cab_cr not in grid_by_cr:
+                    continue
+                cab_idx = cab_to_idx[cab_cr]
+                mx, my, res_px, pitch = grid_by_cr[cab_cr]
+                p_local = marker_local_mm(
+                    int(det["local_id"]), markers_x=mx, markers_y=my,
+                    resolution_px=res_px, pixel_pitch_mm=pitch,
+                )
+                pixel = _undistort_obs(np.array(det["corner_px"], dtype=float), K, dist)
+                observations.append(Observation(
+                    camera_idx=cam_idx, cabinet_idx=cab_idx, p_local=p_local, pixel=pixel))
+                per_view_cab_corners.setdefault((cam_idx, cab_idx), []).append((p_local, pixel))
+                per_cabinet_views.setdefault(cab_idx, set()).add(cam_idx)
+                per_cabinet_points[cab_idx] = per_cabinet_points.get(cab_idx, 0) + 1
+
+    if not observations:
+        write_event(ErrorEvent(event="error", code="detection_failed",
+            message="no VP-QSP markers detected across any view", fatal=True))
+        return 1
+
+    # --- 5b. Stage A pre-clean (shared) ---
+    (observations, per_view_cab_corners, per_cabinet_views, per_cabinet_points,
+     n_rej_stage_a, rej_per_cab_stage_a) = stage_a_prune(observations, per_view_cab_corners, K)
+
+    # --- 6. observability (shared) ---
+    try:
+        check_observability(observations, n_cabinets, min_views=2, min_points=8)
+    except ObservabilityError as e:
+        write_event(ErrorEvent(event="error", code="observability_failed", message=str(e), fatal=True))
+        return 1
+
+    # --- 7. nominal model (shared) ---
+    try:
+        nominal_m = nominal_cabinet_centers_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
+        nominal_normals_m = nominal_cabinet_normals_model_frame(cmd.project.cabinet_array, cmd.project.shape_prior)
+    except ValueError as e:
+        write_event(ErrorEvent(event="error", code="invalid_input", message=str(e), fatal=True))
+        return 1
+
+    return solve_and_emit(
+        K=K, observations=observations, per_view_cab_corners=per_view_cab_corners,
+        n_cameras=len(view_images), cab_to_idx=cab_to_idx, root_idx=root_idx,
+        n_cabinets=n_cabinets, nominal_m=nominal_m, nominal_normals_m=nominal_normals_m,
+        per_cabinet_views=per_cabinet_views, per_cabinet_points=per_cabinet_points,
+        corners_local_provider=lambda cid: _active_surface_corners_mm(screen_mapping, cid),
+        pose_report_path=cmd.pose_report_path,
+        n_rejected_pre=n_rej_stage_a, rejected_per_cab_pre=rej_per_cab_stage_a,
+        gauge_strategy="fix_root_cabinet",  # fast-mode marker, same gauge as charuco
     )
 
 

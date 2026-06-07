@@ -312,6 +312,7 @@
           "enum": [
             "load",
             "detect_charuco",
+            "detect_vpqsp",
             "subpixel_refine",
             "bundle_adjustment",
             "procrustes_align",
