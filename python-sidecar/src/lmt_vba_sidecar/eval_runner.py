@@ -46,8 +46,8 @@ def reconstruct_cabinet_geometry(
     world = (corners_local @ R.T) + t
     center = world.mean(0)
     normal = R @ np.array([0.0, 0.0, 1.0])
-    w = float(corners_local[:, 0].ptp())
-    h = float(corners_local[:, 1].ptp())
+    w = float(np.ptp(corners_local[:, 0]))
+    h = float(np.ptp(corners_local[:, 1]))
     return center, normal, (w, h), world
 
 
@@ -171,7 +171,7 @@ def _free_point_geometry(scene):
         proj = (pts - c) @ vt[:2].T
         est_c[j] = c
         est_n[j] = normal
-        est_s[j] = (float(proj[:, 0].ptp()), float(proj[:, 1].ptp()))
+        est_s[j] = (float(np.ptp(proj[:, 0])), float(np.ptp(proj[:, 1])))
 
     return est_c, est_n, est_s
 
