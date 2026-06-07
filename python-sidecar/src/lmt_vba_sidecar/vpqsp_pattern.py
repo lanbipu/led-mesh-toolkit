@@ -31,6 +31,7 @@ from lmt_vba_sidecar.pattern import (
     _assemble_screen,
     _resolve_cabinet_specs,
 )
+from lmt_vba_sidecar.vpqsp_codec import MAX_COL, MAX_ROW
 from lmt_vba_sidecar.vpqsp_layout import choose_marker_grid, render_cabinet_tile
 
 # Below this many markers a cabinet cannot clear reconstruct's observability gate
@@ -74,9 +75,22 @@ def run_generate_pattern_vpqsp(cmd: GeneratePatternInput) -> int:
             message=str(exc), fatal=True))
         return 1
 
+    # Cabinet (col,row) must fit the marker's 7-bit cab_col/cab_row fields. This is
+    # VP-QSP's only addressing ceiling (128x128 cabinets — vastly above ChArUco's
+    # ~13); a wall beyond it needs a wider codec, so refuse cleanly rather than
+    # crash at encode time.
+    for s in specs:
+        if s["col"] > MAX_COL or s["row"] > MAX_ROW:
+            write_event(ErrorEvent(event="error", code="invalid_input",
+                message=(f"cabinet V{s['col']:03d}_R{s['row']:03d} exceeds VP-QSP address "
+                         f"space (max col/row = {MAX_COL}); grid up to {MAX_COL + 1}x"
+                         f"{MAX_ROW + 1} cabinets is supported"), fatal=True))
+            return 1
+
     # Choose per-cabinet marker grid; refuse a cabinet too small to clear
-    # observability. NO dictionary-capacity check — that ceiling is exactly what
-    # VP-QSP removes.
+    # observability. The grid is capped at MAX_MARKERS_PER_CABINET (64, the 6-bit
+    # local_id capacity) inside choose_marker_grid. NO dictionary-capacity check —
+    # that ceiling is exactly what VP-QSP removes.
     for s in specs:
         s["markers_x"], s["markers_y"], s["marker_px"] = choose_marker_grid(s["resolution_px"])
         n_markers = s["markers_x"] * s["markers_y"]

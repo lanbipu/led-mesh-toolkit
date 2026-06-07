@@ -73,6 +73,33 @@ def test_tiny_cabinet_below_marker_floor_is_invalid_input(tmp_path, capsys):
     assert "VP-QSP markers" in err["message"]
 
 
+def test_wide_cabinet_caps_markers_not_crashes(tmp_path, capsys):
+    # A wide cabinet whose marker grid would exceed the 6-bit local_id capacity
+    # must generate cleanly (grid capped at 64), NOT crash with an encode overflow
+    # surfacing as internal_error.
+    out = tmp_path / "pattern"
+    rc = run_generate_pattern(_cmd(out, cols=1, rows=1, res=(1920, 360), screen_id_code=0))
+    assert rc == 0
+    capsys.readouterr()
+    meta = json.loads((out / "pattern_meta.json").read_text())
+    cab = meta["cabinets"][0]
+    assert cab["markers_x"] * cab["markers_y"] <= 64
+    # And it round-trips: every marker decodes (no invalid local_id slipped through).
+    obs = detect_vpqsp_markers([str(out / "full_screen.png")], screen_id_code=0)[str(out / "full_screen.png")]
+    assert 8 <= len(obs) <= 64
+
+
+def test_grid_beyond_address_space_is_invalid_input(tmp_path, capsys):
+    # >128 columns exceeds the marker's 7-bit cab_col field → clean invalid_input,
+    # not an encode-time crash (internal_error).
+    out = tmp_path / "pattern"
+    rc = run_generate_pattern(_cmd(out, cols=130, rows=1, res=(130 * 256, 256)))
+    assert rc == 1
+    err = _error_event(capsys.readouterr().out)
+    assert err is not None and err["code"] == "invalid_input"
+    assert "address space" in err["message"]
+
+
 def test_no_aruco_capacity_ceiling(tmp_path, capsys):
     # 30 cabinets would overflow ChArUco's 1000-marker dictionary (~13 cap);
     # VP-QSP generates them without complaint.

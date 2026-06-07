@@ -24,10 +24,16 @@ from numpy.typing import NDArray
 
 from lmt_vba_sidecar.vpqsp_codec import (
     GRID,
+    MAX_LOCAL,
     _CENTER,
     _MARGIN_FRAC,
     code_to_cellgrid,
 )
+
+# A cabinet cannot host more markers than the 6-bit local_id can address; the grid
+# is capped here so encode_marker never overflows at generation time (a wide/large
+# cabinet otherwise produces local_id > MAX_LOCAL → ValueError → internal_error).
+MAX_MARKERS_PER_CABINET = MAX_LOCAL + 1  # 64
 
 # Marker-grid sizing. Anchor the marker count to the cabinet's SHORT side so a
 # square cabinet gets TARGET_MARKERS_SHORT per side; the long side scales by
@@ -60,6 +66,15 @@ def choose_marker_grid(resolution_px: tuple[int, int]) -> tuple[int, int, int]:
     cell = max(MIN_CELL_PX, short // TARGET_MARKERS_SHORT)
     markers_x = max(1, w_px // cell)
     markers_y = max(1, h_px // cell)
+    # Cap to the 6-bit local_id capacity: a wide/large cabinet can compute a grid
+    # of >64 markers, which would overflow the codec. Shrink the larger axis (so
+    # markers stay as square as possible) until it fits, then size the markers to
+    # the resulting (larger) cell.
+    while markers_x * markers_y > MAX_MARKERS_PER_CABINET:
+        if markers_x >= markers_y:
+            markers_x -= 1
+        else:
+            markers_y -= 1
     cell_w = w_px / markers_x
     cell_h = h_px / markers_y
     marker_px = max(MIN_MARKER_PX, int(round(DEFAULT_MARKER_FILL * min(cell_w, cell_h))))

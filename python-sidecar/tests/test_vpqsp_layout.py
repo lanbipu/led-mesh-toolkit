@@ -8,8 +8,13 @@ from __future__ import annotations
 
 import numpy as np
 
+import pytest
+
+from lmt_vba_sidecar.vpqsp_codec import MAX_LOCAL, VpqspMarkerId, encode_marker
 from lmt_vba_sidecar.vpqsp_layout import (
+    MAX_MARKERS_PER_CABINET,
     choose_marker_grid,
+    local_ids,
     marker_center_px,
     marker_local_mm,
 )
@@ -25,6 +30,18 @@ def test_choose_marker_grid_square_and_min_markers():
 def test_choose_marker_grid_aspect_scales_long_side():
     mx, my, _ = choose_marker_grid((1280, 360))  # wide cabinet
     assert mx > my  # more markers along the long (wide) side
+
+
+@pytest.mark.parametrize("res", [(1920, 360), (3840, 1080), (7680, 1080), (2560, 1440)])
+def test_choose_marker_grid_caps_at_local_id_capacity(res):
+    # A wide/large cabinet must not produce more markers than the 6-bit local_id
+    # can address (MAX_LOCAL+1=64), or encode_marker overflows at generation time.
+    mx, my, mpx = choose_marker_grid(res)
+    assert mx >= 1 and my >= 1 and mpx > 0
+    assert mx * my <= MAX_MARKERS_PER_CABINET == MAX_LOCAL + 1
+    # Every local_id this grid yields must encode cleanly (no ValueError).
+    for lid in local_ids(mx, my):
+        encode_marker(VpqspMarkerId(0, 0, 0, lid))
 
 
 def test_marker_local_mm_is_y_up_center_origin():
