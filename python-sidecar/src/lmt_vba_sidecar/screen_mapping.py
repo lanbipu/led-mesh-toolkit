@@ -123,7 +123,13 @@ class ScreenMapping(BaseModel):
 
     screen_id: str
     cabinets: list[ScreenMappingCabinet]
-    expected_pattern_hash: str
+    # Optional: the pattern hash only exists AFTER generate-pattern writes
+    # pattern_meta.json, so a freshly authored screen_mapping.json (used to DRIVE
+    # generate-pattern) cannot know it yet. When omitted, generate-pattern works
+    # and reconstruct's preflight skips the capture↔pattern binding check (the
+    # reconstruct call site emits a pattern_hash_unset warning). Set it to the
+    # generated pattern's hash to enable verification at reconstruct.
+    expected_pattern_hash: str | None = None
 
     # ------------------------------------------------------------------
     # Helpers
@@ -226,6 +232,8 @@ class ScreenMapping(BaseModel):
         actual_pattern_hash : str
             Hash of the pattern image/PDF that was actually captured.  Must
             match self.expected_pattern_hash exactly (SHA-256 hex recommended).
+            When self.expected_pattern_hash is None only the hash comparison is
+            skipped; the optional image_size cross-check below still runs.
         image_size : (width_px, height_px) | None
             Optional: if provided, must match at least one cabinet's
             resolution_px.  Best-effort check — a mismatch suggests the camera
@@ -245,8 +253,16 @@ class ScreenMapping(BaseModel):
         model_post_init respectively), so a constructed ScreenMapping is
         already guaranteed valid on those fields — preflight does not re-check.
         """
-        # 1. Pattern hash check
-        if actual_pattern_hash != self.expected_pattern_hash:
+        # 1. Pattern hash check. The hash is optional: when unset there is nothing
+        # to bind against, so skip ONLY this comparison (the reconstruct call site
+        # warns the operator that the capture↔pattern binding was not verified). A
+        # SET hash is still enforced. The image-size cross-check below is orthogonal
+        # to the hash and must still run, so we guard only this comparison rather
+        # than early-returning from the whole method.
+        if (
+            self.expected_pattern_hash is not None
+            and actual_pattern_hash != self.expected_pattern_hash
+        ):
             raise ScreenMappingError(
                 f"Pattern hash mismatch: expected '{self.expected_pattern_hash}', "
                 f"got '{actual_pattern_hash}'. "

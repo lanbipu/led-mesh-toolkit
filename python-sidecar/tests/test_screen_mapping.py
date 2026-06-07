@@ -132,6 +132,60 @@ def test_preflight_rejects_pattern_hash_mismatch():
         m.preflight(actual_pattern_hash="WRONG")
 
 
+def test_expected_pattern_hash_is_optional_at_construction():
+    """A screen_mapping.json may omit expected_pattern_hash (it does not exist
+    until generate-pattern writes pattern_meta.json). The model must still
+    validate, defaulting the field to None — this is what lets the same mapping
+    drive generate-pattern before any pattern (or hash) exists."""
+    data = {
+        "screen_id": "S",
+        "cabinets": [{
+            "cabinet_id": "V000_R000",
+            "resolution_px": [900, 510],
+            "active_size_mm": [600, 340],
+            "pixel_pitch_mm": [0.667, 0.667],
+            "active_origin": "center",
+            "input_rect_px": [0, 0, 900, 510],
+            "rotation": 0,
+            "mirror_x": False,
+            "mirror_y": False,
+        }],
+        # no expected_pattern_hash
+    }
+    m = ScreenMapping.model_validate(data)
+    assert m.expected_pattern_hash is None
+
+
+def test_preflight_skips_check_when_hash_unset():
+    """With no expected_pattern_hash, preflight has nothing to bind against and
+    must skip the check (the reconstruct call site emits the pattern_hash_unset
+    warning) rather than raise or false-mismatch against None."""
+    data = {
+        "screen_id": "S",
+        "cabinets": [{
+            "cabinet_id": "V000_R000",
+            "resolution_px": [900, 510],
+            "active_size_mm": [600, 340],
+            "pixel_pitch_mm": [0.667, 0.667],
+            "active_origin": "center",
+            "input_rect_px": [0, 0, 900, 510],
+            "rotation": 0,
+            "mirror_x": False,
+            "mirror_y": False,
+        }],
+    }
+    m = ScreenMapping.model_validate(data)
+    assert m.expected_pattern_hash is None
+    # any actual hash is accepted (skipped), including a non-matching one
+    assert m.preflight(actual_pattern_hash="anything") is None
+    # ...but the hash-skip must NOT short-circuit the orthogonal image_size
+    # cross-check: a hashless mapping with a mismatched image_size still raises,
+    # and a matching one still passes.
+    with pytest.raises(ScreenMappingError, match="image_size"):
+        m.preflight(actual_pattern_hash="anything", image_size=(1234, 5678))
+    assert m.preflight(actual_pattern_hash="anything", image_size=(900, 510)) is None
+
+
 def test_construction_rejects_invalid_rotation():
     """rotation=45 is rejected at model construction, not at preflight."""
     # model_post_init rejects values not in {0,90,180,270}; pydantic v2 wraps the

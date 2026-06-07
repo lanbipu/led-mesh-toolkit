@@ -12,6 +12,7 @@ import pytest
 
 from lmt_vba_sidecar.vpqsp_codec import MAX_LOCAL, VpqspMarkerId, encode_marker
 from lmt_vba_sidecar.vpqsp_layout import (
+    DEFAULT_MARKER_FILL,
     MAX_MARKERS_PER_CABINET,
     choose_marker_grid,
     local_ids,
@@ -25,6 +26,22 @@ def test_choose_marker_grid_square_and_min_markers():
     assert mx == my  # square cabinet -> square marker grid
     assert mx * my >= 8  # clears reconstruct observability floor
     assert mpx > 0
+
+
+@pytest.mark.parametrize("res", [(630, 630), (2560, 1440), (3840, 2160), (1280, 640)])
+def test_marker_fills_cell_for_high_coverage(res):
+    """Markers must fill ~DEFAULT_MARKER_FILL of each cell so the screen is well
+    utilised (the operator's complaint was ~80% per-cell coverage). Guards Issue 4:
+    bumping the fill maximises screen usage without moving centres (which would
+    merge seam-adjacent markers on a seamless wall). The lower bound 0.85 also
+    locks in that we did NOT regress below the new 0.9 target (minus rounding)."""
+    mx, my, mpx = choose_marker_grid(res)
+    cell_w = res[0] / mx
+    cell_h = res[1] / my
+    fill = mpx / min(cell_w, cell_h)
+    assert fill >= 0.85, f"{res}: marker fills only {fill:.0%} of the cell"
+    # Cross-check the fill tracks the DEFAULT_MARKER_FILL knob (within rounding).
+    assert abs(fill - DEFAULT_MARKER_FILL) < 0.05
 
 
 def test_choose_marker_grid_aspect_scales_long_side():

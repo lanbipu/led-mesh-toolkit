@@ -92,6 +92,8 @@ y_mm  = (H/2 - cy_px) * pitch_y                           # +y UP（OpenCV board
 p_local = [x_mm, y_mm, 0.0]                               # center origin, mm
 ```
 
+> **覆盖率 / 边缘**：marker 在各自 cell 内【居中】，每个 marker 填满 `DEFAULT_MARKER_FILL`（=0.9）× cell，剩下 (1-0.9) 作为暗间隙防止相邻（含拼缝 abutting）outline 合并成单个 contour。居中布局在「均匀 marker 尺寸 + 无缝拼接墙（cabinet 像素相邻）」约束下已是边缘最优：外圈 marker 的外边距 = 半个 inter-marker 间隙，两块 cabinet 在拼缝处恰好留一个 inter-marker 间隙。把中心再往边缘推会让拼缝两侧 marker 合并、双双漏检——所以提升屏幕利用率靠【放大 cell 内 marker】（调 `DEFAULT_MARKER_FILL`），不靠移动中心。自编码 marker 的标定点是 marker 质心，必然落在 cell 中心；要让标定点更贴边需换基元（如 ChArUco 的角点栅格），是 marker-grid 方案的固有取舍。
+
 > **deferred（非 MVP）**：多尺度 Large Anchor、blue-noise 打散、normal/inverted 双帧、
 > QLE 镜头联合标定。bit 已为多尺度/screen_id 留位，布局函数可后续替换为 blue-noise 而
 > 不动 codec/detector/BA 契约。见 §8。

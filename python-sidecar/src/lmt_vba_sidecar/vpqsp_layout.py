@@ -38,8 +38,15 @@ MAX_MARKERS_PER_CABINET = MAX_LOCAL + 1  # 64
 # Marker-grid sizing. Anchor the marker count to the cabinet's SHORT side so a
 # square cabinet gets TARGET_MARKERS_SHORT per side; the long side scales by
 # aspect ratio. MIN_CELL_PX keeps each marker physically large enough to decode
-# (a 9x9-effective marker needs ~6 px/cell). DEFAULT_MARKER_FILL leaves a gap
-# between adjacent markers so their bright outlines never merge.
+# (a 9x9-effective marker needs ~6 px/cell). DEFAULT_MARKER_FILL is the fraction
+# of each grid cell a marker fills; the (1 - fill) remainder is the dark gap that
+# keeps adjacent (and seam-abutting) bright outlines from merging into one contour.
+# 0.9 maximises screen utilisation — markers fill 90% of their cell vs the old
+# 0.8 (the "~80% coverage" the operator saw) — while leaving (1-0.9)=10% of the
+# cell as a gap: on the smallest supported cabinets (~106 px cells) that is still
+# ~10 px of crisp dark between markers, comfortably above the 1 px findContours
+# needs; on production cabinets (200-360 px cells) it is 20-36 px, robust to
+# capture blur. Raising it further shrinks the seam gap toward merge territory.
 #
 # 6/side ≈ ChArUco's effective per-side marker density (squares_short 9 / √2 ≈ 6.4),
 # restoring the observation margin VP-QSP loses by emitting one centroid per marker
@@ -48,7 +55,7 @@ MAX_MARKERS_PER_CABINET = MAX_LOCAL + 1  # 64
 # healthy margin instead of sitting one bad decode above the floor.
 TARGET_MARKERS_SHORT = 6
 MIN_CELL_PX = 80
-DEFAULT_MARKER_FILL = 0.8
+DEFAULT_MARKER_FILL = 0.9
 MIN_MARKER_PX = 48  # absolute floor; below this the 7x7 panel is undecodable
 _PANEL_BG = 40  # dark panel grey level (matches vpcal)
 
@@ -98,6 +105,17 @@ def marker_center_px(
     Image convention: top-left origin, +y down. The marker sits at the centre of
     its grid cell. This is the SINGLE definition shared by generation and the
     p_local lookup.
+
+    The grid is cell-CENTERED on purpose, not edge-anchored. With a uniform
+    ``marker_px`` and seamless cabinet tiling (a real LED wall abuts cabinets
+    pixel-to-pixel — no bezel gap in the framebuffer), the centred layout already
+    places the outermost markers as close to each edge as detection allows: the
+    outer margin equals half the inter-marker gap, so two cabinets meeting at a
+    seam leave exactly one inter-marker gap between their edge markers. Pushing
+    the centres any closer to the edge would make seam-adjacent markers' bright
+    outlines merge into one contour and drop both from detection. Screen
+    utilisation is therefore raised by enlarging the markers within each cell
+    (``DEFAULT_MARKER_FILL``), not by moving their centres outward.
     """
     w_px, h_px = float(resolution_px[0]), float(resolution_px[1])
     mr, mc = divmod(int(local_id), int(markers_x))

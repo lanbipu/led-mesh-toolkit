@@ -369,6 +369,12 @@ def run_reconstruct(cmd: ReconstructInput) -> int:
     # cabinet's LED canvas resolution_px; passing it would false-positive the
     # best-effort cross-check. Only the pattern-hash check is load-bearing.
     _ = image_size  # retained for diagnostics; intentionally not cross-checked
+    if screen_mapping.expected_pattern_hash is None:
+        write_event(WarningEvent(
+            event="warning", code="pattern_hash_unset",
+            message="screen_mapping.expected_pattern_hash is not set; skipping the "
+                    "capture↔pattern binding check. Set it to the generated pattern's "
+                    "hash to verify the captured pattern matches this config."))
     try:
         screen_mapping.preflight(pattern_hash(pattern_meta))
     except ScreenMappingError as e:
@@ -502,6 +508,12 @@ def run_reconstruct_vpqsp(cmd: ReconstructInput, manifest) -> int:
         return 1
 
     # --- 3. preflight (pattern hash ties screen_mapping to this exact pattern) ---
+    if screen_mapping.expected_pattern_hash is None:
+        write_event(WarningEvent(
+            event="warning", code="pattern_hash_unset",
+            message="screen_mapping.expected_pattern_hash is not set; skipping the "
+                    "capture↔pattern binding check. Set it to the generated pattern's "
+                    "hash to verify the captured pattern matches this config."))
     try:
         screen_mapping.preflight(pattern_hash(meta))
     except ScreenMappingError as e:

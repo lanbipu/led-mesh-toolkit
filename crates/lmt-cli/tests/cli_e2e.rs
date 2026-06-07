@@ -1585,6 +1585,75 @@ fn generate_pattern_screen_mapping_unequal_cabinets() {
     assert_eq!(by(1)["squares_y"], 9);
 }
 
+/// Issue 1 regression: a RELATIVE `--screen-mapping` must resolve against the
+/// CURRENT WORKING DIRECTORY (like every other path arg), NOT be re-joined onto
+/// `project_path`. The old code did `project_path.join(screen_mapping)`, so
+/// passing `proj/screen_mapping.json` while `project_path = proj` double-
+/// concatenated to `proj/proj/screen_mapping.json` → "No such file". Here CWD =
+/// tmp and BOTH paths are CWD-relative; success proves no double-join.
+#[test]
+#[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary/wrapper"]
+fn generate_pattern_relative_screen_mapping_resolves_against_cwd() {
+    let sidecar = match gp_sidecar() {
+        Some(s) => s,
+        None => { eprintln!("skip: LMT_VBA_SIDECAR_PATH unset"); return; }
+    };
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 1, 1);
+    let sm = proj.join("screen_mapping.json");
+    let sm_json = serde_json::json!({
+        "screen_id": "MAIN", "expected_pattern_hash": "x",  // hash present: isolates the PATH concern
+        "cabinets": [
+            {"cabinet_id": "V000_R000", "resolution_px": [540, 540],
+             "active_size_mm": [168.75, 168.75], "pixel_pitch_mm": [0.3125, 0.3125],
+             "active_origin": "center", "input_rect_px": [0, 0, 540, 540],
+             "rotation": 0, "mirror_x": false, "mirror_y": false}
+        ]
+    });
+    std::fs::write(&sm, serde_json::to_string(&sm_json).unwrap()).unwrap();
+    lmt()
+        .current_dir(tmp.path())  // CWD-relative resolution is the whole point
+        .env("LMT_VBA_SIDECAR_PATH", &sidecar)
+        .args(["--json", "visual", "generate-pattern", "proj", "MAIN",
+               "--screen-mapping", "proj/screen_mapping.json", "--yes"])
+        .assert()
+        .success();
+}
+
+/// Issue 2 regression: a screen_mapping may OMIT `expected_pattern_hash` at
+/// generate-pattern time (the hash does not exist until the pattern is written).
+/// Generate must NOT reject it as a required field.
+#[test]
+#[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary/wrapper"]
+fn generate_pattern_screen_mapping_without_hash_succeeds() {
+    let sidecar = match gp_sidecar() {
+        Some(s) => s,
+        None => { eprintln!("skip: LMT_VBA_SIDECAR_PATH unset"); return; }
+    };
+    let tmp = TempDir::new().unwrap();
+    let proj = tmp.path().join("proj");
+    write_gp_project(&proj, 1, 1);
+    let sm = proj.join("screen_mapping.json");
+    let sm_json = serde_json::json!({
+        "screen_id": "MAIN",  // NO expected_pattern_hash field
+        "cabinets": [
+            {"cabinet_id": "V000_R000", "resolution_px": [540, 540],
+             "active_size_mm": [168.75, 168.75], "pixel_pitch_mm": [0.3125, 0.3125],
+             "active_origin": "center", "input_rect_px": [0, 0, 540, 540],
+             "rotation": 0, "mirror_x": false, "mirror_y": false}
+        ]
+    });
+    std::fs::write(&sm, serde_json::to_string(&sm_json).unwrap()).unwrap();
+    let assert = lmt()
+        .env("LMT_VBA_SIDECAR_PATH", &sidecar)
+        .args(["--json", "visual", "generate-pattern", proj.to_str().unwrap(), "MAIN",
+               "--screen-mapping", sm.to_str().unwrap(), "--yes"])
+        .assert()
+        .success();
+    assert_eq!(gp_stdout_env(assert.get_output())["ok"], true);
+}
+
 /// Over-capacity: 26 cabinets × 40 markers > 1000 → invalid_input envelope.
 #[test]
 #[ignore = "requires LMT_VBA_SIDECAR_PATH set to a real sidecar binary/wrapper"]

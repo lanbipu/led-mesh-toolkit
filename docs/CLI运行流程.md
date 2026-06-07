@@ -475,6 +475,10 @@ capture-card 输出 ~714KB 自包含 HTML。
   # --screen-id-code 0（多屏 Volume 时每屏取不同值 0-15）
 
 # 指定 screen_mapping（逐 cabinet 像素尺寸不同时）
+# --screen-mapping 的相对路径相对【当前工作目录】解析（与其他路径参数一致，
+# 不再相对项目根做拼接）。screen_mapping.json 中 expected_pattern_hash 在
+# generate 阶段【可选】（pattern 还没生成时无从填写），仅 reconstruct preflight 校验。
+# 多屏不同分辨率示例见下方 §9.3 注释（input_rect_px 必须逐屏偏移、不可重叠）。
 # ./target/debug/lmt --json visual generate-pattern \
 #   $LMT_WORK/curved-flat MAIN \
 #   --screen-mapping screen_mapping.json --yes
@@ -489,6 +493,22 @@ capture-card 输出 ~714KB 自包含 HTML。
 实测返回：`cabinet_count: 32, total_markers: 288`（每 cabinet 3×3 = 9 markers）。
 
 > **VP-QSP vs ChArUco**：VP-QSP 用 32-bit 自编码 marker（screen 4bit + col 7bit + row 7bit + local 6bit + CRC8），无 ArUco 字典容量天花板；ChArUco 在 >13 cabinet 时会报 `invalid_input`。
+
+> **多屏不同分辨率 screen_mapping 写法**：`input_rect_px` 是该 cabinet 在【整块屏幕画布】上的放置矩形 `[x, y, w, h]`，不是各自从 `0,0` 开始。多屏并排时第二块起必须按前一块的宽度横向偏移 `x`，否则报 `overlapping input_rect_px`（报错会给出 `x = 前块 x + w` 的修法）。双屏左右并排示例（左 2560×1440、右 3840×2160）：
+> ```json
+> {
+>   "screen_id": "DUAL",
+>   "cabinets": [
+>     { "cabinet_id": "V000_R000", "resolution_px": [2560,1440], "active_size_mm": [597.7,336.2],
+>       "pixel_pitch_mm": [0.2335,0.2335], "active_origin": "center",
+>       "input_rect_px": [0, 0, 2560, 1440], "rotation": 0, "mirror_x": false, "mirror_y": false },
+>     { "cabinet_id": "V001_R000", "resolution_px": [3840,2160], "active_size_mm": [1217.0,685.0],
+>       "pixel_pitch_mm": [0.3169,0.3169], "active_origin": "center",
+>       "input_rect_px": [2560, 0, 3840, 2160], "rotation": 0, "mirror_x": false, "mirror_y": false }
+>   ]
+> }
+> ```
+> `input_rect_px` 的 `w/h` 必须等于该 cabinet 的 `resolution_px`（仅 `x/y` 偏移可不同，1:1 feed）。`expected_pattern_hash` 可省略（见上）。
 
 ### 9.4 视觉重建（reconstruct）
 

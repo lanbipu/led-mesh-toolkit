@@ -119,7 +119,11 @@ def run_generate_pattern_vpqsp(cmd: GeneratePatternInput) -> int:
                 write_event(ErrorEvent(event="error", code="invalid_input",
                     message=(f"cabinets V{specs[i]['col']:03d}_R{specs[i]['row']:03d} and "
                              f"V{specs[j]['col']:03d}_R{specs[j]['row']:03d} have overlapping "
-                             f"input_rect_px ([{ax},{ay},{aw},{ah}] vs [{bx},{by},{bw_},{bh_}])"),
+                             f"input_rect_px ([{ax},{ay},{aw},{ah}] vs [{bx},{by},{bw_},{bh_}]). "
+                             f"input_rect_px is [x, y, w, h] — each cabinet's placement rect on "
+                             f"the shared screen canvas (cabinets do NOT each start at 0,0); the "
+                             f"rects must not overlap. Tile them, e.g. place the 2nd cabinet to "
+                             f"the right by setting its x to the 1st's x+w ({ax}+{aw}={ax + aw})."),
                     fatal=True))
                 return 1
 

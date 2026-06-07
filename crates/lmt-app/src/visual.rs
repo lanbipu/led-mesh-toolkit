@@ -447,6 +447,23 @@ pub fn run_calibrate(
 // generate_pattern
 // ---------------------------------------------------------------------------
 
+/// Resolve a `--screen-mapping` path to an absolute path, relative to the CURRENT
+/// WORKING DIRECTORY — consistent with every other path argument the CLI accepts
+/// (`project_path`, `--capture-manifest`, `--images`, …), all of which the OS
+/// resolves against CWD. A relative path was previously joined onto `project_path`,
+/// which double-concatenated when the operator passed a CWD-relative path that
+/// already contained the project prefix (e.g. `proj/screen_mapping.json` while
+/// `project_path = proj` → `proj/proj/screen_mapping.json`). Absolute paths pass
+/// through unchanged; `None` (flag absent) stays `None`. The result is absolute so
+/// the sidecar subprocess resolves it identically regardless of its own CWD.
+fn resolve_screen_mapping_path(p: Option<&Path>) -> LmtResult<Option<std::path::PathBuf>> {
+    match p {
+        None => Ok(None),
+        Some(p) if p.is_absolute() => Ok(Some(p.to_path_buf())),
+        Some(p) => Ok(Some(std::env::current_dir()?.join(p))),
+    }
+}
+
 /// Resolve the framebuffer `[w, h]` for one screen.
 ///
 /// In `--screen-mapping` mode the framebuffer is the bounding box of the
@@ -537,10 +554,8 @@ pub fn run_generate_pattern(
     let screen_cfg = load_screen(&cfg, screen_id)?;
     let cabinet_array = ipc_cabinet_array(screen_cfg);
 
-    // Resolve the screen_mapping path (project-root-relative if not absolute).
-    let sm_abs = screen_mapping_path.map(|p| {
-        if p.is_absolute() { p.to_path_buf() } else { project_path.join(p) }
-    });
+    // Resolve --screen-mapping relative to CWD (see resolve_screen_mapping_path).
+    let sm_abs = resolve_screen_mapping_path(screen_mapping_path)?;
 
     let screen_resolution = compute_screen_resolution(&sm_abs, screen_cfg, screen_id)?;
 
@@ -592,10 +607,8 @@ pub fn run_generate_structured_light(
     let screen_cfg = load_screen(&cfg, screen_id)?;
     let cabinet_array = ipc_cabinet_array(screen_cfg);
 
-    // Resolve the screen_mapping path (project-root-relative if not absolute).
-    let sm_abs = screen_mapping_path.map(|p| {
-        if p.is_absolute() { p.to_path_buf() } else { project_path.join(p) }
-    });
+    // Resolve --screen-mapping relative to CWD (see resolve_screen_mapping_path).
+    let sm_abs = resolve_screen_mapping_path(screen_mapping_path)?;
     let screen_resolution = compute_screen_resolution(&sm_abs, screen_cfg, screen_id)?;
 
     let output_dir = project_path.join("patterns").join(screen_id).join("sl");
