@@ -63,25 +63,51 @@ _PANEL_BG = 40  # dark panel grey level (matches vpcal)
 def choose_marker_grid(resolution_px: tuple[int, int]) -> tuple[int, int, int]:
     """Pick (markers_x, markers_y, marker_px) for one cabinet's LED canvas.
 
-    Mirrors board_layout.choose_board_shape's short-side anchoring so the marker
-    grid scales sanely for any cabinet size / aspect. marker_px is sized to fill
-    DEFAULT_MARKER_FILL of the (possibly non-square) cell so neighbouring markers
-    keep a gap.
+    Short-side anchoring with aspect-aware long-side rounding: tries short-side
+    counts from TARGET_MARKERS_SHORT downward, computing the long-side count via
+    round() (not floor) so cells stay as square as possible.  When a lower
+    short-side count yields significantly squarer cells (>2 pp), it wins over a
+    higher-count but skewed grid — the coverage gain from square cells outweighs
+    the loss of a few markers.
+
+    Square cabinets (typical LED walls) are unaffected: cell aspect is already
+    1.0 at TARGET_MARKERS_SHORT.  The fix matters for wide/tall screens (16:9
+    monitors etc.) where floor-dividing the long side produced non-square cells.
     """
     w_px, h_px = int(resolution_px[0]), int(resolution_px[1])
     short = min(w_px, h_px)
-    cell = max(MIN_CELL_PX, short // TARGET_MARKERS_SHORT)
-    markers_x = max(1, w_px // cell)
-    markers_y = max(1, h_px // cell)
-    # Cap to the 6-bit local_id capacity: a wide/large cabinet can compute a grid
-    # of >64 markers, which would overflow the codec. Shrink the larger axis (so
-    # markers stay as square as possible) until it fits, then size the markers to
-    # the resulting (larger) cell.
-    while markers_x * markers_y > MAX_MARKERS_PER_CABINET:
-        if markers_x >= markers_y:
-            markers_x -= 1
-        else:
-            markers_y -= 1
+    long_ = max(w_px, h_px)
+    is_landscape = w_px >= h_px
+
+    best: tuple[int, int, float, int] | None = None  # (mx, my, squareness, count)
+
+    for ms in range(TARGET_MARKERS_SHORT, 0, -1):
+        cell = short / ms
+        if cell < MIN_CELL_PX:
+            continue
+        ml = max(1, round(long_ / cell))
+        if ms * ml > MAX_MARKERS_PER_CABINET:
+            ml = MAX_MARKERS_PER_CABINET // ms
+        if long_ / ml < MIN_CELL_PX:
+            continue
+
+        mx = ml if is_landscape else ms
+        my = ms if is_landscape else ml
+
+        cell_w = w_px / mx
+        cell_h = h_px / my
+        sq = min(cell_w, cell_h) / max(cell_w, cell_h)
+        count = mx * my
+
+        if best is None or sq > best[2] + 0.02 or (
+            sq >= best[2] - 0.005 and count > best[3]
+        ):
+            best = (mx, my, sq, count)
+
+    if best is None:
+        return 1, 1, max(MIN_MARKER_PX, int(round(DEFAULT_MARKER_FILL * min(w_px, h_px))))
+
+    markers_x, markers_y = best[0], best[1]
     cell_w = w_px / markers_x
     cell_h = h_px / markers_y
     marker_px = max(MIN_MARKER_PX, int(round(DEFAULT_MARKER_FILL * min(cell_w, cell_h))))
