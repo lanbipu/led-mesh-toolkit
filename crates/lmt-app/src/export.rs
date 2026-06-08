@@ -158,6 +158,7 @@ pub fn run_export_pose_obj(
     out_file: &Path,
     root: Option<&str>,
     ground: bool,
+    split: bool,
 ) -> LmtResult<ExportPoseObjResult> {
     let target_enum = parse_target(target)?; // 校验 target；几何原样（Neutral）
     let report: CabinetPoseReportFile =
@@ -257,44 +258,59 @@ pub fn run_export_pose_obj(
         }
     }
 
-    // 每块 → 1×1 surface（格子 UV）→ MeshOutput（Neutral 原样，weld 0）；再合并。
+    // 每块 → 1×1 surface（格子 UV）→ MeshOutput（Neutral 原样，weld 0）。
     let unit_array = CabinetArray::rectangle(1, 1, [1.0, 1.0]);
-    let mut meshes = Vec::with_capacity(panels.len());
+    let mut meshes: Vec<(String, MeshOutput)> = Vec::with_capacity(panels.len());
     for (cid, col, row, cs) in &panels {
-        // disguise 的 flipY 把每块几何竖直翻转,UV 的 cell 内 V 要跟着翻
-        // (否则每块内容上下颠倒 → 整墙横条错位)。U 不翻(水平没动)。
-        // align 路径没 flipY → 不翻 V(几何已在设计帧)。
         let surface = panel_surface(cid, cs, *col, *row, cols, rows, disguise_compensate);
-        meshes.push(surface_to_mesh_output(
+        let mut mesh = surface_to_mesh_output(
             &surface,
             &unit_array,
             TargetSoftware::Neutral,
             0.0,
-        )?);
-    }
-    let mut combined = merge_mesh_outputs(TargetSoftware::Neutral, &meshes);
-    // disguise 的 flipY 是反射,翻转了三角 winding;反转回来让发光面外法向落 +Z
-    // (对账已验证的 disguise 模型 lmt_test_v02)。root / no-root 都适用。
-    // align 路径没 flipY(无反射)→ 不 swap(几何已是 +Z outward,见测试)。
-    if disguise_compensate {
-        for t in combined.triangles.iter_mut() {
-            t.swap(1, 2);
+        )?;
+        if disguise_compensate {
+            for t in mesh.triangles.iter_mut() {
+                t.swap(1, 2);
+            }
         }
+        meshes.push((cid.clone(), mesh));
     }
 
-    let out = ensure_obj_extension(out_file);
-    if let Some(parent) = out.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
+    if split {
+        // --split: out_file is the output DIRECTORY; each cabinet gets its own OBJ.
+        let out_dir = out_file;
+        std::fs::create_dir_all(out_dir)?;
+        let mut files = Vec::with_capacity(meshes.len());
+        for (cid, mesh) in &meshes {
+            let obj_path = out_dir.join(format!("{cid}.obj"));
+            write_obj(mesh, &obj_path)?;
+            files.push(obj_path.display().to_string());
         }
+        Ok(ExportPoseObjResult {
+            target: target.to_string(),
+            cabinet_count: panels.len(),
+            file: out_dir.display().to_string(),
+            files,
+        })
+    } else {
+        // Merge all cabinets into a single OBJ.
+        let all_meshes: Vec<MeshOutput> = meshes.into_iter().map(|(_, m)| m).collect();
+        let combined = merge_mesh_outputs(TargetSoftware::Neutral, &all_meshes);
+        let out = ensure_obj_extension(out_file);
+        if let Some(parent) = out.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        write_obj(&combined, &out)?;
+        Ok(ExportPoseObjResult {
+            target: target.to_string(),
+            cabinet_count: panels.len(),
+            file: out.display().to_string(),
+            files: vec![],
+        })
     }
-    write_obj(&combined, &out)?;
-
-    Ok(ExportPoseObjResult {
-        target: target.to_string(),
-        cabinet_count: panels.len(),
-        file: out.display().to_string(),
-    })
 }
 
 /// Dry-run pre-flight for [`run_export_pose_obj`]: the pose report must be
@@ -821,7 +837,7 @@ mod tests {
         std::fs::write(&rp, BENCH_REPORT).unwrap();
         let out = dir.path().join("wall.obj");
 
-        let res = run_export_pose_obj(&rp, "neutral", &out, None, false).unwrap();
+        let res = run_export_pose_obj(&rp, "neutral", &out, None, false, false).unwrap();
         assert_eq!(res.cabinet_count, 2);
         assert!(out.is_file());
 
@@ -855,7 +871,7 @@ mod tests {
         std::fs::write(&rp, BENCH_REPORT).unwrap();
         let out = dir.path().join("wall_disguise.obj");
 
-        let res = run_export_pose_obj(&rp, "disguise", &out, None, false).unwrap();
+        let res = run_export_pose_obj(&rp, "disguise", &out, None, false, false).unwrap();
         assert_eq!(res.cabinet_count, 2);
 
         let text = std::fs::read_to_string(&out).unwrap();
@@ -895,7 +911,7 @@ mod tests {
         )
         .unwrap();
         let out = dir.path().join("conv.obj");
-        run_export_pose_obj(&rp, "disguise", &out, None, false).unwrap();
+        run_export_pose_obj(&rp, "disguise", &out, None, false, false).unwrap();
         let text = std::fs::read_to_string(&out).unwrap();
 
         let verts: Vec<[f64; 3]> = text
@@ -988,7 +1004,7 @@ mod tests {
         )
         .unwrap();
         let out = dir.path().join("a.obj");
-        run_export_pose_obj(&rp, "neutral", &out, None, false).unwrap();
+        run_export_pose_obj(&rp, "neutral", &out, None, false, false).unwrap();
         let verts = parse_obj_verts(&std::fs::read_to_string(&out).unwrap());
         assert_eq!(verts.len(), 4);
         // 顺序无关地断言输入 4 角(米)原样出现(passthrough)。
@@ -1023,7 +1039,7 @@ mod tests {
         )
         .unwrap();
         let out = dir.path().join("ad.obj");
-        run_export_pose_obj(&rp, "disguise", &out, None, false).unwrap();
+        run_export_pose_obj(&rp, "disguise", &out, None, false, false).unwrap();
         let verts = parse_obj_verts(&std::fs::read_to_string(&out).unwrap());
         let cx = verts.iter().map(|v| v[0]).sum::<f64>() / verts.len() as f64;
         assert!(cx > 0.9, "align must NOT recenter X (canonical would → 0): cx={cx}");
@@ -1046,7 +1062,7 @@ mod tests {
         )
         .unwrap();
         let out = dir.path().join("ar.obj");
-        let err = run_export_pose_obj(&rp, "neutral", &out, Some("V000_R000"), false).unwrap_err();
+        let err = run_export_pose_obj(&rp, "neutral", &out, Some("V000_R000"), false, false).unwrap_err();
         assert!(matches!(err, LmtError::InvalidInput(_)), "align + --root must be rejected, got {err:?}");
         // dry-run 必须同样拒(parity)。
         let derr = check_pose_obj_inputs(&rp, "neutral", Some("V000_R000")).unwrap_err();
@@ -1069,7 +1085,7 @@ mod tests {
         )
         .unwrap();
         let out = dir.path().join("a2.obj");
-        run_export_pose_obj(&rp, "disguise", &out, None, false).unwrap();
+        run_export_pose_obj(&rp, "disguise", &out, None, false, false).unwrap();
         let text = std::fs::read_to_string(&out).unwrap();
         let verts = parse_obj_verts(&text);
         assert_eq!(verts.len(), 8, "2 cabinets × 4 verts");
@@ -1113,7 +1129,7 @@ mod tests {
         )
         .unwrap();
         let out = dir.path().join("conv_root.obj");
-        run_export_pose_obj(&rp, "disguise", &out, Some("V000_R000"), false).unwrap();
+        run_export_pose_obj(&rp, "disguise", &out, Some("V000_R000"), false, false).unwrap();
         let text = std::fs::read_to_string(&out).unwrap();
 
         let verts: Vec<[f64; 3]> = text
@@ -1185,7 +1201,7 @@ mod tests {
             std::fs::write(&rp, &report).unwrap();
             let out = dir.path().join("wall.obj");
 
-            let result = run_export_pose_obj(&rp, "neutral", &out, None, false);
+            let result = run_export_pose_obj(&rp, "neutral", &out, None, false, false);
             assert!(
                 matches!(result, Err(LmtError::InvalidInput(_))),
                 "expected InvalidInput for cabinet_id={bad_id:?}, got {result:?}"
@@ -1200,7 +1216,7 @@ mod tests {
         std::fs::write(&rp, BENCH_REPORT).unwrap();
         let out = dir.path().join("wall.obj");
 
-        let res = run_export_pose_obj(&rp, "neutral", &out, Some("V000_R001"), true).unwrap();
+        let res = run_export_pose_obj(&rp, "neutral", &out, Some("V000_R001"), true, false).unwrap();
         assert_eq!(res.cabinet_count, 2);
 
         let text = std::fs::read_to_string(&out).unwrap();
@@ -1224,7 +1240,7 @@ mod tests {
         assert!((max_y - 0.680).abs() < 0.01, "height ≈ 0.68m, got {max_y}");
 
         // 未知 --root → NotFound
-        let err = run_export_pose_obj(&rp, "neutral", &out, Some("V999_R999"), false).unwrap_err();
+        let err = run_export_pose_obj(&rp, "neutral", &out, Some("V999_R999"), false, false).unwrap_err();
         assert!(matches!(err, LmtError::NotFound(_)), "got {err:?}");
     }
 

@@ -20,7 +20,8 @@ pub fn run(cmd: ExportCmd, mode: Mode, db_arg: Option<&Path>, yes: bool, dry_run
             out,
             root,
             ground,
-        } => pose_obj(mode, &pose_report, &target, &out, root.as_deref(), ground, yes, dry_run),
+            split,
+        } => pose_obj(mode, &pose_report, &target, &out, root.as_deref(), ground, split, yes, dry_run),
     }
 }
 
@@ -142,6 +143,7 @@ fn pose_obj(
     out: &Path,
     root: Option<&str>,
     ground: bool,
+    split: bool,
     yes: bool,
     dry_run: bool,
 ) -> i32 {
@@ -196,15 +198,29 @@ fn pose_obj(
                 out,
                 root,
                 ground,
+                split,
             ) {
                 Ok(r) => output::ok(mode, r, |p| {
-                    let _ = writeln!(
-                        std::io::stdout(),
-                        "wrote {} cabinets ({} target) into {}",
-                        p.cabinet_count,
-                        p.target,
-                        p.file
-                    );
+                    if p.files.is_empty() {
+                        let _ = writeln!(
+                            std::io::stdout(),
+                            "wrote {} cabinets ({} target) into {}",
+                            p.cabinet_count,
+                            p.target,
+                            p.file
+                        );
+                    } else {
+                        let _ = writeln!(
+                            std::io::stdout(),
+                            "wrote {} cabinets ({} target) as separate OBJs into {}",
+                            p.cabinet_count,
+                            p.target,
+                            p.file
+                        );
+                        for f in &p.files {
+                            let _ = writeln!(std::io::stdout(), "  {f}");
+                        }
+                    }
                 }),
                 Err(e) => output::err(mode, ApiError::from(e)),
             }

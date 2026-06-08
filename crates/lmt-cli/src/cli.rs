@@ -276,7 +276,8 @@ pub enum ExportCmd {
         pose_report: String,
         /// target software: disguise / unreal / neutral。
         target: String,
-        /// 输出 OBJ 文件路径（所有箱体合并为一个文件）。
+        /// 输出路径。默认(合并模式)为 OBJ 文件路径;--split 模式为输出目录,
+        /// 每个 cabinet 生成独立的 <cabinet_id>.obj。
         #[arg(long, value_name = "PATH")]
         out: PathBuf,
         /// 以该 cabinet_id 为基准:把整个场景重定位到它的局部系(它轴对齐落在原点),
@@ -287,6 +288,10 @@ pub enum ExportCmd {
         /// 为 0,其余屏保持真实相对高度(物理更低的屏可能 y<0)。
         #[arg(long)]
         ground: bool,
+        /// 每个 cabinet 导出为独立 OBJ 文件(--out 为输出目录)。
+        /// 所有文件共享同一世界坐标系,空间关系保持不变。
+        #[arg(long)]
+        split: bool,
     },
 }
 

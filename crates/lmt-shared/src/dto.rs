@@ -410,12 +410,16 @@ pub struct CabinetPoseEntry {
     pub corners_mm: [[f64; 3]; 4],
 }
 
-/// `lmt export pose-obj` 结果：所有箱体合并为一个 OBJ。
+/// `lmt export pose-obj` 结果。
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExportPoseObjResult {
     pub target: String,
     pub cabinet_count: usize,
+    /// 合并模式：单个 OBJ 路径。`--split` 模式时为输出目录。
     pub file: String,
+    /// `--split` 模式：per-cabinet OBJ 路径列表。合并模式时为空。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
