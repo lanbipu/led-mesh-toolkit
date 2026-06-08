@@ -72,7 +72,9 @@ def _coverage_frac(image_points, image_size) -> float:
 
 
 def solve_sl_intrinsics(object_points, image_points, image_size, *, max_rms_px: float,
-                        allow_full_distortion: bool = False) -> IntrinsicsResult:
+                        allow_full_distortion: bool = False,
+                        max_pp_std_px: float | None = None,
+                        try_zero_distortion: bool = False) -> IntrinsicsResult:
     """Solve K + distortion from per-pose (object_points, image_points). Raises
     IntrinsicsRefused on any gate. With allow_full_distortion the model is solved
     with k3 + tangential freed and ACCEPTED only when those extra coefficients are
@@ -107,7 +109,21 @@ def solve_sl_intrinsics(object_points, image_points, image_size, *, max_rms_px: 
 
     model = "radial2"
     try:
-        rms, K, dist, rvecs, _tvecs, std_int, _std_ext, _pv = _solve(full=False)
+        # Zero-distortion probe: for well-corrected lenses (normal–tele), fixing
+        # dist=0 avoids absorbing per-cabinet physical-dimension errors into k1/k2.
+        # Accept if RMS is within 10% of the freed-distortion RMS (i.e. distortion
+        # was negligible). If RMS is measurably worse, fall through to radial2.
+        if try_zero_distortion:
+            zf = (cv2.CALIB_USE_INTRINSIC_GUESS | cv2.CALIB_FIX_K1 | cv2.CALIB_FIX_K2 |
+                  cv2.CALIB_ZERO_TANGENT_DIST | cv2.CALIB_FIX_K3)
+            r0, K0z, d0, rv0, _t0, si0, _se0, _pv0 = cv2.calibrateCameraExtended(
+                object_points, image_points, image_size, K0.copy(), np.zeros(5), flags=zf)
+            r_free, *_ = _solve(full=False)
+            if r0 <= r_free * 1.10:
+                rms, K, dist, rvecs, std_int, model = r0, K0z, d0, rv0, si0, "zero_dist"
+
+        if model != "zero_dist":
+            rms, K, dist, rvecs, _tvecs, std_int, _std_ext, _pv = _solve(full=False)
         if allow_full_distortion:
             r2, K2, d2, rv2, _t2, si2, _se2, _pv2 = _solve(full=True)
             s2 = np.asarray(si2).flatten()
@@ -140,8 +156,9 @@ def solve_sl_intrinsics(object_points, image_points, image_size, *, max_rms_px: 
     std = np.asarray(std_int).flatten()
     pp_std = (float(std[2]), float(std[3]))
     foc_std = (float(std[0]), float(std[1]))
-    if max(pp_std) > PP_STDDEV_MAX_PX:
-        raise IntrinsicsRefused("observability_failed", f"principal-point std {pp_std} px > {PP_STDDEV_MAX_PX}")
+    pp_gate = max_pp_std_px if max_pp_std_px is not None else PP_STDDEV_MAX_PX
+    if max(pp_std) > pp_gate:
+        raise IntrinsicsRefused("observability_failed", f"principal-point std {pp_std} px > {pp_gate}")
     if max(foc_std) > FOCAL_STDDEV_MAX_FRAC * fx:
         raise IntrinsicsRefused("observability_failed", f"focal std {foc_std} px > {FOCAL_STDDEV_MAX_FRAC*100:.1f}%")
 

@@ -749,7 +749,7 @@ echo "Artifacts in: $WORK"
 | `curved-arc` | MAIN | 16×6 | curved (R=12000mm) | 自带 `measured.yaml`，可跑重建 + 导出 |
 | `monitor-bench` | BENCH | 1×2 | flat | 两块显示器模拟，自带 `capture_manifest.json` + `screen_mapping.json` + `known_geometry.json`，用于视觉管线 bench |
 
-## 附录 C. 验证状态汇总（2026-06-07）
+## 附录 C. 验证状态汇总（2026-06-08）
 
 | Step | 功能 | 状态 | 备注 |
 | ---: | --- | :---: | --- |
@@ -770,22 +770,23 @@ echo "Artifacts in: $WORK"
 | 6.4 | get-run-report | PASS | |
 | 7.1 | export obj (disguise) | PASS | 160 行, +Y up |
 | 7.1 | export obj (neutral) | PASS | 160 行, +Z up |
-| 7.2 | export pose-obj | SKIP | 需 visual reconstruct 产出 pose report |
+| 7.2 | export pose-obj (disguise) | PASS | 2 cabinets, 26 行 OBJ |
+| 7.2 | export pose-obj (neutral) | PASS | 2 cabinets, 26 行 OBJ |
 | 8.1 | simulate | PASS | 6 views, 4608 obs |
 | 8.2 | eval | PASS | dist err=0.12mm, angle err=0.13° |
-| 8.3 | compare-known | SKIP | 需真实 pose report |
+| 8.3 | compare-known | PASS | dist err=0.29mm, angle err=0.04°, passed=true |
 | 9.1 | plan-capture (--min-views) | PASS | 8 stations, 32/32 pass, fail_reason 字段正常 |
 | 9.1 | capture-card | PASS | 714KB HTML |
 | 9.3 | generate-pattern (vpqsp) | PASS | 32 cabinets, 288 markers, schema vpqsp.v1 |
 | 9.3 | generate-pattern (charuco) | PASS | 32 cabinets, 256 markers (legacy) |
 | 9.5.1 | generate-structured-light | PASS | 2048 dots, 15 frames |
 | 9.2 | calibrate | SKIP | 需棋盘格照片 |
-| 9.4 | visual reconstruct | SKIP | 需多角度拍摄照片 |
+| 9.4 | visual reconstruct (vpqsp auto) | PASS | BA RMS=1.29px, 2 cabinets, 11 views, --intrinsics auto |
 | 9.5.2 | decode-structured-light | SKIP | 需结构光录像 |
 | 9.5.3 | calibrate-structured-light | SKIP | 需 corr 文件 |
 | 9.5.4 | reconstruct-structured-light | SKIP | 需 corr + intrinsics |
 
-**19/28 PASS, 0 FAIL, 9 SKIP**（SKIP 项均需真实相机/全站仪数据）。
+**22/28 PASS, 0 FAIL, 6 SKIP**（SKIP 项均需真实相机/全站仪数据或棋盘格照片）。
 
 ## 附录 D. E2E 测试覆盖范围
 

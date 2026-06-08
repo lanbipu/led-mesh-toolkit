@@ -177,7 +177,7 @@ def _obs_residual_norms(K, result, observations, root_idx):
 
 def stage_b_robust_solve(*, K, observations, n_cameras, n_cabinets,
                          root_cabinet_idx, init_cameras, init_cabinets,
-                         per_cabinet_min_points):
+                         per_cabinet_min_points, max_nfev=200):
     """Iterative robust-residual trim wrapping model_constrained_ba (PRIMARY
     geometric authority). Recomputes residuals each iter (sol.fun is stale),
     drops norm > max(k*MAD, abs_px_floor) plus whole-(cam,cab)-group coherence
@@ -191,7 +191,7 @@ def stage_b_robust_solve(*, K, observations, n_cameras, n_cabinets,
     result = model_constrained_ba(
         K=K, observations=obs, n_cameras=n_cameras, n_cabinets=n_cabinets,
         root_cabinet_idx=root_cabinet_idx, init_cameras=init_cameras,
-        init_cabinets=init_cabinets, loss="huber")
+        init_cabinets=init_cabinets, loss="huber", max_nfev=max_nfev)
     for _ in range(STAGE_B_MAX_ITERS):
         norms = _obs_residual_norms(K, result, obs, root_cabinet_idx)
         mad = float(np.median(np.abs(norms - np.median(norms)))) or 0.0
@@ -200,8 +200,10 @@ def stage_b_robust_solve(*, K, observations, n_cameras, n_cabinets,
         group_norms: dict[tuple[int, int], list[float]] = {}
         for o, nrm in zip(obs, norms):
             group_norms.setdefault((o.camera_idx, o.cabinet_idx), []).append(nrm)
+        group_thr = max(STAGE_B_GROUP_MEDIAN_PX,
+                        min(2.0 * result.rms_reprojection_px, 8.0))
         bad_groups = {g for g, v in group_norms.items()
-                      if float(np.median(v)) > STAGE_B_GROUP_MEDIAN_PX}
+                      if float(np.median(v)) > group_thr}
         # candidate drops: pointwise OR in a bad group
         drop = [(nrm > thr) or ((o.camera_idx, o.cabinet_idx) in bad_groups)
                 for o, nrm in zip(obs, norms)]
@@ -234,7 +236,7 @@ def stage_b_robust_solve(*, K, observations, n_cameras, n_cabinets,
         result = model_constrained_ba(
             K=K, observations=obs, n_cameras=n_cameras, n_cabinets=n_cabinets,
             root_cabinet_idx=root_cabinet_idx, init_cameras=init_cameras,
-            init_cabinets=init_cabinets, loss="huber")
+            init_cabinets=init_cabinets, loss="huber", max_nfev=max_nfev)
     total = sum(rejected_per_cab.values())
     return result, rejected_per_cab, total, obs
 
@@ -532,38 +534,47 @@ def _self_calibrate_vpqsp(meta, detections, view_images, image_size, cmd):
 
     Returns (K, dist) or raises IntrinsicsRefused (code maps to the error event).
     """
-    from lmt_vba_sidecar.nominal import nominal_marker_positions_world
+    from lmt_vba_sidecar.vpqsp_layout import marker_local_mm
 
-    # Stale pattern_meta / edited layout / unsupported shape_prior surface as a
-    # ValueError; map to invalid_input (the file branch classifies bad input the
-    # same way), not an internal_error traceback.
-    try:
-        marker_world = nominal_marker_positions_world(
-            meta, cmd.project.cabinet_array, cmd.project.shape_prior)
-    except ValueError as e:
-        raise IntrinsicsRefused("invalid_input", f"nominal model build failed: {e}")
+    grid_by_cr = {
+        (c.col, c.row): (c.markers_x, c.markers_y,
+                         (c.resolution_px[0], c.resolution_px[1]),
+                         (c.pixel_pitch_mm[0], c.pixel_pitch_mm[1]))
+        for c in meta.cabinets
+    }
 
-    # One calibrateCamera "pose" per VIEW (matches the reconstruct's camera
-    # grouping: all images in a view share one pose). Concatenate that view's
-    # marker detections into nominal-world / image-pixel point pairs.
+    # One calibrateCamera "pose" per (VIEW, CABINET). Each cabinet is a genuine
+    # flat plane; grouping by cabinet avoids assuming cabinets are coplanar (they
+    # aren't for a desktop dual-monitor test setup, and may tilt on curved walls).
+    # Use LOCAL mm coords (z=0, center-origin) — world coords would bake in the
+    # flat-wall layout assumption, which is irrelevant for intrinsics.
     object_points, image_points = [], []
     for imgs in view_images:
-        objp, imgp = [], []
+        per_cab: dict[tuple[int, int], tuple[list, list]] = {}
         for path in imgs:
             for det in detections.get(path, []):
-                key = (int(det["cabinet"][0]), int(det["cabinet"][1]), int(det["local_id"]))
-                w = marker_world.get(key)
-                if w is None:
-                    continue  # decoded marker not in this pattern_meta (defensive)
-                objp.append(w)
-                imgp.append([det["corner_px"][0], det["corner_px"][1]])
-        if len(objp) >= 4:
-            object_points.append(np.asarray(objp, dtype=np.float32))
-            image_points.append(np.asarray(imgp, dtype=np.float32))
+                cab_cr = (int(det["cabinet"][0]), int(det["cabinet"][1]))
+                if cab_cr not in grid_by_cr:
+                    continue
+                mx, my, res_px, pitch = grid_by_cr[cab_cr]
+                p_local = marker_local_mm(
+                    int(det["local_id"]), markers_x=mx, markers_y=my,
+                    resolution_px=res_px, pixel_pitch_mm=pitch)
+                per_cab.setdefault(cab_cr, ([], []))
+                per_cab[cab_cr][0].append(p_local)
+                per_cab[cab_cr][1].append([det["corner_px"][0], det["corner_px"][1]])
+        for objp, imgp in per_cab.values():
+            if len(objp) >= 4:
+                object_points.append(np.asarray(objp, dtype=np.float32))
+                image_points.append(np.asarray(imgp, dtype=np.float32))
 
     has_anchor = bool(cmd.crosscheck_intrinsics_path)
+    # Per-cabinet poses have fewer points than full-view poses, so pp uncertainty
+    # is slightly higher. Scale the pp gate by image size (default 3px @ 4000px).
+    pp_gate = max(5.0, 3.0 * max(image_size) / 4000)
     res = solve_sl_intrinsics(object_points, image_points, image_size,
-                              max_rms_px=1.5, allow_full_distortion=has_anchor)
+                              max_rms_px=1.5, allow_full_distortion=has_anchor,
+                              max_pp_std_px=pp_gate, try_zero_distortion=True)
     if has_anchor:
         try:
             anchor = json.loads(pathlib.Path(cmd.crosscheck_intrinsics_path).read_text())
@@ -882,8 +893,9 @@ def solve_and_emit(
             K=K, observations=observations, n_cameras=n_cameras,
             n_cabinets=n_cabinets, root_cabinet_idx=root_idx,
             init_cameras=init_cameras, init_cabinets=init_cabinets,
-            per_cabinet_min_points=8)
-    if not result.converged:
+            per_cabinet_min_points=8,
+            max_nfev=max(200, 50 * n_cabinets * n_cameras))
+    if not result.converged and result.rms_reprojection_px > 2.0:
         write_event(ErrorEvent(
             event="error", code="ba_diverged",
             message=f"BA did not converge (rms={result.rms_reprojection_px:.2f}px after {result.iterations} iters)",
@@ -1080,21 +1092,37 @@ def _solve_pnp_branches(corners, K):
         return None
     obj = np.array([p for p, _ in corners], dtype=np.float64)
     img = np.array([px for _, px in corners], dtype=np.float64)
-    try:
-        ok, _rvec, _tvec, inliers = cv2.solvePnPRansac(
-            obj, img, K, None, iterationsCount=PNP_RANSAC_ITERS,
-            reprojectionError=PNP_RANSAC_REPROJ_PX, confidence=PNP_RANSAC_CONFIDENCE,
-            flags=cv2.SOLVEPNP_ITERATIVE,
-        )
-    except cv2.error:
-        return None
-    if not ok:
-        return None
+    # Primary path: solvePnP(ITERATIVE) on all points. DLT with many well-
+    # distributed coplanar points overwhelms the planar mirror ambiguity that
+    # causes RANSAC's 4-point subsets to consistently pick the wrong branch.
     mask = np.zeros(len(corners), dtype=bool)
-    if inliers is not None:
-        mask[inliers.reshape(-1)] = True
-    else:
-        mask[:] = True
+    try:
+        ok, rvec, tvec = cv2.solvePnP(
+            obj, img, K, None, flags=cv2.SOLVEPNP_ITERATIVE)
+    except cv2.error:
+        ok = False
+    if ok:
+        projected, _ = cv2.projectPoints(obj, rvec, tvec, K, None)
+        errors = np.linalg.norm(projected.reshape(-1, 2) - img, axis=1)
+        mask = errors < PNP_RANSAC_REPROJ_PX
+    # Fallback to RANSAC when solvePnP fails or finds few inliers (e.g., true
+    # outlier contamination where RANSAC's subset sampling is correct).
+    if int(mask.sum()) < MIN_PNP_CORNERS:
+        try:
+            ok_r, _rv, _tv, inliers = cv2.solvePnPRansac(
+                obj, img, K, None, iterationsCount=PNP_RANSAC_ITERS,
+                reprojectionError=PNP_RANSAC_REPROJ_PX,
+                confidence=PNP_RANSAC_CONFIDENCE,
+                flags=cv2.SOLVEPNP_ITERATIVE)
+        except cv2.error:
+            return None
+        if not ok_r:
+            return None
+        mask[:] = False
+        if inliers is not None:
+            mask[inliers.reshape(-1)] = True
+        else:
+            mask[:] = True
     if int(mask.sum()) < MIN_PNP_CORNERS:
         return None
     in_obj = obj[mask]
@@ -1299,11 +1327,28 @@ def estimate_nonroot_cabinet_init(
             if res is None:
                 continue
             branches, _mask = res
-            # Compose each camera_from_cab branch to world_from_cab via the root:
-            #   R_wc = Rc0.T @ Rc1 ; t_wc = Rc0.T @ (tc1 - tc0)
             world_branches = [(Rc0.T @ Rc1, Rc0.T @ (tc1 - tc0)) for Rc1, tc1 in branches]
-            n_nominal_root = R_root_nominal.T @ np.asarray(nominal_normals[cab_idx], dtype=float)
-            chosen = _disambiguate_world_branch(world_branches, n_nominal_root)
+            # When branches have very different reprojection quality (one is the
+            # correct pose, the other the IPPE mirror), reprojection dominates the
+            # nominal-normal angle check.  Project inlier corners through each
+            # camera_from_cab branch: the correct one reprojects well, the mirror
+            # has ~100px error.  Skip the normal-based disambiguation (which can
+            # fail when the cabinet is far from nominal, e.g. desktop monitors at
+            # arbitrary angles) when reproj clearly resolves the ambiguity.
+            obj_in = np.array([p for p, _ in corners], dtype=np.float64)[_mask]
+            img_in = np.array([px for _, px in corners], dtype=np.float64)[_mask]
+            branch_rms = []
+            for Rc1, tc1 in branches:
+                proj, _ = cv2.projectPoints(obj_in, *cv2.Rodrigues(Rc1)[0:1],
+                                            tc1.reshape(3,1), K, None)
+                branch_rms.append(float(np.sqrt(
+                    ((proj.reshape(-1,2) - img_in)**2).sum(axis=1).mean())))
+            if len(branch_rms) >= 2 and max(branch_rms) - min(branch_rms) > 10.0:
+                chosen = world_branches[int(np.argmin(branch_rms))]
+            else:
+                n_nominal_root = R_root_nominal.T @ np.asarray(
+                    nominal_normals[cab_idx], dtype=float)
+                chosen = _disambiguate_world_branch(world_branches, n_nominal_root)
             if chosen == "undecidable":
                 undecidable.add(cab_idx)
                 continue
