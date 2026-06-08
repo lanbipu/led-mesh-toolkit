@@ -260,7 +260,7 @@ pub fn run_export_pose_obj(
 
     // 每块 → 1×1 surface（格子 UV）→ MeshOutput（Neutral 原样，weld 0）。
     let unit_array = CabinetArray::rectangle(1, 1, [1.0, 1.0]);
-    let mut meshes: Vec<(String, MeshOutput)> = Vec::with_capacity(panels.len());
+    let mut meshes: Vec<(u32, u32, MeshOutput)> = Vec::with_capacity(panels.len());
     for (cid, col, row, cs) in &panels {
         let surface = panel_surface(cid, cs, *col, *row, cols, rows, disguise_compensate);
         let mut mesh = surface_to_mesh_output(
@@ -274,16 +274,16 @@ pub fn run_export_pose_obj(
                 t.swap(1, 2);
             }
         }
-        meshes.push((cid.clone(), mesh));
+        meshes.push((*col, *row, mesh));
     }
 
     if split {
-        // --split: out_file is the output DIRECTORY; each cabinet gets its own OBJ.
         let out_dir = out_file;
         std::fs::create_dir_all(out_dir)?;
         let mut files = Vec::with_capacity(meshes.len());
-        for (cid, mesh) in &meshes {
-            let obj_path = out_dir.join(format!("{cid}.obj"));
+        for (col, row, mesh) in &meshes {
+            let safe_name = format!("V{col:03}_R{row:03}.obj");
+            let obj_path = out_dir.join(&safe_name);
             write_obj(mesh, &obj_path)?;
             files.push(obj_path.display().to_string());
         }
@@ -295,7 +295,7 @@ pub fn run_export_pose_obj(
         })
     } else {
         // Merge all cabinets into a single OBJ.
-        let all_meshes: Vec<MeshOutput> = meshes.into_iter().map(|(_, m)| m).collect();
+        let all_meshes: Vec<MeshOutput> = meshes.into_iter().map(|(_, _, m)| m).collect();
         let combined = merge_mesh_outputs(TargetSoftware::Neutral, &all_meshes);
         let out = ensure_obj_extension(out_file);
         if let Some(parent) = out.parent() {

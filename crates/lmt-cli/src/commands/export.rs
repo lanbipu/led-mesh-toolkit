@@ -174,22 +174,41 @@ fn pose_obj(
             if let Err(e) = lmt_app::export::check_pose_obj_inputs(Path::new(pose_report), target, root) {
                 return output::err(mode, ApiError::from(e));
             }
-            let resolved = lmt_app::export::ensure_obj_extension(out);
-            let payload = serde_json::json!({
-                "dry_run": true,
-                "pose_report": pose_report,
-                "target": target,
-                "root": root,
-                "ground": ground,
-                "would_write": resolved.display().to_string(),
-            });
-            output::ok(mode, payload, |_| {
-                let _ = writeln!(
-                    std::io::stdout(),
-                    "[dry-run] would export merged OBJ from {pose_report} to {}",
-                    resolved.display()
-                );
-            })
+            if split {
+                let payload = serde_json::json!({
+                    "dry_run": true,
+                    "pose_report": pose_report,
+                    "target": target,
+                    "root": root,
+                    "ground": ground,
+                    "split": true,
+                    "would_write_dir": out.display().to_string(),
+                });
+                output::ok(mode, payload, |_| {
+                    let _ = writeln!(
+                        std::io::stdout(),
+                        "[dry-run] would export per-cabinet OBJs from {pose_report} into {}",
+                        out.display()
+                    );
+                })
+            } else {
+                let resolved = lmt_app::export::ensure_obj_extension(out);
+                let payload = serde_json::json!({
+                    "dry_run": true,
+                    "pose_report": pose_report,
+                    "target": target,
+                    "root": root,
+                    "ground": ground,
+                    "would_write": resolved.display().to_string(),
+                });
+                output::ok(mode, payload, |_| {
+                    let _ = writeln!(
+                        std::io::stdout(),
+                        "[dry-run] would export merged OBJ from {pose_report} to {}",
+                        resolved.display()
+                    );
+                })
+            }
         }
         DestructiveDecision::Execute => {
             match lmt_app::export::run_export_pose_obj(
