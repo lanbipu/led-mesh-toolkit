@@ -234,57 +234,43 @@ pub fn run_export_pose_obj(
     // rows-up：row0 在底部）。它**已经是** fix_root 经 flipY 后要达到的那个朝向,所以
     // disguise 这条不能再套 flipY(会上下行颠倒,Codex P1),也不能强制贴地(破坏设计帧绝对
     // 位置)。flipY 的补偿(winding swap + UV cell V 翻)同样只对非 align 路径做(见下)。
-    let canonical_disguise = !align && root.is_none() && disguise;
-    let disguise_compensate = disguise && !align; // 补偿 flipY 反射的 winding/UV 处理
+    let canonical_disguise = !align && root.is_none() && disguise && !split;
+    let disguise_compensate = disguise && !align && !split;
     if canonical_disguise {
         apply_canonical_frame(&mut panels, cols)?;
     } else if align {
-        // 几何不动。仅在用户显式 --ground 时贴地(align 原点本就≈底部,通常 no-op)。
         if ground {
             ground_shift(&mut panels, root);
         }
     } else {
-        if disguise {
-            // disguise --root:re-root 后补 flipY,使其与 canonical 同手性/约定。
+        if disguise && !split {
             for (_, _, _, cs) in panels.iter_mut() {
                 for p in cs.iter_mut() {
                     p[1] = -p[1];
                 }
             }
         }
-        // 贴地:disguise 总贴地;neutral 仅 --ground。基准块 = root(无 root 时整体最低)。
-        if ground || disguise {
+        if ground || (disguise && !split) {
             ground_shift(&mut panels, root);
         }
     }
 
     // 每块 → 1×1 surface（格子 UV）→ MeshOutput（Neutral 原样，weld 0）。
     let unit_array = CabinetArray::rectangle(1, 1, [1.0, 1.0]);
-    let mut meshes: Vec<(u32, u32, MeshOutput)> = Vec::with_capacity(panels.len());
-    for (cid, col, row, cs) in &panels {
-        let surface = panel_surface(cid, cs, *col, *row, cols, rows, disguise_compensate);
-        let mut mesh = surface_to_mesh_output(
-            &surface,
-            &unit_array,
-            TargetSoftware::Neutral,
-            0.0,
-        )?;
-        if disguise_compensate {
-            for t in mesh.triangles.iter_mut() {
-                t.swap(1, 2);
-            }
-        }
-        meshes.push((*col, *row, mesh));
-    }
 
     if split {
+        // --split: each cabinet is an independent OBJ with full [0,1] UV and
+        // no disguise flipY/winding compensation (each file stands alone).
         let out_dir = out_file;
         std::fs::create_dir_all(out_dir)?;
-        let mut files = Vec::with_capacity(meshes.len());
-        for (col, row, mesh) in &meshes {
+        let mut files = Vec::with_capacity(panels.len());
+        for (cid, col, row, cs) in &panels {
+            let surface = panel_surface(cid, cs, 0, 0, 1, 1, false);
+            let mesh = surface_to_mesh_output(
+                &surface, &unit_array, TargetSoftware::Neutral, 0.0)?;
             let safe_name = format!("V{col:03}_R{row:03}.obj");
             let obj_path = out_dir.join(&safe_name);
-            write_obj(mesh, &obj_path)?;
+            write_obj(&mesh, &obj_path)?;
             files.push(obj_path.display().to_string());
         }
         Ok(ExportPoseObjResult {
@@ -294,9 +280,20 @@ pub fn run_export_pose_obj(
             files,
         })
     } else {
-        // Merge all cabinets into a single OBJ.
-        let all_meshes: Vec<MeshOutput> = meshes.into_iter().map(|(_, _, m)| m).collect();
-        let combined = merge_mesh_outputs(TargetSoftware::Neutral, &all_meshes);
+        // Merge all cabinets into a single OBJ (grid UV + disguise compensation).
+        let mut merge_meshes = Vec::with_capacity(panels.len());
+        for (cid, col, row, cs) in &panels {
+            let surface = panel_surface(cid, cs, *col, *row, cols, rows, disguise_compensate);
+            let mut mesh = surface_to_mesh_output(
+                &surface, &unit_array, TargetSoftware::Neutral, 0.0)?;
+            if disguise_compensate {
+                for t in mesh.triangles.iter_mut() {
+                    t.swap(1, 2);
+                }
+            }
+            merge_meshes.push(mesh);
+        }
+        let combined = merge_mesh_outputs(TargetSoftware::Neutral, &merge_meshes);
         let out = ensure_obj_extension(out_file);
         if let Some(parent) = out.parent() {
             if !parent.as_os_str().is_empty() {
